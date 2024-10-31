@@ -1,0 +1,6 @@
+{
+  "name": "compio",
+  "version": "1.0.0",
+  "description": "A C library for handling compressed data blocks with fragmentation support.",
+  "dependencies": {}
+}

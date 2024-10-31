@@ -50,3 +50,29 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Documentation
+docs/html/
+
+# IDE-specific files (for CLion and other JetBrains products)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Build directories (for CMake)
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Testing/
+CTestTestfile.cmake
+cmake_install.cmake
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.old
