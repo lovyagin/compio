@@ -1,2 +1,12 @@
+# Автоматически определяет окончания строк для большинства текстовых файлов
 * text=auto
+
+# Устанавливает окончания строк LF для Doxyfile и shell-скриптов
 Doxyfile text eol=lf
+*.sh text eol=lf
+
+# Устанавливает окончания строк CRLF для batch-скриптов Windows
+*.bat text eol=crlf
+
+# Устанавливает окончания строк LF для самого файла .gitattributes
+*.gitattributes text eol=lf
