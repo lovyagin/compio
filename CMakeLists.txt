@@ -8,7 +8,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 
 # Создание исполняемого файла
-add_executable(compio main.c)
+add_executable(compio main.c
+        include/block.h)
 
 # Подключение всех заголовочных и исходных файлов
 target_sources(compio PRIVATE
