@@ -13,6 +13,8 @@ add_executable(compio main.c
 
 file(GLOB ...)
 
+file(GLOB ...)
+
 # Подключение всех заголовочных и исходных файлов
 target_sources(compio PRIVATE
         src/block.c
