@@ -10,6 +10,8 @@ set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.c
 # Создание исполняемого файла
 add_executable(compio main.c)
 
+file(GLOB ...)
+
 # Подключение всех заголовочных и исходных файлов
 target_sources(compio PRIVATE
         src/block.c
