@@ -11,6 +11,8 @@ set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.c
 add_executable(compio main.c
         include/block.h)
 
+file(GLOB ...)
+
 # Подключение всех заголовочных и исходных файлов
 target_sources(compio PRIVATE
         src/block.c
