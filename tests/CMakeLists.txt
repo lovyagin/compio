@@ -6,6 +6,8 @@ file(GLOB_RECURSE SOURCES
         ${PROJECT_SOURCE_DIR}/archivers/*.c
 )
 
+file(GLOB_RECURSE TEST_SOURCES ${PROJECT_SOURCE_DIR}/tests/unit/*.c)
+
 # Создание исполняемого файла для тестов
 add_executable(compio_tests
         ${TEST_SOURCES}
