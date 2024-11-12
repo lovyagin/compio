@@ -25,7 +25,15 @@ target_include_directories(compio PRIVATE include)
 # Поиск и подключение ZLIB
 find_package(ZLIB REQUIRED)
 if(ZLIB_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
+    target_link_libraries(compio PRIVATE ZLIB::ZLIB)
 else()
     message(FATAL_ERROR "ZLIB not found. Please install it using vcpkg.")
+endif()
+
+# Поиск и подключение CUnit
+find_package(unofficial-cunit CONFIG REQUIRED)
+if(TARGET unofficial::cunit::cunit)
+    target_link_libraries(compio PRIVATE unofficial::cunit::cunit)
+else()
+    message(FATAL_ERROR "CUnit not found. Please install it using vcpkg.")
 endif()
