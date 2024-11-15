@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 file(GLOB_RECURSE TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/*.c)
 
-add_executable(compio_tests ${TEST_SOURCES})
+add_executable(compio_tests ${TEST_SOURCES} ${CMAKE_SOURCE_DIR}/src/block.c)
 
 target_link_libraries(compio_tests PRIVATE ZLIB::ZLIB unofficial::cunit::cunit)
 

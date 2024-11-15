@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "block.h"
 #include <stdlib.h>
 #include <string.h>
@@ -32,7 +33,12 @@ compio_block* compio_block_init(size_t offset, size_t size, int is_compressed, v
     block->offset = offset;
     block->size = size;
     block->is_compressed = is_compressed;
-    block->data = data;
+    block->data = malloc(size);
+    if (block->data == NULL) {
+        free(block);
+        return NULL;
+    }
+    memcpy(block->data, data, size);
     return block;
 }
 
