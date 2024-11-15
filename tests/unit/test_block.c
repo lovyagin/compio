@@ -103,6 +103,28 @@ void test_compio_split_block_into_fragments(void) {
     free(block.data);
 }
 
+void test_compio_set_position(void) {
+    compio_block* block = compio_create_block(1024, 0);
+    CU_ASSERT_EQUAL(compio_set_position(block, 512), 0);
+    CU_ASSERT_EQUAL(block->position, 512);
+    CU_ASSERT_EQUAL(compio_set_position(block, 2048), -1); // Invalid position
+    compio_free_block(block);
+}
+
+void test_compio_read_and_write(void) {
+    compio_block* block = compio_create_block(1024, 0);
+    char data[128] = "Hello, compression!";
+    CU_ASSERT_EQUAL(compio_write_to_block(block, data, sizeof(data)), sizeof(data));
+    CU_ASSERT_EQUAL(block->position, sizeof(data));
+
+    char buffer[128];
+    compio_set_position(block, 0); // Reset to the beginning
+    CU_ASSERT_EQUAL(compio_read_from_block(block, buffer, sizeof(buffer)), sizeof(buffer));
+    CU_ASSERT_STRING_EQUAL(buffer, data);
+
+    compio_free_block(block);
+}
+
 int main(void) {
     CU_initialize_registry();
     CU_pSuite suite = CU_add_suite("compio_block_tests", 0, 0);
@@ -112,6 +134,8 @@ int main(void) {
     CU_add_test(suite, "test_compio_free_block", test_compio_free_block);
     CU_add_test(suite, "test_compio_find_block_by_offset", test_compio_find_block_by_offset);
     CU_add_test(suite, "test_compio_split_block_into_fragments", test_compio_split_block_into_fragments);
+    CU_add_test(suite, "test_compio_set_position", test_compio_set_position);
+    CU_add_test(suite, "test_compio_read_and_write", test_compio_read_and_write);
 
     CU_basic_set_mode(CU_BRM_VERBOSE);
     CU_basic_run_tests();

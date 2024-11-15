@@ -16,6 +16,7 @@ typedef struct {
     size_t size;        /**< Размер блока */
     int is_compressed;  /**< Флаг, указывающий, сжат ли блок */
     void* data;         /**< Указатель на данные блока */
+    size_t position;    /**< Текущая позиция чтения/записи внутри блока */
 } compio_block;
 
 
@@ -104,5 +105,43 @@ compio_fragment* compio_split_block_into_fragments(compio_block* block, size_t f
  * @param block Указатель на блок, который необходимо освободить.
  */
 void compio_free_block(compio_block* block);
+
+
+
+/**
+ * @function compio_set_position
+ * @brief Устанавливает позицию внутри несжатого блока.
+ *
+ * @param block Указатель на блок данных.
+ * @param position Новая позиция внутри блока.
+ * @return 0, если успешно; -1, если позиция некорректна.
+ */
+int compio_set_position(compio_block* block, size_t position);
+
+
+
+/**
+ * @function compio_read_from_block
+ * @brief Читает данные из несжатого блока с текущей позиции.
+ *
+ * @param block Указатель на блок данных.
+ * @param buffer Буфер для записи прочитанных данных.
+ * @param bytes_to_read Количество байт для чтения.
+ * @return Количество реально прочитанных байт.
+ */
+size_t compio_read_from_block(compio_block* block, void* buffer, size_t bytes_to_read);
+
+
+
+/**
+ * @function compio_write_to_block
+ * @brief Записывает данные в несжатый блок с текущей позиции.
+ *
+ * @param block Указатель на блок данных.
+ * @param data Данные для записи.
+ * @param bytes_to_write Количество байт для записи.
+ * @return Количество реально записанных байт.
+ */
+size_t compio_write_to_block(compio_block* block, const void* data, size_t bytes_to_write);
 
 #endif // COMPIO_BLOCK_H

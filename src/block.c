@@ -87,3 +87,39 @@ void compio_free_block(compio_block* block) {
         free(block);
     }
 }
+
+int compio_set_position(compio_block* block, size_t position) {
+    if (!block || position >= block->size) {
+        return -1; // Некорректный блок или позиция
+    }
+    block->position = position;
+    return 0;
+}
+
+size_t compio_read_from_block(compio_block* block, void* buffer, size_t bytes_to_read) {
+    if (!block || !buffer || block->position >= block->size) {
+        return 0;
+    }
+
+    size_t bytes_available = block->size - block->position;
+    size_t bytes_to_copy = (bytes_to_read < bytes_available) ? bytes_to_read : bytes_available;
+    memcpy(buffer, (char*)block->data + block->position, bytes_to_copy);
+    block->position += bytes_to_copy;
+
+    return bytes_to_copy;
+}
+
+
+
+size_t compio_write_to_block(compio_block* block, const void* data, size_t bytes_to_write) {
+    if (!block || !data || block->position >= block->size) {
+        return 0;
+    }
+
+    size_t bytes_available = block->size - block->position;
+    size_t bytes_to_copy = (bytes_to_write < bytes_available) ? bytes_to_write : bytes_available;
+    memcpy((char*)block->data + block->position, data, bytes_to_copy);
+    block->position += bytes_to_copy;
+
+    return bytes_to_copy;
+}
