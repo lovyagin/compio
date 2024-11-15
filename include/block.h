@@ -6,13 +6,16 @@
 #define COMPIO_BLOCK_H
 
 #include <stddef.h>
+#include <stdlib.h>
+#include "stdbool.h"
+
+
 
 /**
  * @struct compio_fragment
- * @brief Структура, представляющая фрагмент, который может быть частью блока.
+ * @brief Структура, представляющая фрагмент блока.
  *
- * Каждый фрагмент хранит информацию о своем смещении и размере в контексте блока.
- * Используется при разбиении больших блоков на более мелкие фрагменты.
+ * Описывает фрагмент, который является частью несжатого блока.
  */
 typedef struct {
     size_t offset;      /**< Смещение фрагмента в блоке */
@@ -26,17 +29,16 @@ typedef struct {
  * @struct compio_block
  * @brief Структура, представляющая блок данных.
  *
- * Эта структура используется для описания блока данных, который может
- * быть сжат или представлен как фрагмент. Включает информацию о позиции,
- * размере и статусе фрагмента.
+ * Описывает несжатый или сжатый блок данных, его размер, смещение и состояние.
+ * Также включает информацию о фрагментах, если блок разбит.
  */
 typedef struct {
     size_t offset;      /**< Смещение начала блока в архиве */
     size_t size;        /**< Размер блока */
     int is_compressed;  /**< Флаг, указывающий, сжат ли блок */
-    void* data;         /**< Ука��атель на данные блока */
+    void* data;         /**< Указатель на данные блока */
     size_t position;    /**< Текущая позиция чтения/записи внутри блока */
-    int fragmented;         /**< Флаг, указывающий, фрагментирован ли блок */
+    int fragmented;     /**< Флаг, указывающий, фрагментирован ли блок */
     compio_fragment* fragments; /**< Указатель на массив фрагментов, если блок фрагментирован */
     size_t fragment_count;  /**< Количество фрагментов в массиве */
 } compio_block;
@@ -49,15 +51,13 @@ typedef struct {
  *
  * Функция выделяет память для нового блока и инициализирует его параметры.
  *
- * @param size Размер блока данных.
+ * @param size Размер блока д��нных.
  * @param is_compressed Флаг сжатия блока (0 — не сжат, 1 — сжат).
  * @return Указатель на созданный блок.
  */
 compio_block* compio_create_block(size_t size, int is_compressed);
 
 
-
-// Функции для работы с блоками и фрагментацией
 
 /**
  * @function compio_block_init
@@ -103,6 +103,8 @@ compio_block* compio_find_block_by_offset(compio_block* blocks, size_t num_block
  */
 compio_fragment* compio_split_block_into_fragments(compio_block* block, size_t fragment_size, size_t* num_fragments);
 
+
+
 /**
  * @function compio_free_block
  * @brief Освобождает память, занятую блоком данных.
@@ -121,7 +123,7 @@ void compio_free_block(compio_block* block);
  * @brief Устанавливает позицию внутри несжатого блока.
  *
  * @param block Указатель на блок данных.
- * @param position Новая позиция внутри блока.
+ * @param position Новая позиция ��нутри блока.
  * @return 0, если успешно; -1, если позиция некорректна.
  */
 int compio_set_position(compio_block* block, size_t position);
@@ -151,5 +153,52 @@ size_t compio_read_from_block(compio_block* block, void* buffer, size_t bytes_to
  * @return Количество реально записанных байт.
  */
 size_t compio_write_to_block(compio_block* block, const void* data, size_t bytes_to_write);
+
+
+
+/**
+ * @function compio_add_fragment
+ * @brief Добавляет фрагмент в блок.
+ *
+ * @param block Указатель на структуру блока.
+ * @param fragment Структура фрагмента, который необходимо добавить.
+ * @return 0 при успешном добавлении; -1 при ошибке (например, при нехватке памяти).
+ */
+int compio_add_fragment(compio_block* block, compio_fragment fragment);
+
+
+
+/**
+ * @function compio_remove_fragment
+ * @brief Удаляет фрагмент из блока.
+ *
+ * @param block Указатель на структуру блока.
+ * @param index Индекс удаляемого фрагмента (начиная с 0).
+ * @return 0 при успешном удалении; -1 при ошибке (например, если индекс некорректен).
+ */
+int compio_remove_fragment(compio_block* block, size_t index);
+
+
+
+/**
+ * @function compio_is_fragmented
+ * @brief Проверяет, является ли блок фрагментированным.
+ *
+ * @param block Указатель на структуру блока.
+ * @return true, если блок фрагментирован; false, если нет.
+ */
+int compio_is_fragmented(compio_block* block);
+
+
+
+/**
+ * @function compio_validate_position
+ * @brief Проверяет корректность позиции внутри блока.
+ *
+ * @param block Указатель на структуру блока.
+ * @param position Позиция для проверки.
+ * @return 0, если позиция допустима; -1, если позиция выходит за пределы размера блока.
+ */
+int compio_validate_position(compio_block* block, size_t position);
 
 #endif // COMPIO_BLOCK_H

@@ -125,6 +125,40 @@ void test_compio_read_and_write(void) {
     compio_free_block(block);
 }
 
+void test_compio_add_fragment(void) {
+    compio_block* block = compio_create_block(1024, 0);
+    compio_fragment fragment = {0, 256, 1};
+    CU_ASSERT_EQUAL(compio_add_fragment(block, fragment), 0);
+    CU_ASSERT_EQUAL(block->fragment_count, 1);
+    CU_ASSERT_EQUAL(block->fragments[0].size, 256);
+    compio_free_block(block);
+}
+
+void test_compio_remove_fragment(void) {
+    compio_block* block = compio_create_block(1024, 0);
+    compio_fragment fragment = {0, 256, 1};
+    compio_add_fragment(block, fragment);
+    CU_ASSERT_EQUAL(compio_remove_fragment(block, 0), 0);
+    CU_ASSERT_EQUAL(block->fragment_count, 0);
+    compio_free_block(block);
+}
+
+void test_compio_is_fragmented(void) {
+    compio_block* block = compio_create_block(1024, 0);
+    CU_ASSERT_FALSE(compio_is_fragmented(block));
+    compio_fragment fragment = {0, 256, 1};
+    compio_add_fragment(block, fragment);
+    CU_ASSERT_TRUE(compio_is_fragmented(block));
+    compio_free_block(block);
+}
+
+void test_compio_validate_position(void) {
+    compio_block* block = compio_create_block(1024, 0);
+    CU_ASSERT_EQUAL(compio_validate_position(block, 512), 0);
+    CU_ASSERT_EQUAL(compio_validate_position(block, 2048), -1);
+    compio_free_block(block);
+}
+
 int main(void) {
     CU_initialize_registry();
     CU_pSuite suite = CU_add_suite("compio_block_tests", 0, 0);
@@ -136,6 +170,10 @@ int main(void) {
     CU_add_test(suite, "test_compio_split_block_into_fragments", test_compio_split_block_into_fragments);
     CU_add_test(suite, "test_compio_set_position", test_compio_set_position);
     CU_add_test(suite, "test_compio_read_and_write", test_compio_read_and_write);
+    CU_add_test(suite, "test_compio_add_fragment", test_compio_add_fragment);
+    CU_add_test(suite, "test_compio_remove_fragment", test_compio_remove_fragment);
+    CU_add_test(suite, "test_compio_is_fragmented", test_compio_is_fragmented);
+    CU_add_test(suite, "test_compio_validate_position", test_compio_validate_position);
 
     CU_basic_set_mode(CU_BRM_VERBOSE);
     CU_basic_run_tests();
