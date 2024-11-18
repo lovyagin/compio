@@ -9,17 +9,13 @@
 #include <errno.h>
 
 
-#define COMP_MODE_READ      (1 << 0)
-#define COMP_MODE_WRITE     (1 << 1)
-
-
 /**
  * @brief Структура открытого архива
  * 
  */
 typedef struct {
-    int mode; // 1 << 0 - r, 1 << 1 - w
     FILE* file;
+    const char* mode;
     // ...
 } compio_archive;
 
@@ -30,7 +26,7 @@ typedef struct {
  */
 typedef struct {
     compio_archive* archive;
-    int mode; // 1 << 0 - r, 1 << 1 - w
+    const char* mode;
     size_t cursor;
     // ...
 } compio_file;
@@ -40,7 +36,7 @@ typedef struct {
  * @brief Открыть файл как архив, и вернуть указатель на структуру архива
  * 
  * @param fp Путь к файлу
- * @param mode Режим (COMP_MODE_READ/COMP_MODE_WRITE)
+ * @param mode Режим (https://en.cppreference.com/w/cpp/io/c/fopen)
  * @return compio_archive* 
  */
 compio_archive* compio_open_archive(const char* fp, const char* mode);
@@ -51,7 +47,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode);
  * 
  * @param a Архив
  * @param fp Путь к файлу внутри архива
- * @param mode Режим (COMP_MODE_READ/COMP_MODE_WRITE)
+ * @param mode Режим (https://en.cppreference.com/w/cpp/io/c/fopen)
  * @return compio_file* 
  */
 compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode);
@@ -81,9 +77,9 @@ size_t compio_write(const void* ptr, size_t size, size_t count, compio_file* f);
 size_t compio_read(void* ptr, size_t size, size_t count, compio_file* f);
 
 
-#define COMP_SEEK_SET   (1 << 0)
-#define COMP_SEEK_CUR   (1 << 1)
-#define COMP_SEEK_END   (1 << 2)
+#define COMP_SEEK_SET   0
+#define COMP_SEEK_CUR   1
+#define COMP_SEEK_END   2
 
 
 /**
