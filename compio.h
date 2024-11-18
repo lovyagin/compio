@@ -6,6 +6,7 @@
 #define COMPIO_COMPIO_H
 
 #include <stdio.h>
+#include <errno.h>
 
 
 #define COMP_MODE_READ      (1 << 0)
@@ -18,6 +19,7 @@
  */
 typedef struct {
     int mode; // 1 << 0 - r, 1 << 1 - w
+    FILE* file;
     // ...
 } compio_archive;
 
@@ -27,44 +29,41 @@ typedef struct {
  * 
  */
 typedef struct {
+    compio_archive* archive;
     int mode; // 1 << 0 - r, 1 << 1 - w
     size_t cursor;
     // ...
 } compio_file;
 
-typedef int compio_errcode;
-
 
 /**
  * @brief Открыть файл как архив, и вернуть указатель на структуру архива
  * 
- * @param fp 
- * @param mode 
- * @param error 
+ * @param fp Путь к файлу
+ * @param mode Режим (COMP_MODE_READ/COMP_MODE_WRITE)
  * @return compio_archive* 
  */
-compio_archive* compio_open_archive(const char* fp, const char* mode, compio_errcode* error);
+compio_archive* compio_open_archive(const char* fp, const char* mode);
 
 
 /**
  * @brief Открыть файл в архиве для чтения или записи, и вернуть указатель на структура файла
  * 
- * @param a 
- * @param fp 
- * @param mode 
- * @param error 
+ * @param a Архив
+ * @param fp Путь к файлу внутри архива
+ * @param mode Режим (COMP_MODE_READ/COMP_MODE_WRITE)
  * @return compio_file* 
  */
-compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode, compio_errcode* error);
+compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode);
 
 
 /**
  * @brief Записать блок данных в место текущего указателя в файле
  * 
- * @param ptr 
- * @param size 
- * @param count 
- * @param f 
+ * @param ptr Указатель на блок данных
+ * @param size Размер единицы данных
+ * @param count Количество единиц данных
+ * @param f Файл
  * @return size_t 
  */
 size_t compio_write(const void* ptr, size_t size, size_t count, compio_file* f);
@@ -73,10 +72,10 @@ size_t compio_write(const void* ptr, size_t size, size_t count, compio_file* f);
 /**
  * @brief Прочитать блок данных из места текущего указателя в файле
  * 
- * @param ptr 
- * @param size 
- * @param count 
- * @param f 
+ * @param ptr Указатель на свободных блок данных для вывода
+ * @param size Размер единицы данных
+ * @param count Количество единиц данных
+ * @param f Файл
  * @return size_t 
  */
 size_t compio_read(void* ptr, size_t size, size_t count, compio_file* f);
@@ -94,18 +93,18 @@ size_t compio_read(void* ptr, size_t size, size_t count, compio_file* f);
  *  - COMP_SEEK_CUR - offset отсчитывается от текущего положения курсора
  *  - COMP_SEEK_END - offset отсчитывается от конца файла
  * 
- * @param f 
- * @param offset 
- * @param whence 
- * @param error 
+ * @param f Файл
+ * @param offset Сдвиг в количестве байт 
+ * @param whence Точка отсчёта для сдвига
+ * @return int
  */
-void compio_seek(compio_file* f, long offset, int whence, compio_errcode* error);
+int compio_seek(compio_file* f, long offset, int whence);
 
 
 /**
  * @brief Вернуть текущее положение курсора в файле
  * 
- * @param f 
+ * @param f Файл
  * @return long 
  */
 long compio_tell(compio_file* f);
@@ -114,7 +113,7 @@ long compio_tell(compio_file* f);
 /**
  * @brief Закрыть файл и удалить структуру файла
  * 
- * @param f 
+ * @param f Файл
  * @return int 
  */
 int compio_close_file(compio_file* f);
@@ -123,7 +122,7 @@ int compio_close_file(compio_file* f);
 /**
  * @brief Закрыть архив и удалить структуру архива
  * 
- * @param a 
+ * @param a Архив
  * @return int 
  */
 int compio_close_archive(compio_archive* a);
