@@ -1,204 +1,140 @@
-//
-// Позиционирование несжатых блоков, внутренняя фрагментация
-//
-
 #ifndef COMPIO_BLOCK_H
 #define COMPIO_BLOCK_H
 
 #include <stddef.h>
 #include <stdlib.h>
-#include "stdbool.h"
-
-
-
-/**
- * @struct compio_fragment
- * @brief Структура, представляющая фрагмент блока.
- *
- * Описывает фрагмент, который является частью несжатого блока.
- */
-typedef struct {
-    size_t offset;      /**< Смещение фрагмента в блоке */
-    size_t size;        /**< Размер фрагмента */
-    int is_active;      /**< Флаг, указывающий, используется ли фрагмент */
-} compio_fragment;
-
-
+#include <stdbool.h>
 
 /**
  * @struct compio_block
- * @brief Структура, представляющая блок данных.
+ * @brief Represents a data block.
  *
- * Описывает несжатый или сжатый блок данных, его размер, смещение и состояние.
- * Также включает информацию о фрагментах, если блок разбит.
+ * Describes a block of data, including its offset, size, compression state,
+ * and a pointer to uncompressed data.
  */
 typedef struct {
-    size_t offset;      /**< Смещение начала блока в архиве */
-    size_t size;        /**< Размер блока */
-    int is_compressed;  /**< Флаг, указывающий, сжат ли блок */
-    void* data;         /**< Указатель на данные блока */
-    size_t position;    /**< Текущая позиция чтения/записи внутри блока */
-    int fragmented;     /**< Флаг, указывающий, фрагментирован ли блок */
-    compio_fragment* fragments; /**< Указатель на массив фрагментов, если блок фрагментирован */
-    size_t fragment_count;  /**< Количество фрагментов в массиве */
+    size_t offset;           /**< Offset of the block in the file */
+    size_t size;             /**< Size of the block */
+    bool is_compressed;      /**< Flag indicating if the block is compressed */
+    char* compression_type;  /**< Compression type (NULL if uncompressed) */
+    void* data;              /**< Pointer to the block's uncompressed data */
 } compio_block;
 
-
-
 /**
- * @function compio_create_block
- * @brief Создает новый блок данных.
+ * @struct compio_block_container
+ * @brief Container for managing blocks.
  *
- * Функция выделяет память для нового блока и инициализирует его параметры.
- *
- * @param size Размер блока д��нных.
- * @param is_compressed Флаг сжатия блока (0 — не сжат, 1 — сжат).
- * @return Указатель на созданный блок.
+ * Holds an array of blocks and provides interfaces for manipulating them.
+ * Includes an index structure for fast block lookup (e.g., a B-tree).
  */
-compio_block* compio_create_block(size_t size, int is_compressed);
-
-
+typedef struct {
+    size_t total_size;       /**< Total size of the file */
+    size_t block_count;      /**< Number of blocks */
+    compio_block** blocks;   /**< Array of pointers to blocks */
+    void* index;             /**< Index structure for fast block lookup (e.g., B-tree) */
+} compio_block_container;
 
 /**
- * @function compio_block_init
- * @brief Инициализация блока данных.
+ * @struct compio_file_state
+ * @brief Represents the state of an open file.
  *
- * Функция инициализирует блок с заданным смещением, размером и флагом сжатия.
- *
- * @param offset Смещение блока данных.
- * @param size Размер блока данных.
- * @param is_compressed Флаг сжатия блока (0 — не сжат, 1 — сжат).
- * @param data Указатель на данные блока.
- * @return Указатель на инициализированный блок.
+ * Manages the current position and access to blocks within a file.
  */
-compio_block* compio_block_init(size_t offset, size_t size, int is_compressed, void* data);
+typedef struct {
+    compio_block_container* container; /**< Pointer to the block container */
+    size_t position;                   /**< Current position in the file */
+    size_t current_block;              /**< Index of the current block */
+    size_t block_offset;               /**< Offset within the current block */
+} compio_file_state;
 
-
+/* Block management functions */
 
 /**
- * @function compio_find_block_by_offset
- * @brief Поиск блока по заданному смещению.
+ * @brief Creates a new data block.
  *
- * Функция ищет блок в массиве блоков по смещению.
+ * @param size The size of the block.
+ * @param is_compressed Indicates if the block is compressed.
+ * @param compression_type The type of compression (NULL if uncompressed).
+ * @return A pointer to the created block, or NULL on failure.
  *
- * @param blocks Массив блоков.
- * @param num_blocks Количество блоков в массиве.
- * @param offset Смещение, по которому ищется блок.
- * @return Указатель на найденный блок или NULL, если не найден.
+ * @note The `data` field stores uncompressed data.
  */
-compio_block* compio_find_block_by_offset(compio_block* blocks, size_t num_blocks, size_t offset);
-
-
+compio_block* compio_create_block(size_t size, bool is_compressed, const char* compression_type);
 
 /**
- * @function compio_split_block_into_fragments
- * @brief Разбиение блока на фрагменты.
+ * @brief Frees memory associated with a data block.
  *
- * Функция делит блок данных на более мелкие фрагменты заданного размера.
- *
- * @param block Блок, который нужно разбить.
- * @param fragment_size Размер каждого фрагмента.
- * @param num_fragments Количество фрагментов, на которое нужно разбить блок.
- * @return Массив фрагментов, на которые был разделен блок.
- */
-compio_fragment* compio_split_block_into_fragments(compio_block* block, size_t fragment_size, size_t* num_fragments);
-
-
-
-/**
- * @function compio_free_block
- * @brief Освобождает память, занятую блоком данных.
- *
- * Функция освобождает память, выделенную для блока, и выполняет необходимую
- * очистку.
- *
- * @param block Указатель на блок, который необходимо освободить.
+ * @param block A pointer to the block to free.
  */
 void compio_free_block(compio_block* block);
 
-
-
-/**
- * @function compio_set_position
- * @brief Устанавливает позицию внутри несжатого блока.
- *
- * @param block Указатель на блок данных.
- * @param position Новая позиция ��нутри блока.
- * @return 0, если успешно; -1, если позиция некорректна.
- */
-int compio_set_position(compio_block* block, size_t position);
-
-
+/* Block container management functions */
 
 /**
- * @function compio_read_from_block
- * @brief Читает данные из несжатого блока с текущей позиции.
+ * @brief Creates a container for managing blocks.
  *
- * @param block Указатель на блок данных.
- * @param buffer Буфер для записи прочитанных данных.
- * @param bytes_to_read Количество байт для чтения.
- * @return Количество реально прочитанных байт.
+ * @param total_size The total size of the file.
+ * @return A pointer to the created container, or NULL on failure.
  */
-size_t compio_read_from_block(compio_block* block, void* buffer, size_t bytes_to_read);
-
-
+compio_block_container* compio_create_block_container(size_t total_size);
 
 /**
- * @function compio_write_to_block
- * @brief Записывает данные в несжатый блок с текущей позиции.
+ * @brief Adds a block to the container.
  *
- * @param block Указатель на блок данных.
- * @param data Данные для записи.
- * @param bytes_to_write Количество байт для записи.
- * @return Количество реально записанных байт.
+ * @param container A pointer to the container.
+ * @param block A pointer to the block to add.
+ * @return 0 on success, -1 on failure.
  */
-size_t compio_write_to_block(compio_block* block, const void* data, size_t bytes_to_write);
-
-
+int compio_add_block(compio_block_container* container, compio_block* block);
 
 /**
- * @function compio_add_fragment
- * @brief Добавляет фрагмент в блок.
+ * @brief Removes a block from the container.
  *
- * @param block Указатель на структуру блока.
- * @param fragment Структура фрагмента, который необходимо добавить.
- * @return 0 при успешном добавлении; -1 при ошибке (например, при нехватке памяти).
+ * @param container A pointer to the container.
+ * @param block_index The index of the block to remove.
+ * @return 0 on success, -1 on failure.
  */
-int compio_add_fragment(compio_block* block, compio_fragment fragment);
-
-
+int compio_remove_block(compio_block_container* container, size_t block_index);
 
 /**
- * @function compio_remove_fragment
- * @brief Удаляет фрагмент из блока.
+ * @brief Finds a block by position in the file.
  *
- * @param block Указатель на структуру блока.
- * @param index Индекс удаляемого фрагмента (начиная с 0).
- * @return 0 при успешном удалении; -1 при ошибке (например, если индекс некорректен).
+ * @param container A pointer to the container.
+ * @param position The position in the file.
+ * @param block_offset Pointer to store the offset within the found block.
+ * @return A pointer to the found block, or NULL if not found.
+ *
+ * @note Uses a B-tree or another index structure for fast lookup.
  */
-int compio_remove_fragment(compio_block* block, size_t index);
-
-
+compio_block* compio_find_block(compio_block_container* container, size_t position, size_t* block_offset);
 
 /**
- * @function compio_is_fragmented
- * @brief Проверяет, является ли блок фрагментированным.
+ * @brief Updates the container's index structure.
  *
- * @param block Указатель на структуру блока.
- * @return true, если блок фрагментирован; false, если нет.
+ * @param container A pointer to the container.
+ * @return 0 on success, -1 on failure.
+ *
+ * @note This function must be called after adding or removing blocks.
  */
-int compio_is_fragmented(compio_block* block);
+int compio_update_index(compio_block_container* container);
 
-
+/* File state management functions */
 
 /**
- * @function compio_validate_position
- * @brief Проверяет корректность позиции внутри блока.
+ * @brief Opens a file and initializes its state structure.
  *
- * @param block Указатель на структуру блока.
- * @param position Позиция для проверки.
- * @return 0, если позиция допустима; -1, если позиция выходит за пределы размера блока.
+ * @param container A pointer to the block container.
+ * @return A pointer to the file state, or NULL on failure.
  */
-int compio_validate_position(compio_block* block, size_t position);
+compio_file_state* compio_open_file(compio_block_container* container);
 
-#endif // COMPIO_BLOCK_H
+/**
+ * @brief Sets the current position in the file.
+ *
+ * @param state A pointer to the file state.
+ * @param position The new position in the file.
+ * @return 0 on success, -1 on failure.
+ */
+int compio_set_file_position(compio_file_state* state, size_t position);
+
+#endif /* COMPIO_BLOCK_H */
