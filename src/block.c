@@ -1,8 +1,57 @@
 #include "block.h"
-#include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
+#include <stdio.h>
 
+/* Helper function to initialize a B-tree (placeholder for actual implementation) */
+static void* btree_create() {
+    // Replace with actual B-tree initialization
+    return NULL;
+}
+
+/* Helper function to insert into a B-tree (placeholder) */
+static int btree_insert(void* tree, size_t key, compio_block* value) {
+    // Replace with actual B-tree insertion logic
+    return 0;
+}
+
+/* Helper function to find in a B-tree (placeholder) */
+static compio_block* btree_find(void* tree, size_t key) {
+    // Replace with actual B-tree lookup logic
+    return NULL;
+}
+
+/* Helper function to free a B-tree (placeholder) */
+static void btree_free(void* tree) {
+    // Replace with actual B-tree cleanup
+}
+
+/* Block management functions */
+compio_block* compio_create_block(size_t size, bool is_compressed, const char* compression_type) {
+    compio_block* block = malloc(sizeof(compio_block));
+    if (!block) return NULL;
+
+    block->offset = 0;
+    block->size = size;
+    block->is_compressed = is_compressed;
+    block->compression_type = compression_type ? strdup(compression_type) : NULL;
+    block->data = malloc(size);
+    if (!block->data) {
+        if (block->compression_type) free(block->compression_type);
+        free(block);
+        return NULL;
+    }
+
+    return block;
+}
+
+void compio_free_block(compio_block* block) {
+    if (!block) return;
+    if (block->data) free(block->data);
+    if (block->compression_type) free(block->compression_type);
+    free(block);
+}
+
+/* Block container management functions */
 compio_block_container* compio_create_block_container(size_t total_size) {
     compio_block_container* container = malloc(sizeof(compio_block_container));
     if (!container) return NULL;
@@ -10,125 +59,125 @@ compio_block_container* compio_create_block_container(size_t total_size) {
     container->total_size = total_size;
     container->block_count = 0;
     container->blocks = NULL;
-    container->index = NULL; // Позже можно инициализировать, например, B-дерево.
+    container->index = btree_create();
+    if (!container->index) {
+        free(container);
+        return NULL;
+    }
 
     return container;
 }
 
+int compio_add_block(compio_block_container* container, compio_block* block) {
+    if (!container || !block) return -1;
 
-compio_block* compio_block_init(size_t offset, size_t size, int is_compressed, void* data) {
-    compio_block* block = compio_create_block(size, is_compressed);
+    compio_block** new_blocks = realloc(container->blocks, sizeof(compio_block*) * (container->block_count + 1));
+    if (!new_blocks) return -1;
+
+    container->blocks = new_blocks;
+    container->blocks[container->block_count] = block;
+    container->block_count++;
+
+    if (btree_insert(container->index, block->offset, block) != 0) {
+        return -1;  // B-tree insertion failed
+    }
+
+    return 0;
+}
+
+int compio_remove_block(compio_block_container* container, size_t block_index) {
+    if (!container || block_index >= container->block_count) return -1;
+
+    compio_block* block_to_remove = container->blocks[block_index];
+
+    for (size_t i = block_index; i < container->block_count - 1; i++) {
+        container->blocks[i] = container->blocks[i + 1];
+    }
+
+    container->block_count--;
+    container->blocks = realloc(container->blocks, sizeof(compio_block*) * container->block_count);
+    if (container->block_count > 0 && !container->blocks) {
+        return -1;  // Memory reallocation failed
+    }
+
+    compio_free_block(block_to_remove);
+
+    return 0;
+}
+
+compio_block* compio_find_block(compio_block_container* container, size_t position, size_t* block_offset) {
+    if (!container || position >= container->total_size) return NULL;
+
+    compio_block* block = btree_find(container->index, position);
     if (!block) return NULL;
 
-    block->offset = offset;
-    if (data) {
-        memcpy(block->data, data, size);
+    if (block_offset) {
+        *block_offset = position - block->offset;
     }
+
     return block;
 }
 
-compio_block* compio_find_block_by_offset(compio_block* blocks, size_t num_blocks, size_t offset) {
-    for (size_t i = 0; i < num_blocks; i++) {
-        if (blocks[i].offset == offset) {
-            return &blocks[i];
+int compio_update_index(compio_block_container* container) {
+    if (!container) return -1;
+
+    // Clear and rebuild the B-tree
+    btree_free(container->index);
+    container->index = btree_create();
+    if (!container->index) return -1;
+
+    for (size_t i = 0; i < container->block_count; i++) {
+        if (btree_insert(container->index, container->blocks[i]->offset, container->blocks[i]) != 0) {
+            return -1;
         }
     }
-    return NULL;
-}
 
-compio_fragment* compio_split_block_into_fragments(compio_block* block, size_t fragment_size, size_t* num_fragments) {
-    if (!block || fragment_size == 0 || num_fragments == NULL) {
-        return NULL;
-    }
-
-    size_t count = (block->size + fragment_size - 1) / fragment_size;
-    compio_fragment* fragments = (compio_fragment*)malloc(sizeof(compio_fragment) * count);
-    if (!fragments) {
-        return NULL;
-    }
-
-    for (size_t i = 0; i < count; i++) {
-        fragments[i].offset = i * fragment_size;
-        fragments[i].size = (i == count - 1) ? (block->size - i * fragment_size) : fragment_size;
-        fragments[i].is_active = 1;
-    }
-
-    block->fragments = fragments;
-    block->fragment_count = count;
-    block->fragmented = 1;
-
-    if (num_fragments) {
-        *num_fragments = count;
-    }
-
-    return fragments;
-}
-
-void compio_free_block(compio_block* block) {
-    if (!block) return;
-    if (block->data) free(block->data);
-    if (block->fragments) free(block->fragments);
-    free(block);
-}
-
-int compio_set_position(compio_block* block, size_t position) {
-    if (!block || position >= block->size) return -1;
-    block->position = position;
     return 0;
 }
 
-size_t compio_read_from_block(compio_block* block, void* buffer, size_t bytes_to_read) {
-    if (!block || !buffer || block->position + bytes_to_read > block->size) {
-        return 0;
+void compio_free_block_container(compio_block_container* container) {
+    if (!container) return;
+
+    for (size_t i = 0; i < container->block_count; i++) {
+        compio_free_block(container->blocks[i]);
     }
-    memcpy(buffer, (char*)block->data + block->position, bytes_to_read);
-    block->position += bytes_to_read;
-    return bytes_to_read;
+
+    if (container->blocks) free(container->blocks);
+    if (container->index) btree_free(container->index);
+
+    free(container);
 }
 
-size_t compio_write_to_block(compio_block* block, const void* data, size_t bytes_to_write) {
-    if (!block || !data || block->position + bytes_to_write > block->size) {
-        return 0;
-    }
-    memcpy((char*)block->data + block->position, data, bytes_to_write);
-    block->position += bytes_to_write;
-    return bytes_to_write;
+/* File state management functions */
+compio_file_state* compio_open_file(compio_block_container* container) {
+    if (!container) return NULL;
+
+    compio_file_state* state = malloc(sizeof(compio_file_state));
+    if (!state) return NULL;
+
+    state->container = container;
+    state->position = 0;
+    state->current_block = 0;
+    state->block_offset = 0;
+
+    return state;
 }
 
-int compio_add_fragment(compio_block* block, compio_fragment fragment) {
+int compio_set_file_position(compio_file_state* state, size_t position) {
+    if (!state || position >= state->container->total_size) return -1;
+
+    size_t block_offset;
+    compio_block* block = compio_find_block(state->container, position, &block_offset);
     if (!block) return -1;
 
-    compio_fragment* new_fragments = realloc(block->fragments, sizeof(compio_fragment) * (block->fragment_count + 1));
-    if (!new_fragments) return -1;
+    state->position = position;
+    state->current_block = block - state->container->blocks[0];
+    state->block_offset = block_offset;
 
-    block->fragments = new_fragments;
-    block->fragments[block->fragment_count] = fragment;
-    block->fragment_count++;
     return 0;
 }
 
-int compio_remove_fragment(compio_block* block, size_t index) {
-    if (!block || index >= block->fragment_count) return -1;
-
-    for (size_t i = index; i < block->fragment_count - 1; i++) {
-        block->fragments[i] = block->fragments[i + 1];
-    }
-
-    block->fragment_count--;
-    if (block->fragment_count == 0) {
-        free(block->fragments);
-        block->fragments = NULL;
-        block->fragmented = 0;
-    }
-    return 0;
-}
-
-int compio_is_fragmented(compio_block* block) {
-    return block && block->fragment_count > 0;
-}
-
-/* Validates the position within a block */
-int compio_validate_position(compio_block* block, size_t position) {
-    if (!block || position >= block->size) return -1;
-    return 0;
+void compio_free_file_state(compio_file_state* state) {
+    if (!state) return;
+    free(state);
 }
