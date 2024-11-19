@@ -3,25 +3,18 @@
 #include <string.h>
 #include <stdbool.h>
 
-compio_block* compio_create_block(size_t size, int is_compressed) {
-    compio_block* block = (compio_block*)malloc(sizeof(compio_block));
-    if (!block) return NULL;
+compio_block_container* compio_create_block_container(size_t total_size) {
+    compio_block_container* container = malloc(sizeof(compio_block_container));
+    if (!container) return NULL;
 
-    block->offset = 0;
-    block->size = size;
-    block->is_compressed = is_compressed;
-    block->data = malloc(size);
-    if (!block->data) {
-        free(block);
-        return NULL;
-    }
-    block->position = 0;
-    block->fragmented = 0;
-    block->fragments = NULL;
-    block->fragment_count = 0;
+    container->total_size = total_size;
+    container->block_count = 0;
+    container->blocks = NULL;
+    container->index = NULL; // Позже можно инициализировать, например, B-дерево.
 
-    return block;
+    return container;
 }
+
 
 compio_block* compio_block_init(size_t offset, size_t size, int is_compressed, void* data) {
     compio_block* block = compio_create_block(size, is_compressed);
