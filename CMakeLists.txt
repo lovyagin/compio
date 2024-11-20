@@ -8,7 +8,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 
 add_executable(compio main.c include/block.h
-        compio.h)
+        compio.h
+        include/btree.h
+        src/btree.c)
 
 target_sources(compio PRIVATE
         src/block.c
