@@ -98,4 +98,15 @@ void btree_free_node(BTreeNode* node);
  */
 void btree_free(BTree* tree);
 
+
+
+/**
+ * @brief Removes a key-value pair from the B-Tree.
+ *
+ * @param tree Pointer to the B-Tree.
+ * @param key The key to remove.
+ * @return 0 if the key was successfully removed, -1 if the key was not found.
+ */
+int btree_remove(BTree* tree, size_t key);
+
 #endif /* BTREE_H */
