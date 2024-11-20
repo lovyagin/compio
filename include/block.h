@@ -7,7 +7,7 @@
 
 /**
  * @struct compio_block
- * @brief Represents a data block.
+ * @brief Represents a data block with metadata and raw data.
  *
  * Describes a block of data, including its offset, size, compression state,
  * and a pointer to uncompressed data.
@@ -22,7 +22,7 @@ typedef struct {
 
 /**
  * @struct compio_block_container
- * @brief Container for managing blocks.
+ * @brief Container for managing multiple blocks and their index.
  *
  * Holds an array of blocks and provides interfaces for manipulating them.
  * Includes an index structure for fast block lookup (e.g., a B-tree).
@@ -36,7 +36,7 @@ typedef struct {
 
 /**
  * @struct compio_file_state
- * @brief Represents the state of an open file.
+ * @brief Tracks the current file position within a block container.
  *
  * Manages the current position and access to blocks within a file.
  */
@@ -67,6 +67,8 @@ compio_block* compio_create_block(size_t size, bool is_compressed, const char* c
  * @param block A pointer to the block to free.
  */
 void compio_free_block(compio_block* block);
+
+
 
 /* Block container management functions */
 
@@ -118,15 +120,26 @@ compio_block* compio_find_block(compio_block_container* container, size_t positi
  */
 int compio_update_index(compio_block_container* container);
 
+/**
+ * @brief Frees all resources associated with a block container.
+ *
+ * This function deallocates the memory used by the block container, including
+ * the blocks array, index structure (if used), and individual blocks.
+ *
+ * @param container A pointer to the block container to be freed.
+ *                  If NULL, the function does nothing.
+ */
+void compio_free_block_container(compio_block_container* container);
+
 /* File state management functions */
 
 /**
- * @brief Opens a file and initializes its state structure.
+ * @brief Opens a file state for managing block access.
  *
  * @param container A pointer to the block container.
  * @return A pointer to the file state, or NULL on failure.
  */
-compio_file_state* compio_open_file(compio_block_container* container);
+compio_file_state* compio_open_block_file_state(compio_block_container* container);
 
 /**
  * @brief Sets the current position in the file.
@@ -136,5 +149,17 @@ compio_file_state* compio_open_file(compio_block_container* container);
  * @return 0 on success, -1 on failure.
  */
 int compio_set_file_position(compio_file_state* state, size_t position);
+
+/**
+ * @brief Frees all resources associated with a file state.
+ *
+ * This function deallocates the memory used by the file state, including
+ * detaching it from the associated block container. It does not free
+ * the container itself, which must be managed separately.
+ *
+ * @param state A pointer to the file state to be freed.
+ *              If NULL, the function does nothing.
+ */
+void compio_free_file_state(compio_file_state* state);
 
 #endif /* COMPIO_BLOCK_H */
