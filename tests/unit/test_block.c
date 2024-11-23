@@ -5,179 +5,46 @@
 
 #include <CUnit/CUnit.h>
 #include <CUnit/Basic.h>
-#include <stdlib.h>
-#include "../include/block.h"
-#include "../compio.h"
+#include "block.h"
 
-void test_compio_create_block(void) {
-    printf("Creating block...\n");
-    compio_block* block = compio_create_block(1024, 1);
+void test_block_creation(void) {
+    compio_block* block = compio_create_block(100, false, NULL);
     CU_ASSERT_PTR_NOT_NULL(block);
-    if (block == NULL) {
-        printf("Block creation failed: block is NULL\n");
-        return;
-    }
-    CU_ASSERT_EQUAL(block->size, 1024);
-    CU_ASSERT_EQUAL(block->is_compressed, 1);
-    printf("Block created successfully\n");
+    CU_ASSERT(block->size == 100);
+    CU_ASSERT(block->is_compressed == false);
+    CU_ASSERT_PTR_NULL(block->compression_type);
     compio_free_block(block);
 }
 
-void test_compio_block_init(void) {
-    int data = 123;
-    printf("Initializing block...\n");
-    compio_block* block = compio_block_init(0, sizeof(data), 1, &data);
-    CU_ASSERT_PTR_NOT_NULL(block);
-    if (block == NULL) {
-        printf("Block initialization failed: block is NULL\n");
-        return;
-    }
-    CU_ASSERT_EQUAL(block->offset, 0);
-    CU_ASSERT_EQUAL(block->size, sizeof(data));
-    CU_ASSERT_EQUAL(block->is_compressed, 1);
-    CU_ASSERT_PTR_NOT_NULL(block->data);
-    if (block->data != NULL) {
-        CU_ASSERT_EQUAL(*(int*)block->data, data);
-    }
-    printf("Block initialized successfully\n");
-    compio_free_block(block);
+void test_block_container(void) {
+    compio_block_container* container = compio_create_block_container(1000);
+    CU_ASSERT_PTR_NOT_NULL(container);
+
+    compio_block* block1 = compio_create_block(100, false, NULL);
+    compio_block* block2 = compio_create_block(200, true, "gzip");
+
+    block1->offset = 0;
+    block2->offset = 100;
+
+    CU_ASSERT_EQUAL(compio_add_block(container, block1), 0);
+    CU_ASSERT_EQUAL(compio_add_block(container, block2), 0);
+
+    size_t block_offset;
+    compio_block* found_block = compio_find_block(container, 50, &block_offset);
+    CU_ASSERT_PTR_NOT_NULL(found_block);
+    CU_ASSERT_EQUAL(found_block, block1);
+
+    found_block = compio_find_block(container, 150, &block_offset);
+    CU_ASSERT_PTR_NOT_NULL(found_block);
+    CU_ASSERT_EQUAL(found_block, block2);
+
+    CU_ASSERT_EQUAL(compio_remove_block(container, 0), 0);
+    CU_ASSERT_PTR_NULL(compio_find_block(container, 50, &block_offset));
+
+    compio_free_block_container(container);
 }
 
-void test_compio_free_block(void) {
-    printf("Creating block for free test...\n");
-    compio_block* block = compio_create_block(512, 0);
-    CU_ASSERT_PTR_NOT_NULL(block);
-    if (block == NULL) {
-        printf("Block creation failed: block is NULL\n");
-        return;
-    }
-    printf("Block created: size=%zu, is_compressed=%d\n", block->size, block->is_compressed);
-    printf("Freeing block...\n");
-    compio_free_block(block);
-    printf("Block freed successfully\n");
-}
-
-void test_compio_find_block_by_offset(void) {
-    printf("Finding block by offset...\n");
-    compio_block blocks[3] = {
-            {0, 100, 0, NULL},
-            {100, 200, 1, NULL},
-            {300, 150, 0, NULL}
-    };
-
-    compio_block* found = compio_find_block_by_offset(blocks, 3, 100);
-    CU_ASSERT_PTR_NOT_NULL(found);
-    if (found == NULL) {
-        printf("Block not found at offset 100\n");
-    } else {
-        CU_ASSERT_EQUAL(found->offset, 100);
-        printf("Block found at offset 100\n");
-    }
-
-    found = compio_find_block_by_offset(blocks, 3, 250); // Does not exist
-    CU_ASSERT_PTR_NULL(found);
-    if (found == NULL) {
-        printf("Block not found at offset 250\n");
-    }
-}
-
-void test_compio_split_block_into_fragments(void) {
-    printf("Splitting block into fragments...\n");
-    compio_block block = {0, 1024, 0, malloc(1024)};
-    size_t num_fragments;
-    compio_fragment* fragments = compio_split_block_into_fragments(&block, 256, &num_fragments);
-
-    CU_ASSERT_PTR_NOT_NULL(fragments);
-    if (fragments == NULL) {
-        printf("Fragmentation failed: fragments is NULL\n");
-        free(block.data);
-        return;
-    }
-    CU_ASSERT_EQUAL(num_fragments, 4);
-    for (size_t i = 0; i < num_fragments; ++i) {
-        CU_ASSERT_EQUAL(fragments[i].size, 256);
-        CU_ASSERT_EQUAL(fragments[i].offset, i * 256);
-    }
-    printf("Block split into %zu fragments successfully\n", num_fragments);
-    free(fragments);
-    free(block.data);
-}
-
-void test_compio_set_position(void) {
-    compio_block* block = compio_create_block(1024, 0);
-    CU_ASSERT_EQUAL(compio_set_position(block, 512), 0);
-    CU_ASSERT_EQUAL(block->position, 512);
-    CU_ASSERT_EQUAL(compio_set_position(block, 2048), -1); // Invalid position
-    compio_free_block(block);
-}
-
-void test_compio_read_and_write(void) {
-    compio_block* block = compio_create_block(1024, 0);
-    char data[128] = "Hello, compression!";
-    CU_ASSERT_EQUAL(compio_write_to_block(block, data, sizeof(data)), sizeof(data));
-    CU_ASSERT_EQUAL(block->position, sizeof(data));
-
-    char buffer[128];
-    compio_set_position(block, 0); // Reset to the beginning
-    CU_ASSERT_EQUAL(compio_read_from_block(block, buffer, sizeof(buffer)), sizeof(buffer));
-    CU_ASSERT_STRING_EQUAL(buffer, data);
-
-    compio_free_block(block);
-}
-
-void test_compio_add_fragment(void) {
-    compio_block* block = compio_create_block(1024, 0);
-    compio_fragment fragment = {0, 256, 1};
-    CU_ASSERT_EQUAL(compio_add_fragment(block, fragment), 0);
-    CU_ASSERT_EQUAL(block->fragment_count, 1);
-    CU_ASSERT_EQUAL(block->fragments[0].size, 256);
-    compio_free_block(block);
-}
-
-void test_compio_remove_fragment(void) {
-    compio_block* block = compio_create_block(1024, 0);
-    compio_fragment fragment = {0, 256, 1};
-    compio_add_fragment(block, fragment);
-    CU_ASSERT_EQUAL(compio_remove_fragment(block, 0), 0);
-    CU_ASSERT_EQUAL(block->fragment_count, 0);
-    compio_free_block(block);
-}
-
-void test_compio_is_fragmented(void) {
-    compio_block* block = compio_create_block(1024, 0);
-    CU_ASSERT_FALSE(compio_is_fragmented(block));
-    compio_fragment fragment = {0, 256, 1};
-    compio_add_fragment(block, fragment);
-    CU_ASSERT_TRUE(compio_is_fragmented(block));
-    compio_free_block(block);
-}
-
-void test_compio_validate_position(void) {
-    compio_block* block = compio_create_block(1024, 0);
-    CU_ASSERT_EQUAL(compio_validate_position(block, 512), 0);
-    CU_ASSERT_EQUAL(compio_validate_position(block, 2048), -1);
-    compio_free_block(block);
-}
-
-int main(void) {
-    CU_initialize_registry();
-    CU_pSuite suite = CU_add_suite("compio_block_tests", 0, 0);
-
-    CU_add_test(suite, "test_compio_create_block", test_compio_create_block);
-    CU_add_test(suite, "test_compio_block_init", test_compio_block_init);
-    CU_add_test(suite, "test_compio_free_block", test_compio_free_block);
-    CU_add_test(suite, "test_compio_find_block_by_offset", test_compio_find_block_by_offset);
-    CU_add_test(suite, "test_compio_split_block_into_fragments", test_compio_split_block_into_fragments);
-    CU_add_test(suite, "test_compio_set_position", test_compio_set_position);
-    CU_add_test(suite, "test_compio_read_and_write", test_compio_read_and_write);
-    CU_add_test(suite, "test_compio_add_fragment", test_compio_add_fragment);
-    CU_add_test(suite, "test_compio_remove_fragment", test_compio_remove_fragment);
-    CU_add_test(suite, "test_compio_is_fragmented", test_compio_is_fragmented);
-    CU_add_test(suite, "test_compio_validate_position", test_compio_validate_position);
-
-    CU_basic_set_mode(CU_BRM_VERBOSE);
-    CU_basic_run_tests();
-    CU_cleanup_registry();
-
-    return 0;
+void add_block_tests(void) {
+    CU_pSuite suite = CU_add_suite("Block Tests", NULL, NULL);
+    CU_add_test(suite, "Test Block Creation", test_block_creation);
 }

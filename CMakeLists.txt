@@ -22,6 +22,13 @@ target_sources(compio PRIVATE
 
 target_include_directories(compio PRIVATE include)
 
+add_library(compio_lib
+        src/block.c
+        src/btree.c
+)
+
+target_include_directories(compio_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
+
 find_package(ZLIB REQUIRED)
 if(ZLIB_FOUND)
     target_link_libraries(compio PRIVATE ZLIB::ZLIB)
