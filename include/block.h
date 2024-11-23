@@ -68,8 +68,6 @@ compio_block* compio_create_block(size_t size, bool is_compressed, const char* c
  */
 void compio_free_block(compio_block* block);
 
-
-
 /* Block container management functions */
 
 /**
