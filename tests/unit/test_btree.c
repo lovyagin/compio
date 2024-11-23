@@ -65,7 +65,7 @@ void test_btree_delete(void) {
     btree_insert(tree, 30, NULL);
     btree_insert(tree, 7, NULL);
     btree_insert(tree, 17, NULL);
-    
+
     btree_delete(tree, 6);
     CU_ASSERT_PTR_NOT_NULL(tree);  // Ensure tree still exists
 

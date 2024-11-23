@@ -118,4 +118,14 @@ size_t btree_find_min(BTree* tree);
  */
 size_t btree_find_max(BTree* tree);
 
+/**
+ * @brief Updates the value associated with a given key in the B-Tree.
+ *
+ * @param tree Pointer to the B-Tree.
+ * @param key The key to update.
+ * @param new_value The new value to associate with the key.
+ * @return 0 if the update is successful, or -1 if the key is not found.
+ */
+int btree_update(BTree* tree, size_t key, void* new_value);
+
 #endif // BTREE_H
