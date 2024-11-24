@@ -57,6 +57,7 @@ void btree_free_node(BTreeNode* node) {
 
 void btree_insert(BTree* tree, size_t key, void* value) {
     if (tree == NULL) return;
+    printf("Inserting key %zu into B-Tree\n", key);
     BTreeNode* root = tree->root;
     if (root->num_keys == (2 * tree->degree - 1)) {
         BTreeNode* new_root = btree_create_node(tree->degree, false);
@@ -124,6 +125,7 @@ void btree_split_child(BTreeNode* parent, size_t index, BTreeNode* child, size_t
 
 BTreeNode* btree_search(BTree* tree, size_t key) {
     if (tree == NULL) return NULL;
+    printf("Searching for key %zu in B-Tree\n", key);
     return btree_search_node(tree->root, key);
 }
 

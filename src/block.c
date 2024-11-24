@@ -74,7 +74,6 @@ int compio_add_block(compio_block_container* container, compio_block* block) {
         return -1;
     }
     container->blocks[container->block_count] = block;
-    btree_insert(container->index, container->block_count, block);  // Insert the block into the B-Tree index
     container->block_count++;
     compio_update_index(container);
     return 0;
@@ -95,11 +94,19 @@ int compio_remove_block(compio_block_container* container, size_t block_index) {
 }
 
 compio_block* compio_find_block(compio_block_container* container, size_t position) {
-    if (container == NULL) return NULL;
-    // Use the B-Tree index to find the block by position
+    if (container == NULL) {
+        fprintf(stderr, "Error: Block container is NULL.\n");
+        return NULL;
+    }
+
+    if (position >= container->block_count) {
+        fprintf(stderr, "Error: Block not found at position %zu (available blocks: %zu).\n", position, container->block_count);
+        return NULL;
+    }
+
     BTreeNode* node = btree_search(container->index, position);
     if (node == NULL) {
-        fprintf(stderr, "Error: Block not found at position %zu.\n", position);
+        fprintf(stderr, "Error: Block not found in B-Tree at position %zu.\n", position);
         return NULL;
     }
     return container->blocks[position];
