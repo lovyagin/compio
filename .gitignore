@@ -81,3 +81,6 @@ cmake_install.cmake
 /vcpkg_installed/
 /vcpkg/buildtrees/
 /vcpkg/downloads/
+
+*.cmake
+*build.ninja

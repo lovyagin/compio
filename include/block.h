@@ -9,8 +9,6 @@
 #include <stdlib.h>
 #include "stdbool.h"
 
-
-
 /**
  * @struct compio_fragment
  * @brief Структура, представляющая фрагмент блока.

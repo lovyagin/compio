@@ -27,6 +27,10 @@ else()
     message(FATAL_ERROR "ZLIB not found. Please install it using vcpkg.")
 endif()
 
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    set(unofficial-cunit_DIR "${CMAKE_SOURCE_DIR}/vcpkg_installed/arm64-osx/share/unofficial-cunit")
+endif()
+
 find_package(unofficial-cunit CONFIG REQUIRED)
 if(TARGET unofficial::cunit::cunit)
     target_link_libraries(compio PRIVATE unofficial::cunit::cunit)
