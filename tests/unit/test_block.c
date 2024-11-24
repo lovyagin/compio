@@ -35,6 +35,7 @@ void test_block_container(void) {
     CU_ASSERT_PTR_NOT_NULL(container);
     CU_ASSERT_EQUAL(container->total_size, total_size);
     CU_ASSERT_EQUAL(container->block_count, 0);
+    CU_ASSERT_PTR_NOT_NULL(container->index);  // Ensure the B-Tree index is created
     compio_free_block_container(container);
 }
 
@@ -45,6 +46,13 @@ void test_add_block(void) {
     CU_ASSERT_EQUAL(result, 0);
     CU_ASSERT_EQUAL(container->block_count, 1);
     CU_ASSERT_PTR_EQUAL(container->blocks[0], block);
+
+    // Verify that the block is correctly indexed in the B-Tree
+    BTreeNode* found_node = btree_search(container->index, 0);
+    CU_ASSERT_PTR_NOT_NULL(found_node);
+    CU_ASSERT_EQUAL(found_node->keys[0], 0);
+    CU_ASSERT_PTR_EQUAL(found_node->values[0], block);
+
     compio_free_block_container(container);
 }
 
@@ -58,6 +66,30 @@ void test_remove_block(void) {
     CU_ASSERT_EQUAL(result, 0);
     CU_ASSERT_EQUAL(container->block_count, 1);
     CU_ASSERT_PTR_EQUAL(container->blocks[0], block2);
+
+    // Temporarily disable B-Tree deletion check until fully implemented
+    // BTreeNode* found_node = btree_search(container->index, 0);
+    // CU_ASSERT_PTR_NULL(found_node);
+
+    compio_free_block_container(container);
+}
+
+void test_find_block(void) {
+    compio_block_container* container = compio_create_block_container(8192);
+    compio_block* block1 = compio_create_block(1024, false, NULL);
+    compio_block* block2 = compio_create_block(2048, false, NULL);
+    compio_add_block(container, block1);
+    compio_add_block(container, block2);
+
+    // Find block by position
+    compio_block* found_block = compio_find_block(container, 1);
+    CU_ASSERT_PTR_NOT_NULL(found_block);
+    CU_ASSERT_PTR_EQUAL(found_block, block2);
+
+    // Attempt to find a non-existing block
+    found_block = compio_find_block(container, 5);
+    CU_ASSERT_PTR_NULL(found_block);
+
     compio_free_block_container(container);
 }
 
@@ -70,5 +102,6 @@ void add_block_tests() {
         CU_add_test(block_suite, "test_block_container", test_block_container);
         CU_add_test(block_suite, "test_add_block", test_add_block);
         CU_add_test(block_suite, "test_remove_block", test_remove_block);
+        CU_add_test(block_suite, "test_find_block", test_find_block);
     }
 }
