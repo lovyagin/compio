@@ -6,11 +6,6 @@
 // Helper function declarations
 BTreeNode* btree_search_node(BTreeNode* node, size_t key);
 void btree_delete_node(BTreeNode* node, size_t key, size_t degree);
-void btree_merge_children(BTreeNode* parent, size_t idx, size_t degree);
-void btree_borrow_from_prev(BTreeNode* parent, size_t idx);
-void btree_borrow_from_next(BTreeNode* parent, size_t idx);
-size_t btree_find_max_in_node(BTreeNode* node);
-size_t btree_find_min_in_node(BTreeNode* node);
 
 BTree* btree_create(size_t degree) {
     BTree* tree = (BTree*)malloc(sizeof(BTree));

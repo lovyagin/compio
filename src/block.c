@@ -76,6 +76,7 @@ int compio_add_block(compio_block_container* container, compio_block* block) {
     container->blocks[container->block_count] = block;
     btree_insert(container->index, container->block_count, block);  // Insert the block into the B-Tree index
     container->block_count++;
+    compio_update_index(container);
     return 0;
 }
 
@@ -89,6 +90,7 @@ int compio_remove_block(compio_block_container* container, size_t block_index) {
         container->blocks[i] = container->blocks[i + 1];
     }
     container->block_count--;
+    compio_update_index(container);
     return 0;
 }
 
