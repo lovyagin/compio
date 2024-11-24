@@ -128,4 +128,45 @@ size_t btree_find_max(BTree* tree);
  */
 int btree_update(BTree* tree, size_t key, void* new_value);
 
+/**
+ * @brief Merges two children of a B-Tree node.
+ *
+ * @param parent Pointer to the parent node.
+ * @param idx Index of the child to be merged with its sibling.
+ * @param degree Minimum degree (t) of the B-Tree.
+ */
+void btree_merge_children(BTreeNode* parent, size_t idx, size_t degree);
+
+/**
+ * @brief Borrows a key from the previous sibling of a child node.
+ *
+ * @param parent Pointer to the parent node.
+ * @param idx Index of the child node to borrow a key for.
+ */
+void btree_borrow_from_prev(BTreeNode* parent, size_t idx);
+
+/**
+ * @brief Borrows a key from the next sibling of a child node.
+ *
+ * @param parent Pointer to the parent node.
+ * @param idx Index of the child node to borrow a key for.
+ */
+void btree_borrow_from_next(BTreeNode* parent, size_t idx);
+
+/**
+ * @brief Finds the maximum key in a given B-Tree node.
+ *
+ * @param node Pointer to the B-Tree node.
+ * @return The maximum key in the node.
+ */
+size_t btree_find_max_in_node(BTreeNode* node);
+
+/**
+ * @brief Finds the minimum key in a given B-Tree node.
+ *
+ * @param node Pointer to the B-Tree node.
+ * @return The minimum key in the node.
+ */
+size_t btree_find_min_in_node(BTreeNode* node);
+
 #endif // BTREE_H
