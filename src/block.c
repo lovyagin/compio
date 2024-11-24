@@ -99,6 +99,22 @@ compio_block* compio_find_block(compio_block_container* container, size_t positi
     return container->blocks[position];
 }
 
+compio_block* compio_find_block_by_offset(compio_block_container* container, size_t offset, size_t* internal_offset) {
+    if (container == NULL || internal_offset == NULL) {
+        return NULL; // Invalid input
+    }
+    size_t current_offset = 0;
+    for (size_t i = 0; i < container->block_count; i++) {
+        compio_block* block = container->blocks[i];
+        if (offset < current_offset + block->size) {
+            *internal_offset = offset - current_offset; // Calculate the offset within the block
+            return block;
+        }
+        current_offset += block->size;
+    }
+    return NULL; // Offset is out of range
+}
+
 void compio_update_index(compio_block_container* container) { // Rebuild the B-Tree index
     if (container == NULL) return;
     btree_free(container->index); // Free old index

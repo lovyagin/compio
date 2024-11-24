@@ -21,6 +21,7 @@ typedef struct compio_block {
  * @brief Represents a container for managing multiple blocks.
  */
 typedef struct compio_block_container {
+    void* storage_reference;       /**< Reference to storage configuration */
     compio_block** blocks;         /**< Array of pointers to blocks */
     size_t total_size;             /**< Total capacity of the container */
     size_t block_count;            /**< Current number of blocks in the container */
@@ -85,6 +86,20 @@ int compio_remove_block(compio_block_container* container, size_t block_index);
  * @return Pointer to the block if found, or NULL if not found.
  */
 compio_block* compio_find_block(compio_block_container* container, size_t position);
+
+/**
+ * @brief Finds a block and calculates the internal offset within that block by a given position in bytes.
+ *
+ * This function is used to locate the block corresponding to a specific byte offset
+ * in the overall storage. It returns a pointer to the block and sets the internal
+ * offset within the block.
+ *
+ * @param container Pointer to the block container.
+ * @param offset Byte offset from the start of the file.
+ * @param internal_offset Pointer to a variable to store the internal offset within the block.
+ * @return Pointer to the corresponding block, or NULL if the offset is out of range.
+ */
+compio_block* compio_find_block_by_offset(compio_block_container* container, size_t offset, size_t* internal_offset);
 
 /**
  * @brief Updates the index of the block container.
