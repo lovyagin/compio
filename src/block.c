@@ -74,15 +74,16 @@ int compio_add_block(compio_block_container* container, compio_block* block) { /
     return 0;
 }
 
-int compio_remove_block(compio_block_container* container, size_t block_index) { // Remove a block and update B-Tree more efficiently
-    if (container == NULL || block_index >= container->block_count) return -1;
-    compio_free_block(container->blocks[block_index]);
-    // Update the B-Tree to remove the block by its index
-    btree_delete(container->index, block_index); // Efficiently delete block from B-Tree without full rebuild
-    // Shift remaining blocks to fill the gap
-    for (size_t i = block_index; i < container->block_count - 1; i++) {
+int compio_remove_block(compio_block_container* container, size_t index) {
+    if (index >= container->block_count) {
+        return -1; // Index out of range
+    }
+    printf("Removing block at index %zu\n", index); // Debug print
+    // Remove block from B-Tree
+    btree_delete(container->index, index);
+    // Shift blocks in the array
+    for (size_t i = index; i < container->block_count - 1; i++) {
         container->blocks[i] = container->blocks[i + 1];
-        btree_insert(container->index, i, container->blocks[i]); // Update B-Tree for shifted blocks
     }
     container->block_count--;
     return 0;

@@ -67,9 +67,9 @@ void test_remove_block(void) {
     CU_ASSERT_EQUAL(container->block_count, 1);
     CU_ASSERT_PTR_EQUAL(container->blocks[0], block2);
 
-    // Temporarily disable B-Tree deletion check until fully implemented
-    // BTreeNode* found_node = btree_search(container->index, 0);
-    // CU_ASSERT_PTR_NULL(found_node);
+    // Verify that the block is correctly removed from the B-Tree
+    BTreeNode* found_node = btree_search(container->index, 0);
+    CU_ASSERT_PTR_NULL(found_node);
 
     compio_free_block_container(container);
 }
