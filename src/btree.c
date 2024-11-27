@@ -158,6 +158,46 @@ void btree_delete(BTree* tree, size_t key) {
     }
 }
 
+size_t btree_find_min(BTree* tree) {
+    if (tree == NULL || tree->root == NULL) {
+        return 0; // Tree is empty
+    }
+    BTreeNode* current = tree->root;
+    while (!current->is_leaf) {
+        current = current->children[0];
+    }
+    return current->num_keys > 0 ? current->keys[0] : 0;
+}
+
+size_t btree_find_max(BTree* tree) {
+    if (tree == NULL || tree->root == NULL) {
+        return 0; // Tree is empty
+    }
+    BTreeNode* current = tree->root;
+    while (!current->is_leaf) {
+        current = current->children[current->num_keys];
+    }
+    return current->num_keys > 0 ? current->keys[current->num_keys - 1] : 0;
+}
+
+int btree_update(BTree* tree, size_t key, void* new_value) {
+    if (tree == NULL || tree->root == NULL) {
+        return -1; // Tree is empty
+    }
+    BTreeNode* node = btree_search(tree, key); // Find node with the key
+    if (node == NULL) {
+        return -1; // Key not found
+    }
+    for (size_t i = 0; i < node->num_keys; i++) {
+        if (node->keys[i] == key) {
+            printf("Updating key %zu: old value %p -> new value %p\n", key, node->values[i], new_value);
+            node->values[i] = new_value; // Update the value
+            return 0; // Success
+        }
+    }
+    return -1; // Key not found in this node
+}
+
 void btree_delete_node(BTreeNode* node, size_t key, size_t degree) {
     size_t idx = 0;
     while (idx < node->num_keys && key > node->keys[idx]) {

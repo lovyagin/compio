@@ -86,14 +86,6 @@ void btree_insert_non_full(BTreeNode* node, size_t key, void* value, size_t degr
 void btree_split_child(BTreeNode* parent, size_t index, BTreeNode* child, size_t degree);
 
 /**
- * @brief Deletes a key from the B-Tree.
- *
- * @param tree Pointer to the B-Tree.
- * @param key The key to delete.
- */
-void btree_delete(BTree* tree, size_t key);
-
-/**
  * @brief Searches for a key in the B-Tree.
  *
  * @param tree Pointer to the B-Tree.
@@ -101,6 +93,14 @@ void btree_delete(BTree* tree, size_t key);
  * @return Pointer to the B-Tree node containing the key, or NULL if not found.
  */
 BTreeNode* btree_search(BTree* tree, size_t key);
+
+/**
+ * @brief Deletes a key from the B-Tree.
+ *
+ * @param tree Pointer to the B-Tree.
+ * @param key The key to delete.
+ */
+void btree_delete(BTree* tree, size_t key);
 
 /**
  * @brief Searches for the minimum key in the B-Tree.
