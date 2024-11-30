@@ -57,24 +57,22 @@ compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mod
  * @brief Write block of data to file
  * 
  * @param ptr pointer to data
- * @param size size in bytes of one data unit
- * @param count number of data units
+ * @param size size in bytes
  * @param f file
  * @return size_t 
  */
-size_t compio_write(const void* ptr, size_t size, size_t count, compio_file* f);
+size_t compio_write(const void* ptr, size_t size, compio_file* f);
 
 
 /**
  * @brief Read block of data from file
  * 
  * @param ptr pointer to buffer
- * @param size size in bytes of one data unit
- * @param count number of data units
+ * @param size size in bytes
  * @param f file
  * @return size_t 
  */
-size_t compio_read(void* ptr, size_t size, size_t count, compio_file* f);
+size_t compio_read(void* ptr, size_t size, compio_file* f);
 
 
 #define COMP_SEEK_SET   0
