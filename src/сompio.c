@@ -1,5 +1,5 @@
 //
-// Основные функции API
+// External API implementation
 //
 
 #include "compio.h"

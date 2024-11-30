@@ -1,5 +1,5 @@
 //
-// Основной заголовочный файл для публичного API библиотеки
+// External API header
 //
 
 #ifndef COMPIO_COMPIO_H
@@ -10,7 +10,7 @@
 
 
 /**
- * @brief Структура открытого архива
+ * @brief Struct for opened archive
  * 
  */
 typedef struct {
@@ -21,7 +21,7 @@ typedef struct {
 
 
 /**
- * @brief Структура открытого файла в архиве
+ * @brief Struct for opened file in archive
  * 
  */
 typedef struct {
@@ -33,45 +33,45 @@ typedef struct {
 
 
 /**
- * @brief Открыть файл как архив, и вернуть указатель на структуру архива
+ * @brief Open archive
  * 
- * @param fp Путь к файлу
- * @param mode Режим (https://en.cppreference.com/w/cpp/io/c/fopen)
+ * @param fp path to file
+ * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
  * @return compio_archive* 
  */
 compio_archive* compio_open_archive(const char* fp, const char* mode);
 
 
 /**
- * @brief Открыть файл в архиве для чтения или записи, и вернуть указатель на структура файла
+ * @brief Open file inside of an opened archive
  * 
- * @param a Архив
- * @param fp Путь к файлу внутри архива
- * @param mode Режим (https://en.cppreference.com/w/cpp/io/c/fopen)
+ * @param a archive
+ * @param fp path to file inside of archive
+ * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
  * @return compio_file* 
  */
 compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode);
 
 
 /**
- * @brief Записать блок данных в место текущего указателя в файле
+ * @brief Write block of data to file
  * 
- * @param ptr Указатель на блок данных
- * @param size Размер единицы данных
- * @param count Количество единиц данных
- * @param f Файл
+ * @param ptr pointer to data
+ * @param size size in bytes of one data unit
+ * @param count number of data units
+ * @param f file
  * @return size_t 
  */
 size_t compio_write(const void* ptr, size_t size, size_t count, compio_file* f);
 
 
 /**
- * @brief Прочитать блок данных из места текущего указателя в файле
+ * @brief Read block of data from file
  * 
- * @param ptr Указатель на свободных блок данных для вывода
- * @param size Размер единицы данных
- * @param count Количество единиц данных
- * @param f Файл
+ * @param ptr pointer to buffer
+ * @param size size in bytes of one data unit
+ * @param count number of data units
+ * @param f file
  * @return size_t 
  */
 size_t compio_read(void* ptr, size_t size, size_t count, compio_file* f);
@@ -83,42 +83,42 @@ size_t compio_read(void* ptr, size_t size, size_t count, compio_file* f);
 
 
 /**
- * @brief Переместить указатель в файле на offset байтов, в зависимости от параметра whence
- * Возможные значения whence:
- *  - COMP_SEEK_SET - offset отсчитывается от начала файла
- *  - COMP_SEEK_CUR - offset отсчитывается от текущего положения курсора
- *  - COMP_SEEK_END - offset отсчитывается от конца файла
+ * @brief Set current position inside of a file
  * 
- * @param f Файл
- * @param offset Сдвиг в количестве байт 
- * @param whence Точка отсчёта для сдвига
+ * @param f file
+ * @param offset offset in bytes
+ * @param origin position, used as reference for the offset
+ * `origin` possible values:
+ *  - COMP_SEEK_SET - offset is counted from the beginning of a file
+ *  - COMP_SEEK_CUR - offset is counter from current position
+ *  - COMP_SEEK_END - offset is counter from the end of a file
  * @return int
  */
-int compio_seek(compio_file* f, long offset, int whence);
+int compio_seek(compio_file* f, long offset, int origin);
 
 
 /**
- * @brief Вернуть текущее положение курсора в файле
+ * @brief Get current position inside of a file
  * 
- * @param f Файл
+ * @param f file
  * @return long 
  */
 long compio_tell(compio_file* f);
 
 
 /**
- * @brief Закрыть файл и удалить структуру файла
+ * @brief Close opened file
  * 
- * @param f Файл
+ * @param f file
  * @return int 
  */
 int compio_close_file(compio_file* f);
 
 
 /**
- * @brief Закрыть архив и удалить структуру архива
+ * @brief Close opened archive
  * 
- * @param a Архив
+ * @param a archive
  * @return int 
  */
 int compio_close_archive(compio_archive* a);
