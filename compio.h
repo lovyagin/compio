@@ -37,6 +37,7 @@ typedef struct {
 typedef struct {
     FILE* file;
     const char* mode;
+    compio_compression_config* config;
     // ...
 } compio_archive;
 

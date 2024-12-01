@@ -5,7 +5,7 @@
 #include "compio.h"
 
 
-compio_archive* compio_open_archive(const char* fp, const char* mode) {
+compio_archive* compio_open_archive(const char* fp, const char* mode, compio_compression_config* c) {
     compio_archive* archive = (compio_archive*)malloc(sizeof(compio_archive));
     if (!archive) {
         // errno is set by malloc
@@ -22,5 +22,16 @@ compio_archive* compio_open_archive(const char* fp, const char* mode) {
     }
 
     archive->mode = mode;
+    archive->config = c;
     return archive;
+}
+
+
+int compio_close_archive(compio_archive* a) {
+    if (fclose(a->file)) {
+        return -1;
+    }
+
+    free(a);
+    return 0;
 }
