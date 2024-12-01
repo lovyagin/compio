@@ -7,7 +7,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 
-add_executable(compio main.c include/block.h)
+add_executable(compio main.c include/block.h
+        compio.h
+        include/btree.h
+        src/btree.c)
 
 target_sources(compio PRIVATE
     src/block.c
@@ -17,7 +20,14 @@ target_sources(compio PRIVATE
     archivers/zlib_adapter.c
 )
 
-target_include_directories(compio PRIVATE include)
+# target_include_directories(compio PRIVATE include)
+
+add_library(compio_lib
+        src/block.c
+        src/btree.c
+)
+
+target_include_directories(compio_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 find_package(ZLIB REQUIRED)
 if(ZLIB_FOUND)
