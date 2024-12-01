@@ -8,6 +8,27 @@
 #include <stdio.h>
 #include <errno.h>
 
+#include "compression.h"
+
+
+/**
+ * @brief Compression settings
+ * 
+ * @param compressor compressor, that will be used to compress blocks of data
+ */
+typedef struct {
+    compio_compressor* compressor;
+} compio_compression_config;
+
+
+/**
+ * @brief Fragmentation settings (defragmentation strategies)
+ * 
+ */
+typedef struct {
+    // ...
+} compio_fragmentation_config;
+
 
 /**
  * @brief Struct for opened archive
@@ -37,9 +58,10 @@ typedef struct {
  * 
  * @param fp path to file
  * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
+ * @param c compression config (compression algorithm)
  * @return compio_archive* 
  */
-compio_archive* compio_open_archive(const char* fp, const char* mode);
+compio_archive* compio_open_archive(const char* fp, const char* mode, compio_compression_config* c);
 
 
 /**
@@ -48,9 +70,10 @@ compio_archive* compio_open_archive(const char* fp, const char* mode);
  * @param a archive
  * @param fp path to file inside of archive
  * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
+ * @param c fragmentation config (defragmentation strategy for this file)
  * @return compio_file* 
  */
-compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode);
+compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode, compio_fragmentation_config* c);
 
 
 /**
