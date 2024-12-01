@@ -68,6 +68,7 @@ CMakeFiles/
 Testing/
 CTestTestfile.cmake
 cmake_install.cmake
+tests/Makefile
 
 # Logs and temporary files
 *.log
