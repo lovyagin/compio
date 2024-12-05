@@ -85,3 +85,5 @@ tests/Makefile
 
 *.cmake
 *build.ninja
+
+.vscode/
