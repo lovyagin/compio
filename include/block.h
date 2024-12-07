@@ -1,3 +1,13 @@
+/**
+ * @internal
+ * @file block.h
+ * @brief Internal header for block management in the compression library.
+ *
+ * This file provides structures and functions for managing data blocks within
+ * the compression system. It includes definitions for creating, accessing,
+ * and managing blocks and their containers.
+ */
+
 #ifndef BLOCK_H
 #define BLOCK_H
 

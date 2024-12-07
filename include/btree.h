@@ -1,3 +1,12 @@
+/**
+ * @internal
+ * @file btree.h
+ * @brief Internal header for B-Tree implementation.
+ *
+ * This file contains structures and functions for the B-Tree data structure,
+ * which is used for indexing and efficient data retrieval in the compression library.
+ */
+
 #ifndef BTREE_H
 #define BTREE_H
 
