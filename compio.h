@@ -1,113 +1,132 @@
-//
-// External API header
-//
+/**
+ * @file compio.h
+ */
 
 #ifndef COMPIO_COMPIO_H
 #define COMPIO_COMPIO_H
 
-#include <stdio.h>
 #include <errno.h>
-
-#include "compression.h"
-
-
-/**
- * @brief Compression settings
- * 
- * @param compressor compressor, that will be used to compress blocks of data
- */
-typedef struct {
-    compio_compressor* compressor;
-} compio_compression_config;
-
+#include <stdbool.h>
+#include <stdint.h>
 
 /**
- * @brief Fragmentation settings (defragmentation strategies)
- * 
+ * @brief Compressor interface
  */
-typedef struct {
-    // ...
-} compio_fragmentation_config;
+typedef struct compio_compressor {
+	/**
+	 * @brief Compress src_size of bytes from src buffer into dst buffer.
+	 * On success, return 0 and write real size of compressed data into
+	 * dst_size. If dst buffer is to small, return non-zero code and set errno =
+	 * ENOBUFS.
+	 */
+	int (*compress)(void* dst, uint64_t* dst_size, const void* src,
+					uint64_t src_size);
 
+	/**
+	 * @brief Decompress src_size of bytes, that was previously
+	 * compressed with the same compressor, from src buffer into dst buffer. On
+	 * success, return 0 and write real size of decompressed data into dst_size.
+	 * If dst buffer is to small, return non-zero code and set errno = ENOBUFS.
+	 */
+	int (*decompress)(void* dst, uint64_t* dst_size, const void* src,
+					  uint64_t src_size);
+} compio_compressor;
 
 /**
- * @brief Struct for opened archive
- * 
+ * @brief Test compressor, keeps data exactly the same
+ *
+ * @param result
  */
-typedef struct {
-    FILE* file;
-    const char* mode;
-    compio_compression_config* config;
-    // ...
-} compio_archive;
-
+void build_dummy_compressor(compio_compressor* result);
 
 /**
- * @brief Struct for opened file in archive
- * 
+ * @brief Configuration
  */
 typedef struct {
-    compio_archive* archive;
-    const char* mode;
-    size_t cursor;
-    // ...
+	/**
+	 * @brief Compressor, that will be used for this file
+	 */
+	compio_compressor compressor;
+
+	int b_tree_order;  /**< Maximum number of children of B-Tree node */
+	int min_blocksize; /**< Minimal size of uncompressed block */
+	int max_blocksize; /**< Maximal size of uncompressed block */
+
+	/**
+	 * @brief Fill deleted blocks with zeros, so that OS may optimize it (see
+	 * sparse files)
+	 */
+	bool fill_holes_with_zeros;
+} compio_config;
+
+/**
+ * @brief Default configuration
+ *
+ * @param result
+ */
+void build_default_config(compio_config* result);
+
+/**
+ * @brief Opened archive
+ */
+typedef struct compio_archive compio_archive;
+
+/**
+ * @brief Opened file inshide of an archive
+ */
+typedef struct {
+	compio_archive* archive; /**< Opened archive */
+	const char* fn;			 /**< Internal filename */
 } compio_file;
-
 
 /**
  * @brief Open archive
- * 
- * @param fp path to file
+ *
+ * @param fp path to archive file
  * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
- * @param c compression config (compression algorithm)
- * @return compio_archive* 
+ * @param c configuration
+ * @return compio_archive*
  */
-compio_archive* compio_open_archive(const char* fp, const char* mode, compio_compression_config* c);
-
+compio_archive* compio_open_archive(const char* fp, const char* mode,
+									const compio_config* c);
 
 /**
  * @brief Open file inside of an opened archive
- * 
- * @param a archive
- * @param fp path to file inside of archive
- * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
- * @param c fragmentation config (defragmentation strategy for this file)
- * @return compio_file* 
+ *
+ * @param fp internal filename
+ * @param archive opened archive
+ * @return compio_file*
  */
-compio_file* compio_open_file(compio_archive* a, const char* fp, const char* mode, compio_fragmentation_config* c);
-
+compio_file* compio_open_file(const char* fp, compio_archive* archive);
 
 /**
  * @brief Write block of data to file
- * 
+ *
  * @param ptr pointer to data
  * @param size size in bytes
- * @param f file
- * @return size_t 
+ * @param file opened file
+ * @return uint64_t
  */
-size_t compio_write(const void* ptr, size_t size, compio_file* f);
-
+uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file);
 
 /**
  * @brief Read block of data from file
- * 
+ *
  * @param ptr pointer to buffer
  * @param size size in bytes
- * @param f file
- * @return size_t 
+ * @param file opened file
+ * @return uint64_t
  */
-size_t compio_read(void* ptr, size_t size, compio_file* f);
+uint64_t compio_read(void* ptr, uint64_t size, compio_file* file);
 
-
-#define COMP_SEEK_SET   0
-#define COMP_SEEK_CUR   1
-#define COMP_SEEK_END   2
-
+#define COMP_SEEK_SET 0
+#define COMP_SEEK_CUR 1
+#define COMP_SEEK_END 2
 
 /**
  * @brief Set current position inside of a file
- * 
- * @param f file
+ *
+ * @param file opened file
  * @param offset offset in bytes
  * @param origin position, used as reference for the offset
  * `origin` possible values:
@@ -116,34 +135,30 @@ size_t compio_read(void* ptr, size_t size, compio_file* f);
  *  - COMP_SEEK_END - offset is counter from the end of a file
  * @return int
  */
-int compio_seek(compio_file* f, long offset, int origin);
-
+int compio_seek(compio_file* file, uint64_t offset, uint8_t origin);
 
 /**
  * @brief Get current position inside of a file
- * 
- * @param f file
- * @return long 
+ *
+ * @param file opened file
+ * @return long
  */
-long compio_tell(compio_file* f);
-
+uint64_t compio_tell(compio_file* file);
 
 /**
  * @brief Close opened file
- * 
- * @param f file
- * @return int 
+ *
+ * @param file opened file
+ * @return int
  */
-int compio_close_file(compio_file* f);
-
+int compio_close_file(compio_file* file);
 
 /**
- * @brief Close opened archive
- * 
- * @param a archive
- * @return int 
+ * @brief Close opened file
+ *
+ * @param archive opened archive
+ * @return int
  */
-int compio_close_archive(compio_archive* a);
+int compio_close_archive(compio_archive* archive);
 
-
-#endif //COMPIO_COMPIO_H
+#endif // COMPIO_COMPIO_H
