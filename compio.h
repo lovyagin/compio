@@ -74,10 +74,7 @@ typedef struct compio_archive compio_archive;
 /**
  * @brief Opened file inshide of an archive
  */
-typedef struct {
-	compio_archive* archive; /**< Opened archive */
-	const char* fn;			 /**< Internal filename */
-} compio_file;
+typedef struct compio_file compio_file;
 
 /**
  * @brief Open archive
