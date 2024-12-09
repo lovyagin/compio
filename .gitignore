@@ -87,3 +87,4 @@ tests/Makefile
 *build.ninja
 
 .vscode/
+.gdb_history
