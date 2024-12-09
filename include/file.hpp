@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <memory>
 
 #include "compio.h"
 
@@ -24,7 +23,26 @@ struct header {
 	uint64_t original_fsize; /**< Original (uncompressed) file size */
 	uint64_t index_root;	 /**< Address of B-Tree root in file */
 
-    header();
+	/**
+	 * @brief Construct default header
+	 *
+	 */
+	header();
+
+	/**
+	 * @brief Read header from file
+	 *
+	 * @param file opened file
+	 * @return std::shared_ptr<header*>
+	 */
+	header(FILE* file);
+
+	/**
+	 * @brief Write header to file
+	 *
+	 * @param file opened file
+	 */
+	void write(FILE* file);
 };
 
 /**
@@ -38,8 +56,38 @@ struct index_node {
 	uint64_t* blocks;	/**< Array of blocks addressed on memory heap */
 	uint64_t* children; /**< Array of children addresses on memory heap */
 
+	int tree_order; /**< B-Tree order (not saved in file) */
+
+	/**
+	 * @brief Construct empty index node
+	 *
+	 */
+	index_node(int tree_order);
+
+	/**
+	 * @brief Read B-Tree node from file
+	 *
+	 * @param file opened file
+	 * @param addr address to read from
+	 * @param tree_order order of b-tree
+	 * @return std::shared_ptr<index_node*>
+	 */
+	index_node(FILE* file, uint64_t addr, int tree_order);
 	~index_node();
+
+	/**
+	 * @brief Write index node to file
+	 *
+	 * @param file opened file
+	 * @param addr address to write to
+	 */
+	void write(FILE* file, uint64_t addr);
 };
+
+/**
+ * @brief Size of index node metadata (without arrays)
+ */
+#define INDEX_NODE_METASIZE offsetof(index_node, keys)
 
 /**
  * @brief Block of (usually compressed) data
@@ -52,34 +100,35 @@ struct storage_block {
 	uint64_t index_key;		/**< Index key of this block */
 	uint8_t* data;			/**< Data block on memory heap */
 
+	/**
+	 * @brief Construct empty storage block
+	 *
+	 */
+	storage_block();
+
+	/**
+	 * @brief Read storage block from file
+	 *
+	 * @param file opened file
+	 * @param addr address to read from
+	 * @return std::shared_ptr<storage_block*>
+	 */
+	storage_block(FILE* file, uint64_t addr);
 	~storage_block();
+
+	/**
+	 * @brief Write storage block to file
+	 *
+	 * @param file opened file
+	 * @param addr address to write to
+	 */
+	void write(FILE* file, uint64_t addr);
 };
 
 /**
- * @brief Read header from file
- *
- * @param file opened file
- * @return std::shared_ptr<header*>
+ * @brief Size of storage block metadata (without data)
  */
-std::shared_ptr<header> read_header(FILE* file);
-
-/**
- * @brief Read B-Tree node from file
- *
- * @param file opened file
- * @param addr address to read from
- * @return std::shared_ptr<index_node*>
- */
-std::shared_ptr<index_node> read_index_node(FILE* file, uint64_t addr);
-
-/**
- * @brief Read storage block from file
- *
- * @param file opened file
- * @param addr address to read from
- * @return std::shared_ptr<storage_block*>
- */
-std::shared_ptr<storage_block> read_storage_block(FILE* file, uint64_t addr);
+#define STORAGE_BLOCK_METASIZE offsetof(storage_block, data)
 
 } // namespace compio
 
