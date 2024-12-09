@@ -1,11 +1,7 @@
-//
-// Реализация абстракции для выбора алгоритмов сжатия
-//
-
 #include <string.h>
 #include <errno.h>
 
-#include "compression.h"
+#include "compio.h"
 
 
 int dummy_compress(void* dst, size_t* dst_size, const void* src, size_t src_size) {
