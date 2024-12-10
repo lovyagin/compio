@@ -40,9 +40,7 @@ uint8_t parse_mode(const char* mode) {
     return mode_b;
 }
 
-void flush_header(compio_archive* archive) {
-    archive->header->write(archive->file);
-}
+void flush_header(compio_archive* archive) { archive->header->write(archive->file); }
 
 } // namespace compio
 
@@ -115,16 +113,18 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
             return NULL;
         }
     }
-    
+
     auto file = (compio_file*)malloc(sizeof(compio_file));
     if (file == NULL)
         return NULL;
-    
+
+    file->size = file_table_item->size;
+
     if (archive->mode_b & 0b100)
-    	file->cursor = file_table_item->size;
+        file->cursor = file->size;
     else
-    	file->cursor = 0;
-    
+        file->cursor = 0;
+
     file->archive = archive;
     strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
 
@@ -154,10 +154,31 @@ int compio_close_archive(compio_archive* archive) {
     return 0;
 }
 
+int compio_seek(compio_file* file, uint64_t offset, uint8_t origin) {
+    uint64_t new_cursor = file->cursor;
+    switch (origin) {
+    case COMP_SEEK_SET:
+        new_cursor = offset;
+        break;
+    case COMP_SEEK_CUR:
+        new_cursor += offset;
+        break;
+    case COMP_SEEK_END:
+        new_cursor = file->size + offset;
+        break;
+    }
+
+    if (new_cursor < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    file->cursor = new_cursor;
+    return 0;
+}
+
+uint64_t compio_tell(compio_file* file) { return file->cursor; }
+
 uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {}
 
 uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {}
-
-int compio_seek(compio_file* file, uint64_t offset, uint8_t origin) {}
-
-uint64_t compio_tell(compio_file* file) {}
