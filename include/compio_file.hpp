@@ -24,9 +24,9 @@ struct compio_archive {
  * @brief Opened file inside of an archive
  */
 struct compio_file {
-    compio_archive* archive; /**< Opened archive */
-    const char* fn;          /**< Internal filename */
-    uint64_t cursor;         /**< File cursor */
+    compio_archive* archive;          /**< Opened archive */
+    char name[COMPIO_FNAME_MAX_SIZE]; /**< Internal filename */
+    uint64_t cursor;                  /**< File cursor */
 };
 
 #endif // COMPIO_FILE_HEADER_

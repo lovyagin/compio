@@ -6,7 +6,7 @@
 
 using namespace compio;
 
-header::header() : magic_number(0), index_root(0), n_files(0) {}
+header::header() : magic_number(0), index_root(0), ftable() {}
 
 header::header(FILE* file) {
     fseek(file, 0, SEEK_SET);
@@ -98,4 +98,30 @@ void storage_block::write(FILE* file, uint64_t addr) {
     count = fwrite(data, sizeof(uint8_t), size, file);
     if (count < size)
         throw std::runtime_error("Failed to write storage block data to file");
+}
+
+files_table::files_table() : n_files(0) { memset(files, 0, sizeof(files)); }
+
+files_table::file* files_table::find(const char* name) {
+    for (int i = 0; i < n_files; ++i)
+        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
+            return &files[i];
+    return NULL;
+}
+
+files_table::file* files_table::add(const char* name) {
+    if (n_files >= COMPIO_MAX_FILES)
+        return NULL;
+    strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE);
+    return &files[n_files++];
+}
+
+int files_table::remove(const char* name) {
+    for (int i = 0; i < n_files; ++i) {
+        if (!strncmp(files[i].name, name, COMPIO_FNAME_MAX_SIZE)) {
+            memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));
+            return 0;
+        }
+    }
+    return -1;
 }

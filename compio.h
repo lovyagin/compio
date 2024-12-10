@@ -9,29 +9,28 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define COMPIO_MAX_FILES 64 /**< Maximum number of files in archive */
+#define COMPIO_MAX_FILES 64      /**< Maximum number of files in archive */
+#define COMPIO_FNAME_MAX_SIZE 32 /**< File name maximum length */
 
 /**
  * @brief Compressor interface
  */
 typedef struct compio_compressor {
-	/**
-	 * @brief Compress src_size of bytes from src buffer into dst buffer.
-	 * On success, return 0 and write real size of compressed data into
-	 * dst_size. If dst buffer is to small, return non-zero code and set errno =
-	 * ENOBUFS.
-	 */
-	int (*compress)(void* dst, uint64_t* dst_size, const void* src,
-					uint64_t src_size);
+    /**
+     * @brief Compress src_size of bytes from src buffer into dst buffer.
+     * On success, return 0 and write real size of compressed data into
+     * dst_size. If dst buffer is to small, return non-zero code and set errno =
+     * ENOBUFS.
+     */
+    int (*compress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
 
-	/**
-	 * @brief Decompress src_size of bytes, that was previously
-	 * compressed with the same compressor, from src buffer into dst buffer. On
-	 * success, return 0 and write real size of decompressed data into dst_size.
-	 * If dst buffer is to small, return non-zero code and set errno = ENOBUFS.
-	 */
-	int (*decompress)(void* dst, uint64_t* dst_size, const void* src,
-					  uint64_t src_size);
+    /**
+     * @brief Decompress src_size of bytes, that was previously
+     * compressed with the same compressor, from src buffer into dst buffer. On
+     * success, return 0 and write real size of decompressed data into dst_size.
+     * If dst buffer is to small, return non-zero code and set errno = ENOBUFS.
+     */
+    int (*decompress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
 } compio_compressor;
 
 /**
@@ -45,20 +44,20 @@ void compio_build_dummy_compressor(compio_compressor* result);
  * @brief Configuration
  */
 typedef struct {
-	/**
-	 * @brief Compressor, that will be used for this file
-	 */
-	compio_compressor compressor;
+    /**
+     * @brief Compressor, that will be used for this file
+     */
+    compio_compressor compressor;
 
-	int b_tree_order;  /**< Maximum number of children of B-Tree node */
-	int min_blocksize; /**< Minimal size of uncompressed block */
-	int max_blocksize; /**< Maximal size of uncompressed block */
+    int b_tree_order;  /**< Maximum number of children of B-Tree node */
+    int min_blocksize; /**< Minimal size of uncompressed block */
+    int max_blocksize; /**< Maximal size of uncompressed block */
 
-	/**
-	 * @brief Fill deleted blocks with zeros, so that OS may optimize it (see
-	 * sparse files)
-	 */
-	bool fill_holes_with_zeros;
+    /**
+     * @brief Fill deleted blocks with zeros, so that OS may optimize it (see
+     * sparse files)
+     */
+    bool fill_holes_with_zeros;
 } compio_config;
 
 /**
@@ -86,17 +85,16 @@ typedef struct compio_file compio_file;
  * @param c configuration
  * @return compio_archive*
  */
-compio_archive* compio_open_archive(const char* fp, const char* mode,
-									const compio_config* c);
+compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c);
 
 /**
  * @brief Open file inside of an opened archive
  *
- * @param fp internal filename
+ * @param name internal filename
  * @param archive opened archive
  * @return compio_file*
  */
-compio_file* compio_open_file(const char* fp, compio_archive* archive);
+compio_file* compio_open_file(const char* name, compio_archive* archive);
 
 /**
  * @brief Write block of data to file
@@ -143,6 +141,15 @@ int compio_seek(compio_file* file, uint64_t offset, uint8_t origin);
  * @return long
  */
 uint64_t compio_tell(compio_file* file);
+
+/**
+ * @brief Remove file from archive
+ * 
+ * @param archive opened archive
+ * @param name internal filename
+ * @return int 
+ */
+int compio_remove_file(compio_archive* archive, const char* name);
 
 /**
  * @brief Close opened file

@@ -15,15 +15,33 @@
 namespace compio {
 
 /**
+ * @brief Files table for archive header
+ *
+ */
+struct files_table {
+    uint64_t n_files; /**< Current number of files in archive */
+
+    struct file {
+        char name[COMPIO_FNAME_MAX_SIZE];
+        uint64_t size;
+    };
+
+    file files[COMPIO_MAX_FILES];
+
+    files_table();                /**< Construct empty files table */
+    file* find(const char* name); /**< Find file by name, nullptr if doesn't exist */
+    file* add(const char* name);  /**< Add file, nullptr if table is full */
+    int remove(const char* name); /**< Remove file */
+};
+
+/**
  * @brief File header of fixed size
  *
  */
 struct header {
-    int32_t magic_number;              /**< Constant bytes, file signature */
-    uint64_t index_root;               /**< Address of B-Tree root in file */
-    uint64_t n_files;                  /**< Current number of files in archive */
-    char fnames[COMPIO_MAX_FILES];     /**< Filenames */
-    uint64_t fsizes[COMPIO_MAX_FILES]; /**< File sizes */
+    int32_t magic_number; /**< Constant bytes, file signature */
+    uint64_t index_root;  /**< Address of B-Tree root in file */
+    files_table ftable;   /**< Files table */
 
     /**
      * @brief Construct default header
