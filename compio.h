@@ -39,7 +39,7 @@ typedef struct compio_compressor {
  *
  * @param result
  */
-void build_dummy_compressor(compio_compressor* result);
+void compio_build_dummy_compressor(compio_compressor* result);
 
 /**
  * @brief Configuration
@@ -66,7 +66,7 @@ typedef struct {
  *
  * @param result
  */
-void build_default_config(compio_config* result);
+void compio_build_default_config(compio_config* result);
 
 /**
  * @brief Opened archive
