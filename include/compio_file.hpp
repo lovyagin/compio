@@ -21,7 +21,7 @@ struct compio_archive {
 };
 
 /**
- * @brief Opened file inshide of an archive
+ * @brief Opened file inside of an archive
  */
 struct compio_file {
 	compio_archive* archive; /**< Opened archive */
