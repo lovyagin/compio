@@ -27,6 +27,6 @@ struct compio_file {
 	compio_archive* archive; /**< Opened archive */
 	const char* fn;			 /**< Internal filename */
 	uint64_t cursor;		 /**< File cursor */
-}
+};
 
 #endif // COMPIO_FILE_HEADER_
