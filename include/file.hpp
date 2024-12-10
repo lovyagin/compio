@@ -19,9 +19,11 @@ namespace compio {
  *
  */
 struct header {
-	int32_t magic_number;	 /**< Constant bytes, file signature */
-	uint64_t original_fsize; /**< Original (uncompressed) file size */
-	uint64_t index_root;	 /**< Address of B-Tree root in file */
+	int32_t magic_number;		   /**< Constant bytes, file signature */
+	uint64_t index_root;		   /**< Address of B-Tree root in file */
+	uint64_t n_files;			   /**< Current number of files in archive */
+	char fnames[COMPIO_MAX_FILES]; /**< Filenames */
+	uint64_t fsizes[COMPIO_MAX_FILES]; /**< File sizes */
 
 	/**
 	 * @brief Construct default header

@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define COMPIO_MAX_FILES 64 /**< Maximum number of files in archive */
+
 /**
  * @brief Compressor interface
  */

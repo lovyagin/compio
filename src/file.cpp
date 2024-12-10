@@ -6,7 +6,7 @@
 
 using namespace compio;
 
-header::header() : magic_number(0), index_root(0), original_fsize(0) {}
+header::header() : magic_number(0), index_root(0), n_files(0) {}
 
 header::header(FILE* file) {
 	fseek(file, 0, SEEK_SET);
