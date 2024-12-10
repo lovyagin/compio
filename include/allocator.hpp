@@ -1,7 +1,7 @@
 /**
  * @file allocator.hpp
  * @brief Tools for allocating and freeing blocks in archive
- * 
+ *
  */
 
 #ifndef COMPIO_ALLOCATOR_HEADER_
@@ -14,7 +14,7 @@ namespace compio {
 
 /**
  * @brief Get free block in archive of specified size
- * 
+ *
  * @param archive opened archive
  * @param size size in bytes
  * @return uint64_t
@@ -23,7 +23,7 @@ uint64_t allocate(compio_archive* archive, uint64_t size);
 
 /**
  * @brief Free block in archive
- * 
+ *
  * @param archive opened archive
  * @param addr address
  * @param size size in bytes
