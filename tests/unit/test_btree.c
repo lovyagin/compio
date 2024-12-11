@@ -166,7 +166,7 @@ void test_btree_update(void) {
     // Verify the update
     BTreeNode* node = btree_search(tree, 20);
     CU_ASSERT_PTR_NOT_NULL(node);
-    
+
     size_t index = 0;
     for (size_t i = 0; i < node->num_keys; i++) {
         if (node->keys[i] == 20) {

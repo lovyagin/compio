@@ -1,3 +1,13 @@
+/**
+ * @internal
+ * @file block.h
+ * @brief Internal header for block management in the compression library.
+ *
+ * This file provides structures and functions for managing data blocks within
+ * the compression system. It includes definitions for creating, accessing,
+ * and managing blocks and their containers.
+ */
+
 #ifndef BLOCK_H
 #define BLOCK_H
 
@@ -10,10 +20,10 @@
  * @brief Represents a block of data in the storage system.
  */
 typedef struct compio_block {
-    size_t size;                   /**< Size of the block in bytes */
-    bool is_compressed;            /**< Indicates if the block is compressed */
-    char* compression_type;        /**< Type of compression used, if any */
-    void* data;                    /**< Pointer to the block's data */
+    size_t size;
+    bool is_compressed;
+    char* compression_type;
+    void* data;
 } compio_block;
 
 /**
@@ -21,11 +31,11 @@ typedef struct compio_block {
  * @brief Represents a container for managing multiple blocks.
  */
 typedef struct compio_block_container {
-    void* storage_reference;       /**< Reference to storage configuration */
-    compio_block** blocks;         /**< Array of pointers to blocks */
-    size_t total_size;             /**< Total capacity of the container */
-    size_t block_count;            /**< Current number of blocks in the container */
-    BTree* index;                  /**< B-Tree index for managing blocks */
+    void* storage_reference;
+    compio_block** blocks;
+    size_t total_size;
+    size_t block_count;
+    BTree* index;
 } compio_block_container;
 
 /**
@@ -61,24 +71,6 @@ compio_block_container* compio_create_block_container(size_t total_size);
 void compio_free_block_container(compio_block_container* container);
 
 /**
- * @brief Adds a block to the container.
- *
- * @param container Pointer to the block container.
- * @param block Pointer to the block to be added.
- * @return 0 if the block is successfully added, or -1 on failure.
- */
-int compio_add_block(compio_block_container* container, compio_block* block);
-
-/**
- * @brief Removes a block from the container by its index.
- *
- * @param container Pointer to the block container.
- * @param block_index Index of the block to be removed.
- * @return 0 if the block is successfully removed, or -1 on failure.
- */
-int compio_remove_block(compio_block_container* container, size_t block_index);
-
-/**
  * @brief Finds a block in the container by its position.
  *
  * @param container Pointer to the block container.
@@ -90,10 +82,6 @@ compio_block* compio_find_block(compio_block_container* container, size_t positi
 /**
  * @brief Finds a block and calculates the internal offset within that block by a given position in bytes.
  *
- * This function is used to locate the block corresponding to a specific byte offset
- * in the overall storage. It returns a pointer to the block and sets the internal
- * offset within the block.
- *
  * @param container Pointer to the block container.
  * @param offset Byte offset from the start of the file.
  * @param internal_offset Pointer to a variable to store the internal offset within the block.
@@ -102,6 +90,27 @@ compio_block* compio_find_block(compio_block_container* container, size_t positi
 compio_block* compio_find_block_by_offset(compio_block_container* container, size_t offset, size_t* internal_offset);
 
 /**
+ * @internal
+ * @brief Adds a block to the container.
+ *
+ * @param container Pointer to the block container.
+ * @param block Pointer to the block to be added.
+ * @return 0 if the block is successfully added, or -1 on failure.
+ */
+int compio_add_block(compio_block_container* container, compio_block* block);
+
+/**
+ * @internal
+ * @brief Removes a block from the container by its index.
+ *
+ * @param container Pointer to the block container.
+ * @param block_index Index of the block to be removed.
+ * @return 0 if the block is successfully removed, or -1 on failure.
+ */
+int compio_remove_block(compio_block_container* container, size_t block_index);
+
+/**
+ * @internal
  * @brief Updates the index of the block container.
  *
  * @param container Pointer to the block container.

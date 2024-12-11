@@ -135,6 +135,6 @@ void add_block_tests() {
         CU_add_test(block_suite, "test_add_block", test_add_block);
         CU_add_test(block_suite, "test_remove_block", test_remove_block);
         CU_add_test(block_suite, "test_find_block", test_find_block);
-        CU_add_test(block_suite, "test_find_block_by_offset", test_find_block_by_offset); // Add the new test here
+        CU_add_test(block_suite, "test_find_block_by_offset", test_find_block_by_offset);
     }
 }

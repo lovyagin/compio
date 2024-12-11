@@ -1,5 +1,14 @@
 /**
  * @file compio.h
+ * @brief Public API for the compression library.
+ *
+ * This header file provides the main interface for working with compressed
+ * archives and files. It includes functions for opening, reading, writing,
+ * and managing files within compressed archives.
+ *
+ * The library is designed to facilitate efficient file operations
+ * in compressed environments, with support for various compression formats
+ * and seamless integration into user applications.
  */
 
 #ifndef COMPIO_COMPIO_H
