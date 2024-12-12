@@ -15,88 +15,106 @@ header::header(FILE* file) {
         throw std::runtime_error("Failed to read header from file");
 }
 
-index_node::index_node(int tree_order)
-    : is_leaf(true), n_keys(0), tree_order(tree_order), keys(new uint64_t[tree_order]),
-      blocks(new uint64_t[tree_order]), children(new uint64_t[tree_order]) {}
+index_node::index_node(int tree_degree) : is_leaf(true), num_keys(0), tree_degree(tree_degree) {}
 
-index_node::index_node(FILE* file, uint64_t addr, int tree_order)
-    : tree_order(tree_order), keys(new uint64_t[tree_order]), blocks(new uint64_t[tree_order]),
-      children(new uint64_t[tree_order]) {
+index_node::index_node(FILE* file, uint64_t addr, int tree_degree) : tree_degree(tree_degree) {
+    printf("Loading index node from %ld\n", addr);
+    printf("\tKeys: ");
+    for (auto el : keys)
+        printf("%ld, ", el);
+    printf("\n");
+    printf("\tValues: ");
+    for (auto el : values)
+        printf("%ld, ", el);
+    printf("\n");
 
     if (fseek(file, addr, SEEK_SET))
         throw std::runtime_error("Invalid addr while reading index node from file");
 
-    int count = fread(this, INDEX_NODE_METASIZE, 1, file);
-    if (count < 1)
+    if (fread(this, INDEX_NODE_METASIZE, 1, file) < 1)
         throw std::runtime_error("Failed to read index node metadata from file");
 
-    count = fread(keys, sizeof(uint64_t), tree_order, file);
-    if (count < tree_order)
-        throw std::runtime_error("Failed to read index node keys from file");
+    keys.resize(2 * tree_degree - 1, 0);
+    values.resize(2 * tree_degree - 1, 0);
+    children.resize(2 * tree_degree, 0);
 
-    count = fread(blocks, sizeof(uint64_t), tree_order, file);
-    if (count < tree_order)
-        throw std::runtime_error("Failed to read index node blocks from file");
+    int count = 0;
+    count += fread(keys.data(), sizeof(key_t), keys.size(), file);
+    count += fread(values.data(), sizeof(value_t), values.size(), file);
+    count += fread(children.data(), sizeof(uint64_t), children.size(), file);
 
-    count = fread(children, sizeof(uint64_t), tree_order, file);
-    if (count < tree_order)
-        throw std::runtime_error("Failed to read index node children from file");
+    if (count < keys.size() + values.size() + children.size())
+        throw std::runtime_error("Failed to read index node data from file");
+
+    // keys.resize(num_keys);
+    // values.resize(num_keys);
+    // children.resize(num_keys + 1);
 }
 
-index_node::~index_node() {
-    delete keys;
-    delete blocks;
-    delete children;
-}
-
-storage_block::storage_block()
-    : is_compressed(0), size(0), original_size(0), index_key(0), data(0) {}
+storage_block::storage_block() : is_compressed(0), size(0), original_size(0), index_key(0) {}
 
 storage_block::storage_block(FILE* file, uint64_t addr) {
     if (fseek(file, addr, SEEK_SET))
         throw std::runtime_error("Invalid addr while reading storage block from file");
 
-    // size of metadata (independent of tree_order)
-    int count = fread(this, STORAGE_BLOCK_METASIZE, 1, file);
-    if (count < 1)
+    if (fread(this, STORAGE_BLOCK_METASIZE, 1, file) < 1)
         throw std::runtime_error("Failed to read storage block metadata from file");
-    // read data, as we already know its size
-    data = new uint8_t[size];
-    count = fread(data, sizeof(uint8_t), size, file);
+
+    data.resize(size);
+    int count = fread(data.data(), sizeof(uint8_t), size, file);
     if (count < size)
         throw std::runtime_error("Failed to read storage block data from file");
 }
 
-storage_block::~storage_block() { delete data; }
-
 void header::write(FILE* file) {
-    fseek(file, SEEK_SET, 0);
+    fseek(file, 0, SEEK_SET);
     fwrite(this, sizeof(header), 1, file);
 }
 
 void index_node::write(FILE* file, uint64_t addr) {
-    fseek(file, SEEK_SET, addr);
-    int count = fwrite(this, INDEX_NODE_METASIZE, 1, file);
-    if (count < 1)
+    if (fseek(file, addr, SEEK_SET))
+        throw std::runtime_error("Invalid addr while reading index node from file");
+    
+    if (fwrite(this, INDEX_NODE_METASIZE, 1, file) < 1)
         throw std::runtime_error("Failed to write index node metadata to file");
-    count = fwrite(keys, sizeof(uint64_t), tree_order, file);
-    if (count < tree_order)
-        throw std::runtime_error("Failed to write index node keys to file");
-    count = fwrite(blocks, sizeof(uint64_t), tree_order, file);
-    if (count < tree_order)
-        throw std::runtime_error("Failed to write index node blocks to file");
-    count = fwrite(children, sizeof(uint64_t), tree_order, file);
-    if (count < tree_order)
-        throw std::runtime_error("Failed to write index node children to file");
+    
+    printf("Saving index node on %ld\n", addr);
+    printf("\tKeys: ");
+    for (auto el : keys)
+        printf("%ld, ", el);
+    printf("\n");
+    printf("\tValues: ");
+    for (auto el : values)
+        printf("%ld, ", el);
+    printf("\n");
+
+    uint64_t* zeros = new uint64_t[2 * tree_degree];
+    memset(zeros, 0, sizeof(uint64_t) * 2 * tree_degree);
+
+    int count = 0;
+    count += fwrite(keys.data(), sizeof(key_t), keys.size(), file);
+    count += fwrite(zeros, sizeof(key_t), (2 * tree_degree - 1) - keys.size(), file);
+
+    count += fwrite(values.data(), sizeof(value_t), values.size(), file);
+    count += fwrite(zeros, sizeof(value_t), (2 * tree_degree - 1) - values.size(), file);
+
+    count += fwrite(children.data(), sizeof(uint64_t), children.size(), file);
+    count += fwrite(zeros, sizeof(uint64_t), 2 * tree_degree - children.size(), file);
+
+    delete [] zeros;
+
+    if (count < 6 * tree_degree - 2)
+        throw std::runtime_error("Failed to write index node data to file");
 }
 
 void storage_block::write(FILE* file, uint64_t addr) {
-    fseek(file, SEEK_SET, addr);
-    int count = fwrite(this, STORAGE_BLOCK_METASIZE, 1, file);
-    if (count < 1)
+    if (fseek(file, addr, SEEK_SET))
+        throw std::runtime_error("Invalid addr while reading storage block from file");
+    
+    if (fwrite(this, STORAGE_BLOCK_METASIZE, 1, file) < 1)
         throw std::runtime_error("Failed to write storage block metadata to file");
-    count = fwrite(data, sizeof(uint8_t), size, file);
-    if (count < size)
+    
+    if (fwrite(data.data(), sizeof(uint8_t), size, file) < size)
         throw std::runtime_error("Failed to write storage block data to file");
 }
 

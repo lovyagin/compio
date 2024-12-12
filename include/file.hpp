@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 #include "compio.h"
 
@@ -66,34 +67,47 @@ struct header {
 };
 
 /**
+ * @brief Type for key in btree
+ *
+ * Here it represents position in uncompressed file, hence it's type is uint64_t
+ */
+typedef uint64_t key_t;
+
+/**
+ * @brief Type for value in btree
+ *
+ * Here it representes address of storage block in archive file, hence uint64_t
+ */
+typedef uint64_t value_t;
+
+/**
  * @brief B-Tree (index) node
  *
  */
 struct index_node {
-    uint8_t is_leaf;    /**< Is this node a leaf */
-    uint32_t n_keys;    /**< Number of used keys in node */
-    uint64_t* keys;     /**< Array of keys on memory heap */
-    uint64_t* blocks;   /**< Array of blocks addressed on memory heap */
-    uint64_t* children; /**< Array of children addresses on memory heap */
+    uint8_t is_leaf;                /**< Is this node a leaf */
+    uint32_t num_keys;              /**< Number of used keys in node */
+    std::vector<key_t> keys;        /**< Blocks start positions in uncompressed file */
+    std::vector<value_t> values;    /**< Storage blocks addresses in archive file */
+    std::vector<uint64_t> children; /**< Children addresses in archive file */
 
-    int tree_order; /**< B-Tree order (not saved in file) */
+    int tree_degree; /**< B-Tree degree (not saved in file) */
 
     /**
      * @brief Construct empty index node
      *
+     * @param tree_degree degree of b-tree
      */
-    index_node(int tree_order);
+    index_node(int tree_degree);
 
     /**
-     * @brief Read B-Tree node from file
+     * @brief Read index node from file
      *
      * @param file opened file
      * @param addr address to read from
-     * @param tree_order order of b-tree
-     * @return std::shared_ptr<index_node*>
+     * @param tree_degree degree of b-tree
      */
-    index_node(FILE* file, uint64_t addr, int tree_order);
-    ~index_node();
+    index_node(FILE* file, uint64_t addr, int tree_degree);
 
     /**
      * @brief Write index node to file
@@ -108,17 +122,23 @@ struct index_node {
  * @brief Size of index node metadata (without arrays)
  */
 #define INDEX_NODE_METASIZE offsetof(index_node, keys)
+/**
+ * @brief Whole size of index node
+ */
+#define INDEX_NODE_SIZE(degree)                                                                    \
+    (INDEX_NODE_METASIZE + sizeof(key_t) * (2 * degree - 1) + sizeof(value_t) * (2 * degree - 1) + \
+     sizeof(uint64_t) * (2 * degree))
 
 /**
  * @brief Block of (usually compressed) data
  *
  */
 struct storage_block {
-    uint8_t is_compressed;  /**< Is this block compressed */
-    uint64_t size;          /**< Size of data array */
-    uint64_t original_size; /**< Original size (size of uncompressed data) */
-    uint64_t index_key;     /**< Index key of this block */
-    uint8_t* data;          /**< Data block on memory heap */
+    uint8_t is_compressed;     /**< Is this block compressed */
+    uint64_t size;             /**< Size of data array */
+    uint64_t original_size;    /**< Original size (size of uncompressed data) */
+    uint64_t index_key;        /**< Index key of this block */
+    std::vector<uint8_t> data; /**< Data block */
 
     /**
      * @brief Construct empty storage block
@@ -134,7 +154,6 @@ struct storage_block {
      * @return std::shared_ptr<storage_block*>
      */
     storage_block(FILE* file, uint64_t addr);
-    ~storage_block();
 
     /**
      * @brief Write storage block to file

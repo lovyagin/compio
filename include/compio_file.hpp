@@ -1,6 +1,7 @@
 #ifndef COMPIO_FILE_HEADER_
 #define COMPIO_FILE_HEADER_
 
+#include "btree.hpp"
 #include "compio.h"
 #include "file.hpp"
 
@@ -12,6 +13,7 @@ struct compio_archive {
     FILE* file;                  /**< Opened stdio FILE */
     const compio_config* config; /**< Compio configuration */
     compio::header* header;      /**< Read file header */
+    // compio::btree* index;
 
     /**
      * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear

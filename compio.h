@@ -58,7 +58,7 @@ typedef struct {
      */
     compio_compressor compressor;
 
-    int b_tree_order;  /**< Maximum number of children of B-Tree node */
+    int b_tree_degree; /**< Maximum number of children of B-Tree node */
     int min_blocksize; /**< Minimal size of uncompressed block */
     int max_blocksize; /**< Maximal size of uncompressed block */
 
@@ -153,10 +153,10 @@ uint64_t compio_tell(compio_file* file);
 
 /**
  * @brief Remove file from archive
- * 
+ *
  * @param archive opened archive
  * @param name internal filename
- * @return int 
+ * @return int
  */
 int compio_remove_file(compio_archive* archive, const char* name);
 

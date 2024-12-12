@@ -19,7 +19,7 @@ namespace compio {
  * @param size size in bytes
  * @return uint64_t
  */
-uint64_t allocate(compio_archive* archive, uint64_t size);
+uint64_t allocate_block(compio_archive* archive, uint64_t size);
 
 /**
  * @brief Free block in archive
@@ -28,7 +28,7 @@ uint64_t allocate(compio_archive* archive, uint64_t size);
  * @param addr address
  * @param size size in bytes
  */
-void free(compio_archive* archive, uint64_t addr, uint64_t size);
+void free_block(compio_archive* archive, uint64_t addr, uint64_t size);
 
 } // namespace compio
 

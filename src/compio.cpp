@@ -1,54 +1,16 @@
 #include "compio.h"
 #include "compio_file.hpp"
 #include "file.hpp"
+#include "utils.hpp"
 
 #include <cstdlib>
 #include <cstring>
-
-namespace compio {
-
-const uint8_t read_bit = 0b001;
-const uint8_t write_bit = 0b010;
-const uint8_t append_bit = 0b100;
-
-uint8_t parse_mode(const char* mode) {
-    uint8_t mode_b = 0;
-    switch (mode[0]) {
-    case 'r':
-        mode_b |= read_bit;
-        break;
-    case 'w':
-        mode_b |= write_bit;
-        break;
-    case 'a':
-        mode_b |= read_bit | write_bit | append_bit;
-        break;
-    default:
-        return 0;
-    }
-
-    switch (mode[1]) {
-    case '+':
-        mode_b |= read_bit | write_bit;
-        break;
-    case 0:
-        break;
-    default:
-        return 0;
-    }
-
-    return mode_b;
-}
-
-void flush_header(compio_archive* archive) { archive->header->write(archive->file); }
-
-} // namespace compio
 
 using namespace compio;
 
 void compio_build_default_config(compio_config* result) {
     // TODO: change these random values
-    result->b_tree_order = 16;
+    result->b_tree_degree = 16;
     compio_build_dummy_compressor(&result->compressor);
     result->fill_holes_with_zeros = true;
     result->min_blocksize = 512;
@@ -179,6 +141,24 @@ int compio_seek(compio_file* file, uint64_t offset, uint8_t origin) {
 
 uint64_t compio_tell(compio_file* file) { return file->cursor; }
 
-uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {}
+uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
+    // 0. if index_root == NULL, btree_create at first
+    // 1. get blocks indices from file->cursor and btree get_range_and_pop operation
+    //      compio_btree_get_range(FILE* file->archive->file, uint64_t file->archive->header->index_root, file->cursor, file->cursor + size)
+    // 2. unpack them using file->archive->config->compressor.decompress
+    // 3. modify with data from ptr
+    // 4. split into blocks of size file->archive->config->preferred_block_size
+    // 5. compress
+    // 6. push new blocks into b-tree
+    // 7. update 
+    //      - file->cursor, 
+    //      - file->size, 
+    //      - file->archive->header->ftable, 
+    //      - (potentially) file->archive->header->index_root
+    // 8. flush header
+}
 
-uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {}
+uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
+    // 1. steps 0-2 from compio_write (but without pop)
+    // 2. write size bytes into ptr
+}
