@@ -42,14 +42,14 @@ public:
      * @param key
      * @param value
      */
-    void insert(key_t key, value_t value);
+    void insert(tree_key key, tree_val value);
 
     /**
      * @brief Remove element by key from B-Tree
      *
      * @param key
      */
-    void remove(key_t key);
+    void remove(tree_key key);
 
     /**
      * @brief Get list of blocks addresses in ascending by key order,
@@ -61,9 +61,9 @@ public:
      *
      * @param key_min
      * @param key_max
-     * @return const std::vector<uint64_t>&
+     * @return std::vector<uint64_t>
      */
-    const std::vector<uint64_t>& get_range(key_t key_min, key_t key_max);
+    void get_range(tree_key key_min, tree_key key_max, std::vector<uint64_t>& result);
 
     /**
      * @brief Update element
@@ -71,9 +71,9 @@ public:
      * @param key
      * @param new_value
      */
-    void update(key_t key, value_t new_value);
+    void update(tree_key key, tree_val new_value);
 
-// private:
+    // private:
     int degree;
     compio_archive* archive;
 
@@ -83,16 +83,18 @@ public:
      * @param key
      * @return uint64_t
      */
-    uint64_t search_node(key_t key);
+    uint64_t search_node(tree_key key);
 
-    void insert_nonfull(shared_node node, key_t key, value_t value);
+    void insert_nonfull(shared_node node, tree_key key, tree_val value);
     void split_child(shared_node parent, shared_node child, int index);
     void merge_children(shared_node parent, int idx);
     void borrow_from_prev(shared_node parent, int idx);
     void borrow_from_next(shared_node parent, int idx);
-    key_t find_max_in_node(shared_node node);
-    key_t find_min_in_node(shared_node node);
-    void remove_node(shared_node node, key_t key);
+    tree_key find_max_in_node(shared_node node);
+    tree_key find_min_in_node(shared_node node);
+    void remove_node(shared_node node, tree_key key);
+    void get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
+                           std::vector<tree_key>& result);
 
     uint64_t allocate_node();
     void free_node(shared_node node);

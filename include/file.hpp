@@ -42,6 +42,7 @@ struct files_table {
 struct header {
     int32_t magic_number; /**< Constant bytes, file signature */
     uint64_t index_root;  /**< Address of B-Tree root in file */
+    uint64_t file_size;
     files_table ftable;   /**< Files table */
 
     /**
@@ -71,14 +72,16 @@ struct header {
  *
  * Here it represents position in uncompressed file, hence it's type is uint64_t
  */
-typedef uint64_t key_t;
+typedef uint64_t tree_key;
 
 /**
  * @brief Type for value in btree
  *
- * Here it representes address of storage block in archive file, hence uint64_t
+ * Here it representes address of storage block in archive file, and uncompressed size
  */
-typedef uint64_t value_t;
+typedef struct {
+    uint64_t addr, size;
+} tree_val;
 
 /**
  * @brief B-Tree (index) node
@@ -87,8 +90,8 @@ typedef uint64_t value_t;
 struct index_node {
     uint8_t is_leaf;                /**< Is this node a leaf */
     uint32_t num_keys;              /**< Number of used keys in node */
-    std::vector<key_t> keys;        /**< Blocks start positions in uncompressed file */
-    std::vector<value_t> values;    /**< Storage blocks addresses in archive file */
+    std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
+    std::vector<tree_val> values;    /**< Storage blocks addresses in archive file */
     std::vector<uint64_t> children; /**< Children addresses in archive file */
 
     int tree_degree; /**< B-Tree degree (not saved in file) */
@@ -126,8 +129,8 @@ struct index_node {
  * @brief Whole size of index node
  */
 #define INDEX_NODE_SIZE(degree)                                                                    \
-    (INDEX_NODE_METASIZE + sizeof(key_t) * (2 * degree - 1) + sizeof(value_t) * (2 * degree - 1) + \
-     sizeof(uint64_t) * (2 * degree))
+    (INDEX_NODE_METASIZE + sizeof(tree_key) * (2 * degree - 1) +                                   \
+     sizeof(tree_val) * (2 * degree - 1) + sizeof(uint64_t) * (2 * degree))
 
 /**
  * @brief Block of (usually compressed) data

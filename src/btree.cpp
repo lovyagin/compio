@@ -1,26 +1,25 @@
 #include "btree.hpp"
 #include "utils.hpp"
 
+#include <algorithm>
+#include <limits>
+
 using namespace compio;
 
 uint64_t btree::allocate_node() { return allocate_block(archive, INDEX_NODE_SIZE(degree)); }
 
-void btree::free_node(shared_node node) { 
+void btree::free_node(shared_node node) {
     node.remove();
-    free_block(archive, node.addr(), INDEX_NODE_SIZE(degree)); 
+    free_block(archive, node.addr(), INDEX_NODE_SIZE(degree));
 }
 
-shared_node btree::read_node(uint64_t addr) {
-    return shared_node(archive->file, addr, degree);
-}
+shared_node btree::read_node(uint64_t addr) { return shared_node(archive->file, addr, degree); }
 
 shared_node btree::create_node() {
     return shared_node(archive->file, allocate_node(), new index_node(degree));
 }
 
-shared_node btree::read_root() {
-    return read_node(archive->header->index_root);
-}
+shared_node btree::read_root() { return read_node(archive->header->index_root); }
 
 btree::btree(compio_archive* archive) : archive(archive), degree(archive->config->b_tree_degree) {
     if (archive->header->index_root != 0)
@@ -85,7 +84,7 @@ void btree::merge_children(shared_node parent, int idx) {
     free_node(sibling);
 }
 
-void btree::insert_nonfull(shared_node node, key_t key, value_t value) {
+void btree::insert_nonfull(shared_node node, tree_key key, tree_val value) {
     size_t i = node->num_keys;
     if (node->is_leaf) {
         while (i > 0 && key < node->keys[i - 1]) {
@@ -161,7 +160,7 @@ void btree::borrow_from_next(shared_node parent, int idx) {
     sibling->num_keys--;
 }
 
-key_t btree::find_max_in_node(shared_node node) {
+tree_key btree::find_max_in_node(shared_node node) {
     auto current = node;
     while (!RO(current)->is_leaf) {
         current = read_node(RO(current)->children[RO(current)->num_keys]);
@@ -169,7 +168,7 @@ key_t btree::find_max_in_node(shared_node node) {
     return RO(current)->keys[current->num_keys - 1];
 }
 
-key_t btree::find_min_in_node(shared_node node) {
+tree_key btree::find_min_in_node(shared_node node) {
     auto current = node;
     while (!RO(current)->is_leaf) {
         current = read_node(RO(current)->children[0]);
@@ -177,7 +176,7 @@ key_t btree::find_min_in_node(shared_node node) {
     return RO(current)->keys[0];
 }
 
-void btree::insert(key_t key, value_t value) {
+void btree::insert(tree_key key, tree_val value) {
     auto root = read_root();
     if (RO(root)->num_keys == (2 * degree - 1)) {
         auto new_root = create_node();
@@ -193,7 +192,7 @@ void btree::insert(key_t key, value_t value) {
     }
 }
 
-void btree::remove_node(shared_node node, key_t key) {
+void btree::remove_node(shared_node node, tree_key key) {
     size_t idx = 0;
     while (idx < RO(node)->num_keys && key > RO(node)->keys[idx]) {
         idx++;
@@ -253,7 +252,7 @@ void btree::remove_node(shared_node node, key_t key) {
     }
 }
 
-void btree::remove(key_t key) {
+void btree::remove(tree_key key) {
     auto root = read_root();
     remove_node(root, key);
     if (RO(root)->num_keys == 0) {
@@ -261,6 +260,39 @@ void btree::remove(key_t key) {
             archive->header->index_root = RO(root)->children[0];
             flush_header(archive);
             free_node(root);
+        }
+    }
+}
+
+void btree::get_range(tree_key key_min, tree_key key_max, std::vector<uint64_t>& result) {
+    if (key_max <= key_min)
+        return;
+    get_range_in_node(read_root(), key_min, key_max, result);
+}
+
+void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
+                              std::vector<tree_key>& result) {
+    int num_keys = RO(node)->num_keys;
+    if (num_keys == 0)
+        return;
+    bool is_leaf = RO(node)->is_leaf;
+
+    auto start = std::numeric_limits<tree_key>::min();
+    auto end = RO(node)->keys[0];
+    for (int i = 0; i <= num_keys; ++i) {
+        if (!is_leaf) {
+            if (key_min <= end && key_max > start) {
+                auto child = read_node(RO(node)->children[i]);
+                get_range_in_node(child, key_min, key_max, result);
+            }
+        }
+        if (i != num_keys) {
+            start = RO(node)->keys[i];
+            end = start + RO(node)->values[i].size;
+            if (key_min <= end && key_max > start)
+                result.push_back(start);
+            start = end;
+            end = (i < num_keys - 1) ? RO(node)->keys[i + 1] : std::numeric_limits<tree_key>::max();
         }
     }
 }
