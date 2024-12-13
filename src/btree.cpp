@@ -313,6 +313,10 @@ bool btree::update_in_node(shared_node node, tree_key key, tree_val new_value) {
             }
             if (!is_leaf)
                 return update_in_node(read_node(RO(node)->children[i]), key, new_value);
+            else
+                return false;
+        } else if (key < current_key + RO(node)->values[i].size) {
+            return false;
         }
     }
     if (!is_leaf)
