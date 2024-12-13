@@ -296,3 +296,26 @@ void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_m
         }
     }
 }
+
+bool btree::update(tree_key key, tree_val new_value) {
+    return update_in_node(read_root(), key, new_value);
+}
+
+bool btree::update_in_node(shared_node node, tree_key key, tree_val new_value) {
+    auto num_keys = RO(node)->num_keys;
+    auto is_leaf = RO(node)->is_leaf;
+    for (int i = 0; i < num_keys; ++i) {
+        auto current_key = RO(node)->keys[i];
+        if (current_key >= key) {
+            if (current_key == key) {
+                node->values[i] = new_value;
+                return true;
+            }
+            if (!is_leaf)
+                return update_in_node(read_node(RO(node)->children[i]), key, new_value);
+        }
+    }
+    if (!is_leaf)
+        return update_in_node(read_node(RO(node)->children[num_keys]), key, new_value);
+    return false;
+}

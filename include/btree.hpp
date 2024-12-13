@@ -70,8 +70,9 @@ public:
      *
      * @param key
      * @param new_value
+     * @return true on success
      */
-    void update(tree_key key, tree_val new_value);
+    bool update(tree_key key, tree_val new_value);
 
     // private:
     int degree;
@@ -95,6 +96,7 @@ public:
     void remove_node(shared_node node, tree_key key);
     void get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
                            std::vector<tree_key>& result);
+    bool update_in_node(shared_node node, tree_key key, tree_val new_value);
 
     uint64_t allocate_node();
     void free_node(shared_node node);
