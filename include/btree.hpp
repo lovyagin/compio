@@ -63,7 +63,7 @@ public:
      * @param key_max
      * @return std::vector<uint64_t>
      */
-    void get_range(tree_key key_min, tree_key key_max, std::vector<uint64_t>& result);
+    void get_range(tree_key key_min, tree_key key_max, std::vector<std::pair<tree_key, tree_val>>& result);
 
     /**
      * @brief Update element
@@ -95,7 +95,7 @@ public:
     tree_key find_min_in_node(shared_node node);
     void remove_node(shared_node node, tree_key key);
     void get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
-                           std::vector<tree_key>& result);
+                           std::vector<std::pair<tree_key, tree_val>>& result);
     bool update_in_node(shared_node node, tree_key key, tree_val new_value);
 
     uint64_t allocate_node();

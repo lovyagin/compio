@@ -264,14 +264,14 @@ void btree::remove(tree_key key) {
     }
 }
 
-void btree::get_range(tree_key key_min, tree_key key_max, std::vector<uint64_t>& result) {
+void btree::get_range(tree_key key_min, tree_key key_max, std::vector<std::pair<tree_key, tree_val>>& result) {
     if (key_max <= key_min)
         return;
     get_range_in_node(read_root(), key_min, key_max, result);
 }
 
 void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
-                              std::vector<tree_key>& result) {
+                              std::vector<std::pair<tree_key, tree_val>>& result) {
     int num_keys = RO(node)->num_keys;
     if (num_keys == 0)
         return;
@@ -290,7 +290,7 @@ void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_m
             start = RO(node)->keys[i];
             end = start + RO(node)->values[i].size;
             if (key_min <= end && key_max > start)
-                result.push_back(start);
+                result.push_back({start, RO(node)->values[i]});
             start = end;
             end = (i < num_keys - 1) ? RO(node)->keys[i + 1] : std::numeric_limits<tree_key>::max();
         }
