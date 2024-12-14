@@ -139,23 +139,23 @@ int compio_seek(compio_file* file, uint64_t offset, uint8_t origin) {
 
 uint64_t compio_tell(compio_file* file) { return file->cursor; }
 
-uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
-    // get range of blocks, that intersect our workspace
+static auto get_range_in_file(compio_file* file, uint64_t size) {
+    // return range of blocks, that intersect [cursor, cursor + size)
     std::vector<std::pair<tree_key, tree_val>> range;
     auto key_min = get_key(file->name, file->cursor);
     auto key_max = get_key(file->name, file->cursor + size);
     file->archive->index->get_range(key_min, key_max, range);
+    return range;
+}
 
-    // find file in file table, and add if doesn't exist
+uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
+    // get range of blocks, that intersect our workspace
+    auto range = get_range_in_file(file, size);
+
+    // find file in file table (it must exist, because compio_file was 
+    // created with compio_open_file, which adds file into file table)
     auto file_table_item = file->archive->header->ftable.find(file->name);
-    uint64_t fsize;
-    if (file_table_item == NULL) {
-        file->archive->header->ftable.add(file->name);
-        flush_header(file->archive);
-        fsize = 0;
-    } else {
-        fsize = file_table_item->size;
-    }
+    uint64_t fsize = file_table_item->size;
 
     uint64_t start = (range.size() > 0) ? range[0].first.second : fsize;
     uint64_t end = file->cursor + size;
@@ -227,13 +227,44 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         else
             file->archive->index->insert(block.index_key, new_value);
     }
+
+    compio_seek(file, size, COMP_SEEK_CUR);
+    file_table_item->size = std::max(file_table_item->size, end);
+    flush_header(file->archive);
+    return size;
 }
 
 uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
-    // std::vector<std::pair<tree_key, tree_val>> range;
-    // auto key_min = get_key(file->name, file->cursor);
-    // auto key_max = get_key(file->name, file->cursor + size);
-    // file->archive->index->get_range(key_min, key_max, range);
-    // // 1. steps 0-2 from compio_write (but without pop)
-    // // 2. write size bytes into ptr
+    auto file_table_item = file->archive->header->ftable.find(file->name);
+    uint64_t fsize = file_table_item->size;
+
+    // if cursor is after end of file, we can't read anything
+    size = std::min(size, fsize - file->cursor);
+    if (size <= 0)
+        return 0;
+
+    auto range = get_range_in_file(file, size);
+
+    auto config = file->archive->config;
+    uint8_t* p_buf = (uint8_t*)ptr;
+
+    // temporary buffer for decompressing
+    std::vector<uint8_t> tmp_buf;
+    tmp_buf.reserve(config->block_size);
+    for (auto& [key, val] : range) {
+        storage_block block(file->archive->file, val.addr);
+
+        // copy compressed data from block into tmp_buf
+        tmp_buf.resize(block.size);
+        std::copy(block.data.begin(), block.data.end(), tmp_buf.begin());
+
+        // decompress data from tmp_buf into big buf
+        uint64_t dst_size = block.original_size;
+        config->compressor.decompress(p_buf, &dst_size, tmp_buf.data(), tmp_buf.size());
+        p_buf += dst_size;
+    }
+
+    uint64_t total_size = p_buf - (uint8_t*)ptr;
+    compio_seek(file, total_size, COMP_SEEK_CUR);
+    return total_size;
 }
