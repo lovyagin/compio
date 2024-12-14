@@ -195,7 +195,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         // splitting uncompressed data into blocks of fixed size
         uint64_t offset = config->block_size * i;
         uint64_t b_start = start + offset;
-        uint64_t uncompressed_size = end - b_start;
+        uint64_t uncompressed_size = std::min(end - b_start, (uint64_t)config->block_size);
         p_buf = buf + offset;
 
         storage_block block(uncompressed_size);
@@ -244,9 +244,16 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
         return 0;
 
     auto range = get_range_in_file(file, size);
+    if (range.size() == 0)
+        return 0;
 
     auto config = file->archive->config;
     uint8_t* p_buf = (uint8_t*)ptr;
+
+    // number of bytes to skip in the beginning
+    int64_t offset = file->cursor - range[0].first.second;
+    // number of bytes we've left to read
+    int64_t remaining_size = size;
 
     // temporary buffer for decompressing
     std::vector<uint8_t> tmp_buf;
@@ -254,17 +261,28 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     for (auto& [key, val] : range) {
         storage_block block(file->archive->file, val.addr);
 
-        // copy compressed data from block into tmp_buf
-        tmp_buf.resize(block.size);
-        std::copy(block.data.begin(), block.data.end(), tmp_buf.begin());
+        // index of last byte we need to read, in uncompressed block
+        uint64_t end = std::min(offset + remaining_size, (int64_t)(val.size));
+        // number of bytes copied into ptr on this iteration
+        uint64_t bytes_copied = 0;
+        if (end > offset) {
+            tmp_buf.resize(block.original_size);
 
-        // decompress data from tmp_buf into big buf
-        uint64_t dst_size = block.original_size;
-        config->compressor.decompress(p_buf, &dst_size, tmp_buf.data(), tmp_buf.size());
-        p_buf += dst_size;
+            // decompress data from block data into tmp_buf
+            uint64_t dst_size = block.original_size;
+            config->compressor.decompress(tmp_buf.data(), &dst_size, block.data.data(), block.data.size());
+
+            // copy target block of uncompressed data into result
+            std::copy(tmp_buf.begin() + offset, tmp_buf.begin() + end, p_buf);
+            bytes_copied = end - offset;
+            p_buf += bytes_copied;
+        }
+
+        offset = std::max(0l, offset - (int64_t)val.size);
+        remaining_size -= bytes_copied;
     }
 
-    uint64_t total_size = p_buf - (uint8_t*)ptr;
+    uint64_t total_size = size - remaining_size;
     compio_seek(file, total_size, COMP_SEEK_CUR);
     return total_size;
 }
