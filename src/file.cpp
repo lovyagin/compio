@@ -41,14 +41,14 @@ index_node::index_node(FILE* file, uint64_t addr, int tree_degree) : index_node(
     printf("[LOAD] ADDR: %ld\n", addr);
     printf("\tkeys: ");
     for (int i = 0; i < num_keys; ++i)
-        printf("%ld-%ld, ", keys[i].first, keys[i].second);
+        printf("%ld-%ld, ", keys[i].hash, keys[i].pos);
     printf("\n");
     printf("\tvalues: ");
     for (int i = 0; i < num_keys; ++i)
         printf("%ld(%ld), ", values[i].addr, values[i].size);
     printf("\n");
     printf("\tchildren: ");
-    for (int i = 0; i < num_keys; ++i)
+    for (int i = 0; i <= num_keys; ++i)
         printf("%ld, ", children[i]);
     printf("\n");
 }
@@ -88,14 +88,14 @@ void index_node::write(FILE* file, uint64_t addr) {
     printf("[SAVE] ADDR: %ld\n", addr);
     printf("\tkeys: ");
     for (int i = 0; i < num_keys; ++i)
-        printf("%ld-%ld, ", keys[i].first, keys[i].second);
+        printf("%ld-%ld, ", keys[i].hash, keys[i].pos);
     printf("\n");
     printf("\tvalues: ");
     for (int i = 0; i < num_keys; ++i)
         printf("%ld(%ld), ", values[i].addr, values[i].size);
     printf("\n");
     printf("\tchildren: ");
-    for (int i = 0; i < num_keys; ++i)
+    for (int i = 0; i <= num_keys; ++i)
         printf("%ld, ", children[i]);
     printf("\n");
 

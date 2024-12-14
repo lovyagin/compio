@@ -35,9 +35,23 @@ uint8_t parse_mode(const char* mode) {
 
 void flush_header(compio_archive* archive) { archive->header->write(archive->file); }
 
-tree_key operator+(tree_key x, uint64_t size) {
-    return {x.first, x.second + size};
+bool operator<(const tree_key& x, const tree_key& y) {
+    if (x.hash == y.hash)
+        return x.pos < y.pos;
+    return x.hash < y.hash;
 }
+
+bool operator==(const tree_key& x, const tree_key& y) { return x.hash == y.hash && x.pos == y.pos; }
+
+bool operator>(const tree_key& x, const tree_key& y) { return y < x; }
+
+bool operator<=(const tree_key& x, const tree_key& y) { return x < y || x == y; }
+
+bool operator>=(const tree_key& x, const tree_key& y) { return x > y || x == y; }
+
+bool operator!=(const tree_key& x, const tree_key& y) { return !(x == y); }
+
+tree_key operator+(tree_key x, uint64_t size) { return {x.hash, x.pos + size}; }
 
 tree_key get_key(const char* fname, uint64_t pos) {
     hash_sha256 hash;
@@ -49,4 +63,4 @@ tree_key get_key(const char* fname, uint64_t pos) {
     return {hash_tail, pos};
 }
 
-}
+} // namespace compio

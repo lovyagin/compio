@@ -157,7 +157,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     auto file_table_item = file->archive->header->ftable.find(file->name);
     uint64_t fsize = file_table_item->size;
 
-    uint64_t start = (range.size() > 0) ? range[0].first.second : fsize;
+    uint64_t start = (range.size() > 0) ? range[0].first.pos : fsize;
     uint64_t end = file->cursor + size;
     // create buffer for uncompressed data
     uint8_t* buf = new uint8_t[end - start];
@@ -251,7 +251,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     uint8_t* p_buf = (uint8_t*)ptr;
 
     // number of bytes to skip in the beginning
-    int64_t offset = file->cursor - range[0].first.second;
+    int64_t offset = file->cursor - range[0].first.pos;
     // number of bytes we've left to read
     int64_t remaining_size = size;
 

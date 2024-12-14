@@ -16,6 +16,24 @@ void flush_header(compio_archive* archive);
 
 tree_key operator+(tree_key x, uint64_t size);
 
+bool operator<(const tree_key& x, const tree_key& y);
+
+bool operator>(const tree_key& x, const tree_key& y);
+
+bool operator<=(const tree_key& x, const tree_key& y);
+
+bool operator>=(const tree_key& x, const tree_key& y);
+
+bool operator==(const tree_key& x, const tree_key& y);
+
+bool operator!=(const tree_key& x, const tree_key& y);
+
+template <class T> constexpr T _min();
+template <> constexpr tree_key _min<tree_key>() { return {0, 0}; }
+
+template <class T> constexpr T _max();
+template <> constexpr tree_key _max<tree_key>() { return {(uint64_t)-1, (uint64_t)-1}; }
+
 tree_key get_key(const char* fname, uint64_t pos);
 
 } // namespace compio

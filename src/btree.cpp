@@ -277,7 +277,7 @@ void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_m
         return;
     bool is_leaf = RO(node)->is_leaf;
 
-    auto start = std::numeric_limits<tree_key>::min();
+    auto start = _min<tree_key>();
     auto end = RO(node)->keys[0];
     for (int i = 0; i <= num_keys; ++i) {
         if (!is_leaf) {
@@ -292,7 +292,7 @@ void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_m
             if (key_min <= end && key_max > start)
                 result.push_back({start, RO(node)->values[i]});
             start = end;
-            end = (i < num_keys - 1) ? RO(node)->keys[i + 1] : std::numeric_limits<tree_key>::max();
+            end = (i < num_keys - 1) ? RO(node)->keys[i + 1] : _max<tree_key>();
         }
     }
 }

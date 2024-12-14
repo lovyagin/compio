@@ -43,7 +43,7 @@ struct header {
     int32_t magic_number; /**< Constant bytes, file signature */
     uint64_t index_root;  /**< Address of B-Tree root in file */
     uint64_t file_size;
-    files_table ftable;   /**< Files table */
+    files_table ftable; /**< Files table */
 
     /**
      * @brief Construct default header
@@ -70,17 +70,19 @@ struct header {
 /**
  * @brief Type for key in btree
  *
- * Hashed compio_file name and block start in uncompressed file
  */
-typedef std::pair<uint64_t, uint64_t> tree_key;
+typedef struct {
+    uint64_t hash; /**< last 64 bits of hashed internal file name */
+    uint64_t pos;  /**< Position of block start in uncompressed file */
+} tree_key;
 
 /**
  * @brief Type for value in btree
  *
- * Here it representes address of storage block in archive file, and uncompressed size
  */
 typedef struct {
-    uint64_t addr, size;
+    uint64_t addr; /**< Address of storage_block in archive file */
+    uint64_t size; /**< Original size of uncompressed block */
 } tree_val;
 
 /**
@@ -91,7 +93,7 @@ struct index_node {
     uint8_t is_leaf;                /**< Is this node a leaf */
     uint32_t num_keys;              /**< Number of used keys in node */
     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
-    std::vector<tree_val> values;    /**< Storage blocks addresses in archive file */
+    std::vector<tree_val> values;   /**< Storage blocks addresses in archive file */
     std::vector<uint64_t> children; /**< Children addresses in archive file */
 
     int tree_degree; /**< B-Tree degree (not saved in file) */
