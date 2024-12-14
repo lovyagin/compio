@@ -59,8 +59,7 @@ typedef struct {
     compio_compressor compressor;
 
     int b_tree_degree; /**< Maximum number of children of B-Tree node */
-    int min_blocksize; /**< Minimal size of uncompressed block */
-    int max_blocksize; /**< Maximal size of uncompressed block */
+    int block_size;
 
     /**
      * @brief Fill deleted blocks with zeros, so that OS may optimize it (see

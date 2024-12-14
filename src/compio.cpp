@@ -13,8 +13,7 @@ void compio_build_default_config(compio_config* result) {
     result->b_tree_degree = 16;
     compio_build_dummy_compressor(&result->compressor);
     result->fill_holes_with_zeros = true;
-    result->min_blocksize = 512;
-    result->max_blocksize = 8192;
+    result->block_size = 4096;
 }
 
 compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
