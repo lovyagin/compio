@@ -3,6 +3,7 @@
 #include "file.hpp"
 #include "utils.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -17,13 +18,11 @@ void compio_build_default_config(compio_config* result) {
 }
 
 compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
-    auto archive = (compio_archive*)malloc(sizeof(compio_archive));
-    if (!archive)
-        return NULL;
+    auto archive = new compio_archive();
 
     archive->mode_b = parse_mode(mode);
     if (!archive->mode_b) {
-        free(archive);
+        delete archive;
         return NULL;
     }
 
@@ -36,7 +35,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
 
     archive->file = fopen(fp, archive_open_mode);
     if (!archive->file) {
-        free(archive);
+        delete archive;
         return NULL;
     }
 
@@ -49,6 +48,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
         archive->header = new header(archive->file);
 
     archive->config = c;
+    archive->index = new btree(archive);
 
     return archive;
 }
@@ -75,9 +75,7 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
         }
     }
 
-    auto file = (compio_file*)malloc(sizeof(compio_file));
-    if (file == NULL)
-        return NULL;
+    auto file = new compio_file();
 
     file->size = file_table_item->size;
 
@@ -103,7 +101,7 @@ int compio_remove_file(compio_archive* archive, const char* name) {
 }
 
 int compio_close_file(compio_file* file) {
-    free(file);
+    delete file;
     return 0;
 }
 
@@ -111,7 +109,8 @@ int compio_close_archive(compio_archive* archive) {
     if (fclose(archive->file))
         return -1;
     delete archive->header;
-    free(archive);
+    delete archive->index;
+    delete archive;
     return 0;
 }
 
@@ -141,23 +140,100 @@ int compio_seek(compio_file* file, uint64_t offset, uint8_t origin) {
 uint64_t compio_tell(compio_file* file) { return file->cursor; }
 
 uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
-    // 0. if index_root == NULL, btree_create at first
-    // 1. get blocks indices from file->cursor and btree get_range_and_pop operation
-    //      compio_btree_get_range(FILE* file->archive->file, uint64_t file->archive->header->index_root, file->cursor, file->cursor + size)
-    // 2. unpack them using file->archive->config->compressor.decompress
-    // 3. modify with data from ptr
-    // 4. split into blocks of size file->archive->config->preferred_block_size
-    // 5. compress
-    // 6. push new blocks into b-tree
-    // 7. update 
-    //      - file->cursor, 
-    //      - file->size, 
-    //      - file->archive->header->ftable, 
-    //      - (potentially) file->archive->header->index_root
-    // 8. flush header
+    // get range of blocks, that intersect our workspace
+    std::vector<std::pair<tree_key, tree_val>> range;
+    auto key_min = get_key(file->name, file->cursor);
+    auto key_max = get_key(file->name, file->cursor + size);
+    file->archive->index->get_range(key_min, key_max, range);
+
+    // find file in file table, and add if doesn't exist
+    auto file_table_item = file->archive->header->ftable.find(file->name);
+    uint64_t fsize;
+    if (file_table_item == NULL) {
+        file->archive->header->ftable.add(file->name);
+        flush_header(file->archive);
+        fsize = 0;
+    } else {
+        fsize = file_table_item->size;
+    }
+
+    uint64_t start = (range.size() > 0) ? range[0].first.second : fsize;
+    uint64_t end = file->cursor + size;
+    // create buffer for uncompressed data
+    uint8_t* buf = new uint8_t[end - start];
+    // if cursor is set after end of file, (eof, cursor) must be
+    // filled with zeros, so we initialize buffer with zeros
+    std::fill(buf, buf + sizeof(buf), 0);
+
+    auto config = file->archive->config;
+    uint64_t n_blocks = (end - start + config->block_size - 1) / config->block_size;
+
+    uint8_t* p_buf = buf;
+    // temporary buffer for compressed data from one block
+    std::vector<uint8_t> tmp_buf;
+    tmp_buf.reserve(config->block_size);
+    for (const auto& [key, val] : range) {
+        storage_block block(file->archive->file, val.addr);
+
+        // copy compressed data from block into tmp_buf
+        tmp_buf.resize(block.size);
+        std::copy(block.data.begin(), block.data.end(), tmp_buf.begin());
+
+        // decompress data from tmp_buf into big buf
+        uint64_t dst_size = block.original_size;
+        config->compressor.decompress(p_buf, &dst_size, tmp_buf.data(), tmp_buf.size());
+        p_buf += dst_size;
+
+        // remove this block from file (we will add modified block as a new one)
+        free_block(file->archive, val.addr, STORAGE_BLOCK_METASIZE + block.size);
+    }
+
+    // modify uncompressed data in buffer with data from user
+    std::copy((uint8_t*)ptr, (uint8_t*)ptr + size, buf + (file->cursor - start));
+
+    for (int i = 0; i < n_blocks; ++i) {
+        // splitting uncompressed data into blocks of fixed size
+        uint64_t offset = config->block_size * i;
+        uint64_t b_start = start + offset;
+        uint64_t uncompressed_size = end - b_start;
+        p_buf = buf + offset;
+
+        storage_block block(uncompressed_size);
+        block.original_size = uncompressed_size;
+        block.index_key = get_key(file->name, b_start);
+        int ret =
+            config->compressor.compress(block.data.data(), &block.size, p_buf, uncompressed_size);
+        if (ret != 0) {
+            // if compressed size > uncompressed size, write uncompressed data instead
+            block.is_compressed = false;
+            block.size = uncompressed_size;
+            std::copy(p_buf, p_buf + uncompressed_size, block.data.begin());
+        }
+
+        // remove unneccesary bytes from buffer
+        block.data.resize(block.size);
+
+        // get new address in archive file and write block into it
+        uint64_t addr = allocate_block(file->archive, STORAGE_BLOCK_METASIZE + block.size);
+        block.write(file->archive->file, addr);
+
+        tree_val new_value = {addr, uncompressed_size};
+        // if block already in tree, just update it, otherwise insert
+        if (std::find_if(range.begin(), range.end(),
+                         [&block](const std::pair<tree_key, tree_val>& x) {
+                             return x.first == block.index_key;
+                         }) != range.end())
+            file->archive->index->update(block.index_key, new_value);
+        else
+            file->archive->index->insert(block.index_key, new_value);
+    }
 }
 
 uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
-    // 1. steps 0-2 from compio_write (but without pop)
-    // 2. write size bytes into ptr
+    // std::vector<std::pair<tree_key, tree_val>> range;
+    // auto key_min = get_key(file->name, file->cursor);
+    // auto key_max = get_key(file->name, file->cursor + size);
+    // file->archive->index->get_range(key_min, key_max, range);
+    // // 1. steps 0-2 from compio_write (but without pop)
+    // // 2. write size bytes into ptr
 }

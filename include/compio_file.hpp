@@ -5,6 +5,9 @@
 #include "compio.h"
 #include "file.hpp"
 
+// forward declaration
+namespace compio { class btree; }
+
 /**
  * @brief Opened archive
  *
@@ -13,7 +16,7 @@ struct compio_archive {
     FILE* file;                  /**< Opened stdio FILE */
     const compio_config* config; /**< Compio configuration */
     compio::header* header;      /**< Read file header */
-    // compio::btree* index;
+    compio::btree* index;
 
     /**
      * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear

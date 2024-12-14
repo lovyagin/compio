@@ -40,20 +40,25 @@ index_node::index_node(FILE* file, uint64_t addr, int tree_degree) : index_node(
 
     printf("[LOAD] ADDR: %ld\n", addr);
     printf("\tkeys: ");
-    for (auto el : keys)
-        printf("%ld, ", el);
+    for (int i = 0; i < num_keys; ++i)
+        printf("%ld-%ld, ", keys[i].first, keys[i].second);
     printf("\n");
     printf("\tvalues: ");
-    for (auto el : values)
-        printf("%ld(%ld), ", el.addr, el.size);
+    for (int i = 0; i < num_keys; ++i)
+        printf("%ld(%ld), ", values[i].addr, values[i].size);
     printf("\n");
     printf("\tchildren: ");
-    for (auto el : children)
-        printf("%ld, ", el);
+    for (int i = 0; i < num_keys; ++i)
+        printf("%ld, ", children[i]);
     printf("\n");
 }
 
-storage_block::storage_block() : is_compressed(0), size(0), original_size(0), index_key(0) {}
+storage_block::storage_block(uint64_t size)
+    : is_compressed(0),
+      size(size),
+      original_size(0),
+      index_key({0, 0}),
+      data(size) {}
 
 storage_block::storage_block(FILE* file, uint64_t addr) {
     if (fseek(file, addr, SEEK_SET))
@@ -82,16 +87,16 @@ void index_node::write(FILE* file, uint64_t addr) {
 
     printf("[SAVE] ADDR: %ld\n", addr);
     printf("\tkeys: ");
-    for (auto el : keys)
-        printf("%ld, ", el);
+    for (int i = 0; i < num_keys; ++i)
+        printf("%ld-%ld, ", keys[i].first, keys[i].second);
     printf("\n");
     printf("\tvalues: ");
-    for (auto el : values)
-        printf("%ld(%ld), ", el.addr, el.size);
+    for (int i = 0; i < num_keys; ++i)
+        printf("%ld(%ld), ", values[i].addr, values[i].size);
     printf("\n");
     printf("\tchildren: ");
-    for (auto el : children)
-        printf("%ld, ", el);
+    for (int i = 0; i < num_keys; ++i)
+        printf("%ld, ", children[i]);
     printf("\n");
 
     int count = 0;

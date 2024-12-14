@@ -209,11 +209,11 @@ void btree::remove_node(shared_node node, tree_key key) {
             auto child = read_node(RO(node)->children[idx]);
             auto successor = read_node(RO(node)->children[idx + 1]);
             if (child->num_keys >= degree) {
-                size_t predecessor_key = find_max_in_node(child);
+                auto predecessor_key = find_max_in_node(child);
                 node->keys[idx] = predecessor_key;
                 remove_node(child, predecessor_key);
             } else if (RO(successor)->num_keys >= degree) {
-                size_t successor_key = find_min_in_node(successor);
+                auto successor_key = find_min_in_node(successor);
                 node->keys[idx] = successor_key;
                 remove_node(successor, successor_key);
             } else {

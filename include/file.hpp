@@ -70,9 +70,9 @@ struct header {
 /**
  * @brief Type for key in btree
  *
- * Here it represents position in uncompressed file, hence it's type is uint64_t
+ * Hashed compio_file name and block start in uncompressed file
  */
-typedef uint64_t tree_key;
+typedef std::pair<uint64_t, uint64_t> tree_key;
 
 /**
  * @brief Type for value in btree
@@ -140,14 +140,15 @@ struct storage_block {
     uint8_t is_compressed;     /**< Is this block compressed */
     uint64_t size;             /**< Size of data array */
     uint64_t original_size;    /**< Original size (size of uncompressed data) */
-    uint64_t index_key;        /**< Index key of this block */
+    tree_key index_key;        /**< Index key of this block */
     std::vector<uint8_t> data; /**< Data block */
 
     /**
-     * @brief Construct empty storage block
+     * @brief Construct storage block with data of size
      *
+     * @param size size of data
      */
-    storage_block();
+    storage_block(uint64_t size);
 
     /**
      * @brief Read storage block from file
