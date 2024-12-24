@@ -13,10 +13,10 @@ void btree::free_node(shared_node node) {
     free_block(archive, node.addr(), INDEX_NODE_SIZE(degree));
 }
 
-shared_node btree::read_node(uint64_t addr) { return shared_node(archive->file, addr, degree); }
+shared_node btree::read_node(uint64_t addr) { return shared_node(archive->file, addr, archive->config->swap_endianness, degree); }
 
 shared_node btree::create_node() {
-    return shared_node(archive->file, allocate_node(), new index_node(degree));
+    return shared_node(archive->file, allocate_node(), new index_node(degree), archive->config->swap_endianness);
 }
 
 shared_node btree::read_root() { return read_node(archive->header->index_root); }

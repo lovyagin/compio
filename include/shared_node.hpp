@@ -9,11 +9,11 @@ namespace compio {
 
 class shared_node {
 public:
-    shared_node(FILE* file, uint64_t addr, index_node* obj)
-        : storage(new _storage(file, addr, obj)) {}
+    shared_node(FILE* file, uint64_t addr, index_node* obj, bool swap_endianness)
+        : storage(new _storage(file, addr, obj, swap_endianness)) {}
 
-    shared_node(FILE* file, uint64_t addr, int degree)
-        : storage(new _storage(file, addr, new index_node(file, addr, degree))) {}
+    shared_node(FILE* file, uint64_t addr, bool swap_endianness, int degree)
+        : storage(new _storage(file, addr, new index_node(file, addr, swap_endianness, degree), swap_endianness)) {}
 
     shared_node(const shared_node& other) { 
         storage = other.storage; 
@@ -62,21 +62,23 @@ private:
         int ref_count;
         bool modified;
         bool removed;
+        bool swap_endianness;
         index_node* data;
         FILE* file;
         uint64_t addr;
 
-        _storage(FILE* file, uint64_t addr, index_node* obj)
+        _storage(FILE* file, uint64_t addr, index_node* obj, bool swap_endianness)
             : file(file),
               addr(addr),
               ref_count(1),
               modified(false),
               removed(false),
+              swap_endianness(swap_endianness),
               data(obj) {}
 
         ~_storage() {
             if (modified && !removed)
-                data->write(file, addr);
+                data->write(file, addr, swap_endianness);
             delete data;
         }
     } * storage;

@@ -60,6 +60,7 @@ typedef struct {
 
     int b_tree_degree; /**< Maximum number of children of B-Tree node */
     int block_size;
+    bool swap_endianness;
 
     /**
      * @brief Fill deleted blocks with zeros, so that OS may optimize it (see

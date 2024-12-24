@@ -33,6 +33,14 @@ struct files_table {
     file* find(const char* name); /**< Find file by name, nullptr if doesn't exist */
     file* add(const char* name);  /**< Add file, nullptr if table is full */
     int remove(const char* name); /**< Remove file */
+
+    /**
+     * @brief Swap bytes of all integers in struct
+     * 
+     * @param from_valid True, when struct is valid before this function, 
+     * and we want to swap bytes for writing to file
+     */
+    void _swap_endianness(bool from_valid);
 };
 
 /**
@@ -57,14 +65,23 @@ struct header {
      * @param file opened file
      * @return std::shared_ptr<header*>
      */
-    header(FILE* file);
+    header(FILE* file, bool swap_endianness);
 
     /**
      * @brief Write header to file
      *
      * @param file opened file
      */
-    void write(FILE* file);
+    void write(FILE* file, bool swap_endianness);
+
+private:
+    /**
+     * @brief Swap bytes of all integers in struct
+     * 
+     * @param from_valid True, when struct is valid before this function, 
+     * and we want to swap bytes for writing to file
+     */
+    void _swap_endianness(bool from_valid);
 };
 
 /**
@@ -112,7 +129,7 @@ struct index_node {
      * @param addr address to read from
      * @param tree_degree degree of b-tree
      */
-    index_node(FILE* file, uint64_t addr, int tree_degree);
+    index_node(FILE* file, uint64_t addr, bool swap_endianness, int tree_degree);
 
     /**
      * @brief Write index node to file
@@ -120,7 +137,16 @@ struct index_node {
      * @param file opened file
      * @param addr address to write to
      */
-    void write(FILE* file, uint64_t addr);
+    void write(FILE* file, uint64_t addr, bool swap_endianness);
+
+private:
+    /**
+     * @brief Swap bytes of all integers in struct
+     * 
+     * @param from_valid True, when struct is valid before this function, 
+     * and we want to swap bytes for writing to file
+     */
+    void _swap_endianness(bool from_valid);
 };
 
 /**
@@ -159,7 +185,7 @@ struct storage_block {
      * @param addr address to read from
      * @return std::shared_ptr<storage_block*>
      */
-    storage_block(FILE* file, uint64_t addr);
+    storage_block(FILE* file, uint64_t addr, bool swap_endianness);
 
     /**
      * @brief Write storage block to file
@@ -167,7 +193,16 @@ struct storage_block {
      * @param file opened file
      * @param addr address to write to
      */
-    void write(FILE* file, uint64_t addr);
+    void write(FILE* file, uint64_t addr, bool swap_endianness);
+
+private:
+    /**
+     * @brief Swap bytes of all integers in struct
+     * 
+     * @param from_valid True, when struct is valid before this function, 
+     * and we want to swap bytes for writing to file
+     */
+    void _swap_endianness(bool from_valid);
 };
 
 /**

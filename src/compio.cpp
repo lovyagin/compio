@@ -14,12 +14,14 @@ void compio_build_default_config(compio_config* result) {
     result->b_tree_degree = 16;
     compio_build_dummy_compressor(&result->compressor);
     result->fill_holes_with_zeros = true;
+    result->swap_endianness = false;
     result->block_size = 4096;
 }
 
 compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
     auto archive = new compio_archive();
 
+    archive->config = c;
     archive->mode_b = parse_mode(mode);
     if (!archive->mode_b) {
         delete archive;
@@ -45,9 +47,8 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
         archive->header = new header();
         flush_header(archive);
     } else
-        archive->header = new header(archive->file);
+        archive->header = new header(archive->file, c->swap_endianness);
 
-    archive->config = c;
     archive->index = new btree(archive);
 
     return archive;
@@ -173,7 +174,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     std::vector<uint8_t> tmp_buf;
     tmp_buf.reserve(config->block_size);
     for (const auto& [key, val] : range) {
-        storage_block block(file->archive->file, val.addr);
+        storage_block block(file->archive->file, val.addr, file->archive->config->swap_endianness);
 
         // copy compressed data from block into tmp_buf
         tmp_buf.resize(block.size);
@@ -215,7 +216,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
         // get new address in archive file and write block into it
         uint64_t addr = allocate_block(file->archive, STORAGE_BLOCK_METASIZE + block.size);
-        block.write(file->archive->file, addr);
+        block.write(file->archive->file, addr, file->archive->config->swap_endianness);
 
         tree_val new_value = {addr, uncompressed_size};
         // if block already in tree, just update it, otherwise insert
@@ -259,7 +260,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     std::vector<uint8_t> tmp_buf;
     tmp_buf.reserve(config->block_size);
     for (auto& [key, val] : range) {
-        storage_block block(file->archive->file, val.addr);
+        storage_block block(file->archive->file, val.addr, file->archive->config->swap_endianness);
 
         // index of last byte we need to read, in uncompressed block
         uint64_t end = std::min(offset + remaining_size, (int64_t)(val.size));

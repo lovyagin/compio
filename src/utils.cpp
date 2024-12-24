@@ -33,7 +33,7 @@ uint8_t parse_mode(const char* mode) {
     return mode_b;
 }
 
-void flush_header(compio_archive* archive) { archive->header->write(archive->file); }
+void flush_header(compio_archive* archive) { archive->header->write(archive->file, archive->config->swap_endianness); }
 
 bool operator<(const tree_key& x, const tree_key& y) {
     if (x.hash == y.hash)
