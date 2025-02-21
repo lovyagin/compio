@@ -73,4 +73,3 @@ else()
 endif()
 
 add_subdirectory(tests)
-
