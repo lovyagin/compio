@@ -12,7 +12,11 @@ compio_block* compio_create_block(size_t size, bool is_compressed, const char* c
     block->size = size;
     block->is_compressed = is_compressed;
     if (compression_type != NULL) {
+#ifdef _WIN32
         block->compression_type = _strdup(compression_type); // Using strdup for better portability
+#else
+        block->compression_type = strdup(compression_type);
+#endif
     } else {
         block->compression_type = NULL;
     }
