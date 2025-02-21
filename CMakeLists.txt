@@ -14,20 +14,11 @@ add_executable(compio main.c include/block.h
 
 target_sources(compio PRIVATE
     src/block.c
-    src/compression.c
+    src/compressor.c
     src/storage.c
     archivers/squash_adapter.c
     archivers/zlib_adapter.c
 )
-
-# target_include_directories(compio PRIVATE include)
-
-add_library(compio_lib
-        src/block.c
-        src/btree.c
-)
-
-target_include_directories(compio_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
 
 add_library(compio_lib
         src/block.c
