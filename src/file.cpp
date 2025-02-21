@@ -1,3 +1,11 @@
+#ifdef _MSC_VER
+#include <intrin.h>
+#define __bswap_64(x) _byteswap_uint64(x)
+#define __bswap_32(x) _byteswap_ulong(x)
+#else
+#include <byteswap.h>
+#endif
+
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>

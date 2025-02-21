@@ -83,4 +83,8 @@ else()
     message(FATAL_ERROR "CUnit not found. Please install it using your package manager.")
 endif()
 
+if (MSVC)
+    target_compile_definitions(compio PRIVATE _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING)
+endif()
+
 add_subdirectory(tests)
