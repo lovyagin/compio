@@ -27,8 +27,14 @@ private:
 =======
     ZLibAdapter() = default;
 
+<<<<<<< HEAD
     void change_data(data_to_change& d, uint64_t size, void* data) override {}
 >>>>>>> 7f69cff (rebased from develop, solve conflicts)
+=======
+    virtual void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override;
+private:
+    std::unique_ptr<compio::btree> _btreeP;
+>>>>>>> 46d7429 (dummy data change method)
 };
 
 #endif //ZLIB_ADAPTER_H
