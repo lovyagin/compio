@@ -17,29 +17,18 @@ target_sources(compio PRIVATE
         src/block.c
         src/compressor.c
         src/storage.c
-<<<<<<< HEAD
         src/BTree/btree.c
 
         src/BTree/btree.cpp
-=======
-        src/btree.c
-
-        src/btree.cpp
->>>>>>> 83aeca2 (cmake new libraries, main header include)
         src/allocator.cpp
         src/file.cpp
         src/utils.cpp
 
-<<<<<<< HEAD
         src/archivers/squash_adapter.c
         src/archivers/zlib_adapter.cpp
 
         src/storage/storage.cpp
         src/storage/storage_block.cpp
-=======
-        archivers/squash_adapter.c
-        archivers/zlib_adapter.c
->>>>>>> 83aeca2 (cmake new libraries, main header include)
 )
 
 add_library(compio_lib

@@ -32,6 +32,7 @@ void ZLibAdapter::change_one_block_data(std::pair<compio::tree_key, compio::tree
     _IbtreeP->update(node.first, {storageBlock, decompressedSize});
 }
 
+#include "archivers/zlib_adapter.hpp"
 
 void printNodes(std::vector<std::pair<compio::tree_key, compio::tree_val>>& node) {
     for (const auto& n : node) {
