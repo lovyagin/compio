@@ -24,6 +24,7 @@ private:
 private:
     std::unique_ptr<compio::btree> _btreeP;
 >>>>>>> 9950425 (dummy data change method)
+<<<<<<< HEAD
 =======
     ZLibAdapter() = default;
 
@@ -35,6 +36,8 @@ private:
 private:
     std::unique_ptr<compio::btree> _btreeP;
 >>>>>>> 46d7429 (dummy data change method)
+=======
+>>>>>>> b3d8f8a (dummy data change method)
 };
 
 #endif //ZLIB_ADAPTER_H
