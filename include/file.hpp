@@ -38,8 +38,8 @@ struct files_table {
 
     /**
      * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
+     *
+     * @param from_valid True, when struct is valid before this function,
      * and we want to swap bytes for writing to file
      */
     void _swap_endianness(bool from_valid);
@@ -79,8 +79,8 @@ struct header {
 private:
     /**
      * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
+     *
+     * @param from_valid True, when struct is valid before this function,
      * and we want to swap bytes for writing to file
      */
     void _swap_endianness(bool from_valid);
@@ -144,8 +144,8 @@ struct index_node {
 private:
     /**
      * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
+     *
+     * @param from_valid True, when struct is valid before this function,
      * and we want to swap bytes for writing to file
      */
     void _swap_endianness(bool from_valid);
@@ -200,8 +200,8 @@ struct storage_block {
 private:
     /**
      * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
+     *
+     * @param from_valid True, when struct is valid before this function,
      * and we want to swap bytes for writing to file
      */
     void _swap_endianness(bool from_valid);

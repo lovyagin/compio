@@ -1,7 +1,11 @@
 #ifndef COMPIO_FILE_HEADER_
 #define COMPIO_FILE_HEADER_
 
+<<<<<<< HEAD
 #include "BTree/btree.hpp"
+=======
+#include "btree.hpp"
+>>>>>>> 294f7c6 (rebased from develop, solve conflicts)
 #include "../compio.h"
 #include "file.hpp"
 
