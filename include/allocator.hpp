@@ -7,7 +7,9 @@
 #ifndef COMPIO_ALLOCATOR_HEADER_
 #define COMPIO_ALLOCATOR_HEADER_
 
-#include "compio.h"
+#include <cstdint>
+
+#include "../compio.h"
 #include "compio_file.hpp"
 
 namespace compio {

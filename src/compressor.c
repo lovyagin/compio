@@ -1,7 +1,4 @@
-#include <errno.h>
-#include <string.h>
-
-#include "compio.h"
+#include "compressor.h"
 
 int dummy_compress(void* dst, size_t* dst_size, const void* src, size_t src_size) {
     if (*dst_size < src_size) {

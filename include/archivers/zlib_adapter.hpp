@@ -6,6 +6,8 @@
 class ZLibAdapter : public ICompressionAlgoAdapter {
 public:
     ZLibAdapter() = default;
+
+    void change_data(data_to_change& d, uint64_t size, void* data) override {}
 };
 
 #endif //ZLIB_ADAPTER_H

@@ -16,6 +16,7 @@ enum CompressionType {
     NONE,
     GZIP,
     LZ4,
+    ZLIB,
 };
 
 typedef struct {
@@ -23,7 +24,7 @@ typedef struct {
     int8_t compression_level;
     int32_t original_size;
     int32_t compressed_size;
-    CompressionType type;
+    enum CompressionType type;
 } CompressionInfo;
 
 typedef struct {

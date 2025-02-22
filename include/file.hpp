@@ -11,7 +11,7 @@
 #include <cstdio>
 #include <vector>
 
-#include "compio.h"
+#include "../compio.h"
 
 namespace compio {
 

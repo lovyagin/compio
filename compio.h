@@ -18,36 +18,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "compressor.h"
+
 #define COMPIO_MAX_FILES 64      /**< Maximum number of files in archive */
 #define COMPIO_FNAME_MAX_SIZE 32 /**< File name maximum length */
 
-/**
- * @brief Compressor interface
- */
-typedef struct compio_compressor {
-    /**
-     * @brief Compress src_size of bytes from src buffer into dst buffer.
-     * On success, return 0 and write real size of compressed data into
-     * dst_size. If dst buffer is to small, return non-zero code and set errno =
-     * ENOBUFS.
-     */
-    int (*compress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
-
-    /**
-     * @brief Decompress src_size of bytes, that was previously
-     * compressed with the same compressor, from src buffer into dst buffer. On
-     * success, return 0 and write real size of decompressed data into dst_size.
-     * If dst buffer is to small, return non-zero code and set errno = ENOBUFS.
-     */
-    int (*decompress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
-} compio_compressor;
-
-/**
- * @brief Test compressor, keeps data exactly the same
- *
- * @param result
- */
-void compio_build_dummy_compressor(compio_compressor* result);
 
 /**
  * @brief Configuration

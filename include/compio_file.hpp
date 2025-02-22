@@ -2,7 +2,7 @@
 #define COMPIO_FILE_HEADER_
 
 #include "btree.hpp"
-#include "compio.h"
+#include "../compio.h"
 #include "file.hpp"
 
 // forward declaration
