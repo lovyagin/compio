@@ -2,18 +2,16 @@
 #define ZLIB_ADAPTER_H
 
 #include <cstring>
-<<<<<<< HEAD
 #include <zlib.h>
 #include <cstdlib>
 #include <iostream>
-=======
->>>>>>> 9950425 (dummy data change method)
 
 #include "ICompressionAdapter.hpp"
 
 
 class ZLibAdapter : public ICompressionAlgoAdapter {
 public:
+<<<<<<< HEAD
     explicit ZLibAdapter(std::shared_ptr<compio::IBTree> IbtreeP) : _IbtreeP(std::move(IbtreeP)) {} // TODO: CREATE INTERFACE FOR TREE
 
 <<<<<<< HEAD
@@ -26,6 +24,11 @@ private:
 private:
     std::unique_ptr<compio::btree> _btreeP;
 >>>>>>> 9950425 (dummy data change method)
+=======
+    ZLibAdapter() = default;
+
+    void change_data(data_to_change& d, uint64_t size, void* data) override {}
+>>>>>>> 7f69cff (rebased from develop, solve conflicts)
 };
 
 #endif //ZLIB_ADAPTER_H

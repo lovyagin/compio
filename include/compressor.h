@@ -1,14 +1,10 @@
 #ifndef COMPRESSOR_H
 #define COMPRESSOR_H
 
-<<<<<<< HEAD
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-
-=======
->>>>>>> 294f7c6 (rebased from develop, solve conflicts)
 #include <errno.h>
 #include <string.h>
 #include <stdint.h>
