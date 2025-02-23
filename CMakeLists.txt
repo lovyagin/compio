@@ -26,6 +26,8 @@ target_sources(compio PRIVATE
 
         src/archivers/squash_adapter.c
         src/archivers/zlib_adapter.cpp
+
+        src/storage/storage.cpp
 )
 
 add_library(compio_lib
