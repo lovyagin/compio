@@ -47,7 +47,14 @@ typedef struct compio_compressor {
  *
  * @param result
  */
+#ifdef __cplusplus
+extern "C" {
+#endif
 void compio_build_dummy_compressor(compio_compressor* result);
+
+#ifdef __cplusplus
+}
+#endif
 
 typedef enum {
     COMPIO_ALLOC_FIRST_FIT,

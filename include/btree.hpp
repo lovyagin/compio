@@ -98,7 +98,7 @@ public:
                            std::vector<std::pair<tree_key, tree_val>>& result);
     bool update_in_node(shared_node node, tree_key key, tree_val new_value);
 
-    uint64_t allocate_node();
+    uint64_t allocate_node() const;
     void free_node(shared_node node);
     shared_node create_node();
     shared_node read_node(uint64_t addr);

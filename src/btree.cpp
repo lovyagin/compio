@@ -1,4 +1,5 @@
 #include "btree.hpp"
+#include "allocator.hpp"
 #include "utils.hpp"
 
 #include <algorithm>
@@ -6,11 +7,13 @@
 
 using namespace compio;
 
-uint64_t btree::allocate_node() { return allocate_block(archive, INDEX_NODE_SIZE(degree)); }
+uint64_t btree::allocate_node() const {
+    return archive->allocator->allocate(INDEX_NODE_SIZE(degree));
+}
 
 void btree::free_node(shared_node node) {
     node.remove();
-    free_block(archive, node.addr(), INDEX_NODE_SIZE(degree));
+    archive->allocator->deallocate(node.addr(), INDEX_NODE_SIZE(degree));
 }
 
 shared_node btree::read_node(uint64_t addr) { return shared_node(archive->file, addr, archive->config->swap_endianness, degree); }
