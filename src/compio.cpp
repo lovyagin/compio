@@ -2,6 +2,7 @@
 #include "compio_file.hpp"
 #include "file.hpp"
 #include "utils.hpp"
+#include "allocator.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -10,12 +11,13 @@
 using namespace compio;
 
 void compio_build_default_config(compio_config* result) {
-    // TODO: change these random values
     result->b_tree_degree = 16;
     compio_build_dummy_compressor(&result->compressor);
     result->fill_holes_with_zeros = true;
     result->swap_endianness = false;
     result->block_size = 4096;
+    result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+    result->fragmentation_threshold = 30;
 }
 
 compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
@@ -50,6 +52,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
         archive->header = new header(archive->file, c->swap_endianness);
 
     archive->index = new btree(archive);
+    archive->allocator = new compio::block_allocator(archive);
 
     return archive;
 }
@@ -111,6 +114,7 @@ int compio_close_archive(compio_archive* archive) {
         return -1;
     delete archive->header;
     delete archive->index;
+    delete archive->allocator;
     delete archive;
     return 0;
 }
@@ -164,7 +168,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     uint8_t* buf = new uint8_t[end - start];
     // if cursor is set after end of file, (eof, cursor) must be
     // filled with zeros, so we initialize buffer with zeros
-    std::fill(buf, buf + sizeof(buf), 0);
+    std::fill(buf, buf + (end - start), 0);
 
     auto config = file->archive->config;
     uint64_t n_blocks = (end - start + config->block_size - 1) / config->block_size;
@@ -186,7 +190,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         p_buf += dst_size;
 
         // remove this block from file (we will add modified block as a new one)
-        free_block(file->archive, val.addr, STORAGE_BLOCK_METASIZE + block.size);
+        file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block.size);
     }
 
     // modify uncompressed data in buffer with data from user
@@ -215,7 +219,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         block.data.resize(block.size);
 
         // get new address in archive file and write block into it
-        uint64_t addr = allocate_block(file->archive, STORAGE_BLOCK_METASIZE + block.size);
+        uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + block.size);
         block.write(file->archive->file, addr, file->archive->config->swap_endianness);
 
         tree_val new_value = {addr, uncompressed_size};
@@ -229,6 +233,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             file->archive->index->insert(block.index_key, new_value);
     }
 
+    delete[] buf;
     compio_seek(file, size, COMP_SEEK_CUR);
     file_table_item->size = std::max(file_table_item->size, end);
     flush_header(file->archive);
@@ -279,7 +284,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             p_buf += bytes_copied;
         }
 
-        offset = std::max(0l, offset - (int64_t)val.size);
+        offset = std::max(static_cast<int64_t>(0), offset - static_cast<int64_t>(val.size));
         remaining_size -= bytes_copied;
     }
 

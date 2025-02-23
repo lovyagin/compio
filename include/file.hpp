@@ -52,7 +52,8 @@ struct header {
     uint64_t index_root;  /**< Address of B-Tree root in file */
     uint64_t file_size;
     files_table ftable; /**< Files table */
-
+    uint64_t allocator_state_offset;
+    uint64_t allocator_state_size;
     /**
      * @brief Construct default header
      *

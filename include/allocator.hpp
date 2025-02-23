@@ -117,10 +117,23 @@ namespace compio {
         free_blocks_manager blocks_manager_; /**< Free blocks manager */
         uint8_t last_fragmentation_;         /**< Last measured fragmentation */
 
-        bool needs_defragmentation() const;
+        [[nodiscard]] bool needs_defragmentation() const;
         void perform_defragmentation();
     };
 
 } // namespace compio
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef void* compio_allocator_handle;
+
+compio_allocator_handle compio_create_allocator(compio_archive* archive);
+void compio_destroy_allocator(compio_allocator_handle handle);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // COMPIO_ALLOCATOR_HPP

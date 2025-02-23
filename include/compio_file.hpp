@@ -17,13 +17,13 @@ struct compio_archive {
     const compio_config* config; /**< Compio configuration */
     compio::header* header;      /**< Read file header */
     compio::btree* index;
-    compio::free_blocks_table* free_blocks;
 
     /**
      * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear
      * contents)
      */
     uint8_t mode_b;
+    compio::block_allocator* allocator;
 };
 
 /**

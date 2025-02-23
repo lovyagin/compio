@@ -11,6 +11,7 @@ set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.c
 
 add_executable(compio
         main.c
+        src/compio.cpp
 )
 
 target_sources(compio PRIVATE
