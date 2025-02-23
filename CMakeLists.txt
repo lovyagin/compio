@@ -28,6 +28,7 @@ target_sources(compio PRIVATE
         src/archivers/zlib_adapter.cpp
 
         src/storage/storage.cpp
+        src/storage/storage_block.cpp
 )
 
 add_library(compio_lib
