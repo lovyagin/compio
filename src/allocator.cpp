@@ -3,6 +3,7 @@
  * @brief Implementation of block allocation management
  */
 
+#include "compio_file.hpp"
 #include "allocator.hpp"
 #include "file.hpp"
 #include <cstdio>
@@ -170,7 +171,7 @@ namespace compio {
 
     block_allocator::block_allocator(compio_archive* archive)
             : archive_(archive),
-              blocks_manager_(&archive->header->file_size),
+              blocks_manager_(archive->header ? &archive->header->file_size : nullptr),
               last_fragmentation_(0) {}
 
     uint64_t block_allocator::allocate(uint64_t size) {
@@ -181,10 +182,13 @@ namespace compio {
 
         uint64_t offset = blocks_manager_.allocate_block(size, strategy);
 
-        if(offset == UINT64_MAX) {
-            // Allocate at end of file
-            offset = *blocks_manager_.file_size_;
-            *blocks_manager_.file_size_ += size;
+        if (offset == UINT64_MAX) {
+            uint64_t* file_size_ptr = blocks_manager_.get_file_size_ptr();
+            if (!file_size_ptr) {
+                return UINT64_MAX;
+            }
+            offset = *file_size_ptr;
+            *file_size_ptr += size;
         }
 
         maintenance();

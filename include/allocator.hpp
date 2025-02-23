@@ -68,6 +68,10 @@ namespace compio {
          */
         uint8_t calculate_fragmentation() const;
 
+        uint64_t* get_file_size_ptr() const {
+            return file_size_;
+        }
+
     private:
         free_block* head_;           /**< Head of free blocks list */
         free_block* tail_;           /**< Tail of free blocks list */
