@@ -5,7 +5,7 @@
 #include "archivers/zlib_adapter.hpp"
 
 
-void ZLibAdapter::change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) {
+void ZLibAdapter::change_data(const uint64_t hash, const uint64_t startPos, const uint64_t size, void* data) {
     std::vector<std::pair<compio::tree_key, compio::tree_val>> result;
     _btreeP->get_range({hash, startPos}, {hash, startPos + size}, result);
 
@@ -16,9 +16,9 @@ void ZLibAdapter::change_data(uint64_t hash, uint64_t startPos, uint64_t size, v
     // TODO: DECOMPRESS
     auto decompressedBlock = node.second;
 
-    uint64_t startPosForChange = decompressedBlock.addr + (size - startPos);
-    void* targetAddress = reinterpret_cast<void*>(startPosForChange);
-    std::memcpy(targetAddress, data, size);
+    uint64_t startPosForChange = decompressedBlock.addr + (startPos - node.first.pos);
+    void* targetAddress = reinterpret_cast<void*>(startPosForChange); // bad for 32-bit systems??
+    std::memcpy(targetAddress, data, size); 
 
     // TODO: COMPRESS
 }

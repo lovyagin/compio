@@ -9,7 +9,7 @@ class ZLibAdapter : public ICompressionAlgoAdapter {
 public:
     ZLibAdapter() = default;
 
-    virtual void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override;
+    void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override;
 private:
     std::unique_ptr<compio::btree> _btreeP;
 };
