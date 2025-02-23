@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <cinttypes>
 #include <stdexcept>
 
 #include "file.hpp"
@@ -51,18 +52,18 @@ index_node::index_node(FILE* file, uint64_t addr, bool swap_endianness, int tree
     if (swap_endianness)
         _swap_endianness(false);
 
-    printf("[LOAD] ADDR: %ld\n", addr);
+    printf("[LOAD] ADDR: %llu\n", addr);
     printf("\tkeys: ");
     for (int i = 0; i < num_keys; ++i)
-        printf("%ld-%ld, ", keys[i].hash, keys[i].pos);
+        printf("%llu-%llu, ", keys[i].hash, keys[i].pos);
     printf("\n");
     printf("\tvalues: ");
     for (int i = 0; i < num_keys; ++i)
-        printf("%ld(%ld), ", values[i].addr, values[i].size);
+        printf("%llu(%llu), ", values[i].addr, values[i].size);
     printf("\n");
     printf("\tchildren: ");
     for (int i = 0; i <= num_keys; ++i)
-        printf("%ld, ", children[i]);
+        printf("%llu, ", children[i]);
     printf("\n");
 }
 
@@ -102,18 +103,18 @@ void index_node::write(FILE* file, uint64_t addr, bool swap_endianness) {
     if (fseek(file, addr, SEEK_SET))
         throw std::runtime_error("Invalid addr while reading index node from file");
 
-    printf("[SAVE] ADDR: %ld\n", addr);
+    printf("[SAVE] ADDR: %llu\n", addr);
     printf("\tkeys: ");
     for (int i = 0; i < num_keys; ++i)
-        printf("%ld-%ld, ", keys[i].hash, keys[i].pos);
+        printf("%llu-%llu, ", keys[i].hash, keys[i].pos);
     printf("\n");
     printf("\tvalues: ");
     for (int i = 0; i < num_keys; ++i)
-        printf("%ld(%ld), ", values[i].addr, values[i].size);
+        printf("%llu(%llu), ", values[i].addr, values[i].size);
     printf("\n");
     printf("\tchildren: ");
     for (int i = 0; i <= num_keys; ++i)
-        printf("%ld, ", children[i]);
+        printf("%llu, ", children[i]);
     printf("\n");
 
     if (swap_endianness)
