@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
 
-file(GLOB_RECURSE TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/*.c)
+file(GLOB_RECURSE TEST_SOURCES_C ${CMAKE_SOURCE_DIR}/tests/unit/*.c)
+file(GLOB_RECURSE TEST_SOURCES_CPP ${CMAKE_SOURCE_DIR}/tests/unit/*.cpp)
 
 add_executable(compio_tests
         test_runner.c
-        ${TEST_SOURCES}
+        ${TEST_SOURCES_C}
+        ${TEST_SOURCES_CPP}
 )
 
 target_compile_definitions(compio_tests PRIVATE CUNIT_DISABLE_TEST_SNPRINTF)

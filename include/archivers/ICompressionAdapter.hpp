@@ -5,6 +5,7 @@
 
 #include "file.hpp"
 #include "btree.hpp"
+#include "tests/unit/include/mockBTree/MockBTree.h"
 
 class ICompressionAlgoAdapter {
 public:

@@ -4,8 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include "include/archivers/zlib_adapter.hpp"
-#include "mockBTree/mockBTree.h"
-
+#include "tests/unit/include/mockBTree/MockBTree.h"
 
 // Mock для StorageBlock
 //struct StorageBlock {
