@@ -16,6 +16,7 @@
 
 #include "allocator.hpp"
 #include "file.hpp"
+#include "IBTree.hpp"
 #include "shared_node.hpp"
 
 namespace compio {
@@ -26,7 +27,7 @@ namespace compio {
  * are stored in archive file.
  *
  */
-struct btree {
+struct btree : public IBTree {
 public:
     /**
      * @brief Read B-Tree from archive file.
