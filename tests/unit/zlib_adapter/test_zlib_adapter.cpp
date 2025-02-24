@@ -25,48 +25,43 @@ ulong compressedSize = sizeof(compressedData);
 
 // Инициализация тестов
 void testChangeData() {
-    MockBTree mockBTree;
-    ZLibAdapter adapter{std::make_unique<MockBTree>()};
+    auto mockBTreeP = std::make_shared<MockBTree>();
+    ZLibAdapter adapter{mockBTreeP};
 
-    // Подготовка тестовых данных
+    std::cout << "[test]: created adapter" << std::endl;
     compio::tree_key key = {123, 0};
     compio::tree_val val = {new StorageBlock{compressedSize, compressedData}, 5};
-    mockBTree.nodes.push_back({key, val});
+    mockBTreeP->nodes.emplace_back(key, val);
+    mockBTreeP->insert_segment(123, {0, 10});
 
-    // Сжатие тестовых данных
+    std::cout << "[test]: created node" << std::endl;
+
     int result = compress(compressedData, &compressedSize, testData, sizeof(testData));
     CU_ASSERT_EQUAL(result, Z_OK);
 
-    // Вызов тестируемой функции
+    std::cout << "[test]: COMPRESSED OK, compressed size: " << compressedSize << std::endl;
+
     unsigned char newData[] = {0x06, 0x07};
     adapter.change_data(123, 1, 2, newData);
 
-    // Проверка результата
-    CU_ASSERT_EQUAL(mockBTree.nodes.size(), 1);
-    auto& updatedNode = mockBTree.nodes[0];
+    std::cout << "[test]: changed data" << std::endl;
+    CU_ASSERT_EQUAL(mockBTreeP->nodes.size(), 1);
+    auto& updatedNode = mockBTreeP->nodes[0];
     CU_ASSERT_EQUAL(updatedNode.second.size, 5);
 
-    // Распаковка данных для проверки
+    std::cout << "[test]: data check" << std::endl;
+
     unsigned char decompressedData[1024];
     ulong decompressedSize = sizeof(decompressedData);
     result = uncompress(decompressedData, &decompressedSize, updatedNode.second.addr->compressedData, updatedNode.second.addr->compressedDataSize);
     CU_ASSERT_EQUAL(result, Z_OK);
 
-    // Проверка измененных данных
+    std::cout << "[test]: unpacked data" << std::endl;
+
+    std::cout <<  "[test]: decompressedData[1]: " << static_cast<int>(decompressedData[1]) << std::endl;
+    std::cout <<  "[test]: decompressedData[2]: " << static_cast<int>(decompressedData[2]) << std::endl;
     CU_ASSERT_EQUAL(decompressedData[1], 0x06);
     CU_ASSERT_EQUAL(decompressedData[2], 0x07);
-}
 
-// Регистрация тестов
-// int main() {
-//     CU_initialize_registry();
-//
-//     CU_pSuite suite = CU_add_suite("ZLibAdapter Tests", nullptr, nullptr);
-//     CU_add_test(suite, "testChangeData", testChangeData);
-//
-//     CU_basic_set_mode(CU_BRM_VERBOSE);
-//     CU_basic_run_tests();
-//     CU_cleanup_registry();
-//
-//     return 0;
-// }
+    std::cout << "[test]: data check" << std::endl;
+}
