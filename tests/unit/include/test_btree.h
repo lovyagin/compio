@@ -12,7 +12,7 @@ extern "C" {
 
 #include <CUnit/CUnit.h>
 #include <CUnit/Basic.h>
-#include "btree.h"
+#include "BTree/btree.h"
 
 void test_btree_insert(void);
 void test_btree_split(void);

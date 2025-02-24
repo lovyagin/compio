@@ -17,9 +17,9 @@ target_sources(compio PRIVATE
         src/block.c
         src/compressor.c
         src/storage.c
-        src/btree.c
+        src/BTree/btree.c
 
-        src/btree.cpp
+        src/BTree/btree.cpp
         src/allocator.cpp
         src/file.cpp
         src/utils.cpp
@@ -33,9 +33,9 @@ target_sources(compio PRIVATE
 
 add_library(compio_lib
         src/block.c
-        src/btree.c
+        src/BTree/btree.c
 
-        src/btree.cpp
+        src/BTree/btree.cpp
         src/allocator.cpp
         src/file.cpp
         src/utils.cpp

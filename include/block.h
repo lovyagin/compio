@@ -17,7 +17,7 @@ extern "C" {
 
 #include <stddef.h>
 #include <stdbool.h>
-#include "btree.h"
+#include "BTree/btree.h"
 
 /**
  * @struct compio_block

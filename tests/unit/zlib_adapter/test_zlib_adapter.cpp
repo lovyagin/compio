@@ -8,7 +8,6 @@
 #include "include/archivers/zlib_adapter.hpp"
 #include "tests/unit/include/mockBTree/MockBTree.hpp"
 
-// Mock для StorageBlock
 //struct StorageBlock {
 //    ulong compressedDataSize;
 //    unsigned char* compressedData;

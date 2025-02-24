@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "file.hpp"
-#include "btree.hpp"
+#include "BTree/btree.hpp"
 #include "tests/unit/include/mockBTree/MockBTree.hpp"
 
 class ICompressionAlgoAdapter {
