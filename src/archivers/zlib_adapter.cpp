@@ -1,14 +1,8 @@
-//
-// Адаптер для работы с zlib
-//
-
 #include "archivers/zlib_adapter.hpp"
-
 
 void ZLibAdapter::change_data(const uint64_t hash, const uint64_t startPos, const uint64_t size, void* data) {
     std::vector<std::pair<compio::tree_key, compio::tree_val>> nodes;
-    // _btreeP->get_range({hash, startPos}, {hash, startPos + size}, nodes);
-    _mockBtreeP->get_range({hash, startPos}, {hash, startPos + size}, nodes);
+    _IbtreeP->get_range({hash, startPos}, {hash, startPos + size}, nodes);
 
     if (nodes.empty() || nodes.size() > 1) return; // TODO: implement two and more blocks
 
@@ -41,6 +35,5 @@ void ZLibAdapter::change_data(const uint64_t hash, const uint64_t startPos, cons
 
     auto* storageBlock = new StorageBlock{compressedSize, compressedData}; // TODO: ADD TO STORAGE BLOCK, CREATE DELETE,
                                                                            // NOW MEMORY IS LEAKING
-    // _btreeP->update(node.first, {storageBlock, node.second.size}); // TODO: CREATE MOVE FOR NODE IF TO BIG
-    _mockBtreeP->update(node.first, {storageBlock, node.second.size});
+    _IbtreeP->update(node.first, {storageBlock, node.second.size}); // TODO: CREATE MOVE FOR NODE IF TO BIG
 }

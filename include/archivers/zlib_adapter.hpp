@@ -11,13 +11,12 @@
 
 class ZLibAdapter : public ICompressionAlgoAdapter {
 public:
-    explicit ZLibAdapter(std::unique_ptr<compio::btree> btreeP) : _btreeP(std::move(btreeP)), _mockBtreeP(nullptr) {}
-    explicit ZLibAdapter(std::shared_ptr<MockBTree> mockBtreeP) : _btreeP(nullptr), _mockBtreeP(std::move(mockBtreeP)) {} // TODO: CREATE INTERFACE FOR TREE
+    explicit ZLibAdapter(std::shared_ptr<compio::IBTree> IbtreeP) : _IbtreeP(std::move(IbtreeP)) {} // TODO: CREATE INTERFACE FOR TREE
 
     void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override;
 private:
-    std::unique_ptr<compio::btree> _btreeP;
-    std::shared_ptr<MockBTree> _mockBtreeP; // TODO: CREATE INTERFACE FOR TREE
+    // std::unique_ptr<compio::btree> _btreeP;
+    std::shared_ptr<compio::IBTree> _IbtreeP; // TODO: CREATE INTERFACE FOR TREE
 };
 
 #endif //ZLIB_ADAPTER_H
