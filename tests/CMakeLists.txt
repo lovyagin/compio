@@ -12,6 +12,7 @@ target_compile_definitions(compio_tests PRIVATE CUNIT_DISABLE_TEST_SNPRINTF)
 target_link_libraries(compio_tests PRIVATE compio_lib unofficial::cunit::cunit)
 
 target_include_directories(compio_tests PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(compio_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit/include)
 
 enable_testing()
 
