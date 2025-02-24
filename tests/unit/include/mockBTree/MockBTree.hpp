@@ -19,17 +19,17 @@ public:
 
     void get_range(const compio::tree_key& key_min, const compio::tree_key& key_max,
                    std::vector<std::pair<compio::tree_key, compio::tree_val>>& result) {
-        for (const auto& node : nodes) {
-            if (node.key.hash == key_min.hash && !(mp[node.key.hash].end < key_min.pos ||  mp[node.key.hash].start > key_max.pos)) {
-                result.push_back({node.key, node.val});
+        for (const auto& [key, val] : nodes) {
+            if (key.hash == key_min.hash && !(mp[key.hash].end < key_min.pos ||  mp[key.hash].start > key_max.pos)) {
+                result.emplace_back(key, val);
             }
         }
     }
 
     bool update(const compio::tree_key& key, const compio::tree_val& new_value) {
-        for (auto& node : nodes) {
-            if (node.key.hash == key.hash && node.key.pos == key.pos) {
-                node.val = new_value;
+        for (auto& [k, v] : nodes) {
+            if (k.hash == key.hash && k.pos == key.pos) {
+                v = new_value;
                 return true;
             }
         }
@@ -41,7 +41,7 @@ public:
         uint64_t end;
 	} Segment;
 
-    void insert_segment(Hash hash, Segment segment) {
+    void insert_segment(const Hash hash, const Segment segment) {
         mp[hash] = segment;
     }
 private:
