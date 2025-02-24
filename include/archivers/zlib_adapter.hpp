@@ -2,8 +2,12 @@
 #define ZLIB_ADAPTER_H
 
 #include <cstring>
+#include <zlib.h>
+#include <cstdlib>
+#include <iostream>
 
 #include "ICompressionAdapter.hpp"
+
 
 class ZLibAdapter : public ICompressionAlgoAdapter {
 public:
