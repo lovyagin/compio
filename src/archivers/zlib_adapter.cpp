@@ -37,7 +37,7 @@ void ZLibAdapter::change_data(const uint64_t hash, const uint64_t startPos, cons
 
     free(decompressedBlock);
 
-    auto* storageBlock = new StorageBlock{compressedData, compressedSize}; // TODO: ADD TO STORAGE BLOCK, CREATE DELETE,
+    auto* storageBlock = new StorageBlock{compressedSize, compressedData}; // TODO: ADD TO STORAGE BLOCK, CREATE DELETE,
                                                                            // NOW MEMORY IS LEAKING
-    _btreeP->update(node.first, {storageBlock, node.second.size});
+    _btreeP->update(node.first, {storageBlock, node.second.size}); // TODO: CREATE MOVE FOR NODE IF TO BIG
 }
