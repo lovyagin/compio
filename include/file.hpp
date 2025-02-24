@@ -9,8 +9,10 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
+#include "storage/storage_block.hpp"
 #include "../compio.h"
 
 namespace compio {
@@ -98,7 +100,7 @@ typedef struct {
  *
  */
 typedef struct {
-    uint64_t addr; /**< Address of storage_block in archive file */
+    StorageBlock* addr; /**< Address of storage_block in archive file */
     uint64_t size; /**< Original size of uncompressed block */
 } tree_val;
 

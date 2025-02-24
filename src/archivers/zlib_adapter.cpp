@@ -16,9 +16,9 @@ void ZLibAdapter::change_data(const uint64_t hash, const uint64_t startPos, cons
     // TODO: DECOMPRESS
     auto decompressedBlock = node.second;
 
-    uint64_t startPosForChange = decompressedBlock.addr + (startPos - node.first.pos);
-    void* targetAddress = reinterpret_cast<void*>(startPosForChange); // bad for 32-bit systems??
-    std::memcpy(targetAddress, data, size); 
+    StorageBlock* startPosForChange = decompressedBlock.addr + (startPos - node.first.pos);
+    // auto targetAddress = reinterpret_cast<void*>(startPosForChange); // bad for 32-bit systems??
+    std::memcpy(startPosForChange, data, size);
 
-    // TODO: COMPRESS
+    // TODO: COMPRESS AND UPDATE B-TREE
 }

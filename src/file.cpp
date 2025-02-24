@@ -190,7 +190,7 @@ void index_node::_swap_endianness(bool from_valid) {
         keys[i].pos = __bswap_64(keys[i].pos);
     }
     for (int i = 0; i < values.size(); ++i) {
-        values[i].addr = __bswap_64(values[i].addr);
+        // values[i].addr = __bswap_64(values[i].addr); // why swap address?
         values[i].size = __bswap_64(values[i].size);
     }
     for (int i = 0; i < children.size(); ++i) {
