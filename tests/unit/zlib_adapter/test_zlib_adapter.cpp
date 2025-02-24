@@ -31,7 +31,7 @@ void testChangeData() {
     std::cout << "[test]: created adapter" << std::endl;
     compio::tree_key key = {123, 0};
     compio::tree_val val = {new StorageBlock{compressedSize, compressedData}, 5};
-    mockBTreeP->nodes.emplace_back(key, val);
+    mockBTreeP->nodes.emplace_back(MockBTree::KeyValuePair{key, val});
     mockBTreeP->insert_segment(123, {0, 10});
 
     std::cout << "[test]: created node" << std::endl;
@@ -47,13 +47,13 @@ void testChangeData() {
     std::cout << "[test]: changed data" << std::endl;
     CU_ASSERT_EQUAL(mockBTreeP->nodes.size(), 1);
     auto& updatedNode = mockBTreeP->nodes[0];
-    CU_ASSERT_EQUAL(updatedNode.second.size, 5);
+    CU_ASSERT_EQUAL(updatedNode.val.size, 5);
 
     std::cout << "[test]: data check" << std::endl;
 
     unsigned char decompressedData[1024];
     ulong decompressedSize = sizeof(decompressedData);
-    result = uncompress(decompressedData, &decompressedSize, updatedNode.second.addr->compressedData, updatedNode.second.addr->compressedDataSize);
+    result = uncompress(decompressedData, &decompressedSize, updatedNode.val.addr->compressedData, updatedNode.val.addr->compressedDataSize);
     CU_ASSERT_EQUAL(result, Z_OK);
 
     std::cout << "[test]: unpacked data" << std::endl;
