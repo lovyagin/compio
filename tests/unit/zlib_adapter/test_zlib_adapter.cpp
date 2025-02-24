@@ -18,12 +18,10 @@
 //    }
 //};
 
-// Тестовые данные
 unsigned char testData[] = {0x01, 0x02, 0x03, 0x04, 0x05};
 unsigned char compressedData[1024];
 ulong compressedSize = sizeof(compressedData);
 
-// Инициализация тестов
 void testChangeData() {
     auto mockBTreeP = std::make_shared<MockBTree>();
     ZLibAdapter adapter{mockBTreeP};
