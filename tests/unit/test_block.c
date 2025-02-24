@@ -1,11 +1,4 @@
-#include <stdio.h>
-#ifdef _MSC_VER
-#undef snprintf
-#endif
-
-#include <CUnit/CUnit.h>
-#include <CUnit/Basic.h>
-#include "block.h"
+#include "tests/unit/include/test_block.h"
 
 void test_create_block(void) {
     size_t size = 1024;

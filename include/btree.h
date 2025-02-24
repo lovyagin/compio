@@ -10,6 +10,10 @@
 #ifndef BTREE_H
 #define BTREE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -188,5 +192,9 @@ size_t btree_find_max_in_node(BTreeNode* node);
  * @return The minimum key in the node.
  */
 size_t btree_find_min_in_node(BTreeNode* node);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // BTREE_H

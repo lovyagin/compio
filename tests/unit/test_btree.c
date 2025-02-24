@@ -1,11 +1,4 @@
-#include <stdio.h>
-#ifdef _MSC_VER
-#undef snprintf
-#endif
-
-#include <CUnit/CUnit.h>
-#include <CUnit/Basic.h>
-#include "btree.h"
+#include "tests/unit/include/test_btree.h"
 
 void test_create_btree(void) {
     size_t degree = 3;
@@ -199,3 +192,4 @@ void add_btree_tests() {
         CU_add_test(btree_suite, "test_btree_update", test_btree_update);
     }
 }
+

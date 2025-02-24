@@ -1,6 +1,11 @@
 #ifndef COMPRESSOR_H
 #define COMPRESSOR_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+
 #include <errno.h>
 #include <string.h>
 #include <stdint.h>
@@ -36,5 +41,9 @@ int dummy_decompress(void* dst, size_t* dst_size, const void* src, size_t src_si
  * @param result
  */
 void compio_build_dummy_compressor(compio_compressor* result);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif //COMPRESSOR_H

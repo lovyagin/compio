@@ -3,8 +3,10 @@
 #include <vector>
 #include <cstring>
 #include <iostream>
+#include <zlib.h>
+
 #include "include/archivers/zlib_adapter.hpp"
-#include "tests/unit/include/mockBTree/MockBTree.h"
+#include "tests/unit/include/mockBTree/MockBTree.hpp"
 
 // Mock для StorageBlock
 //struct StorageBlock {
@@ -24,7 +26,7 @@ ulong compressedSize = sizeof(compressedData);
 // Инициализация тестов
 void testChangeData() {
     MockBTree mockBTree;
-    ZLibAdapter adapter(std::make_unique<mockBTree>());
+    ZLibAdapter adapter{std::make_unique<MockBTree>()};
 
     // Подготовка тестовых данных
     compio::tree_key key = {123, 0};
@@ -56,15 +58,15 @@ void testChangeData() {
 }
 
 // Регистрация тестов
-int main() {
-    CU_initialize_registry();
-
-    CU_pSuite suite = CU_add_suite("ZLibAdapter Tests", nullptr, nullptr);
-    CU_add_test(suite, "testChangeData", testChangeData);
-
-    CU_basic_set_mode(CU_BRM_VERBOSE);
-    CU_basic_run_tests();
-    CU_cleanup_registry();
-
-    return 0;
-}
+// int main() {
+//     CU_initialize_registry();
+//
+//     CU_pSuite suite = CU_add_suite("ZLibAdapter Tests", nullptr, nullptr);
+//     CU_add_test(suite, "testChangeData", testChangeData);
+//
+//     CU_basic_set_mode(CU_BRM_VERBOSE);
+//     CU_basic_run_tests();
+//     CU_cleanup_registry();
+//
+//     return 0;
+// }

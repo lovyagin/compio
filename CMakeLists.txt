@@ -35,7 +35,16 @@ add_library(compio_lib
         src/block.c
         src/btree.c
 
+        src/btree.cpp
         src/allocator.cpp
+        src/file.cpp
+        src/utils.cpp
+
+        src/archivers/squash_adapter.c
+        src/archivers/zlib_adapter.cpp
+
+        src/storage/storage.cpp
+        src/storage/storage_block.cpp
 )
 
 target_link_libraries(compio PRIVATE compio_lib)

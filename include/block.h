@@ -11,6 +11,10 @@
 #ifndef BLOCK_H
 #define BLOCK_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 #include <stdbool.h>
 #include "btree.h"
@@ -116,5 +120,9 @@ int compio_remove_block(compio_block_container* container, size_t block_index);
  * @param container Pointer to the block container.
  */
 void compio_update_index(compio_block_container* container);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // BLOCK_H
