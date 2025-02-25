@@ -15,6 +15,7 @@ public:
     virtual void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) = 0;
 private:
     std::unique_ptr<compio::btree> _btreeP;
+    virtual void change_one_block_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) = 0;
 };
 
 #endif //ICOMPRESSION_ADAPTER_H
