@@ -8,15 +8,6 @@
 #include "include/archivers/zlib_adapter.hpp"
 #include "tests/unit/include/mockBTree/MockBTree.hpp"
 
-//struct StorageBlock {
-//    ulong compressedDataSize;
-//    unsigned char* compressedData;
-//
-//    ~StorageBlock() {
-//        free(compressedData);
-//    }
-//};
-
 unsigned char testData[] = {0x01, 0x02, 0x03, 0x04, 0x05};
 unsigned char compressedData[1024];
 ulong compressedSize = sizeof(compressedData);

@@ -15,7 +15,6 @@ public:
 
     void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override;
 private:
-    // std::unique_ptr<compio::btree> _btreeP;
     std::shared_ptr<compio::IBTree> _IbtreeP; // TODO: CREATE INTERFACE FOR TREE
 };
 
