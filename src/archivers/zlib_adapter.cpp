@@ -35,7 +35,7 @@ void ZLibAdapter::change_data(const uint64_t hash, const uint64_t startPos, cons
     std::vector<std::pair<compio::tree_key, compio::tree_val>> nodes;
     _IbtreeP->get_range({hash, startPos}, {hash, startPos + size}, nodes);
 
-    if (nodes.empty()) return; // TODO: implement two and more blocks
+    if (nodes.empty()) return; 
 
     uint64_t dataOffset = 0;
     for (auto& node : nodes) {
