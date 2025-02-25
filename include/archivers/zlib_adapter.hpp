@@ -16,7 +16,7 @@ public:
     void change_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override;
 private:
     std::shared_ptr<compio::IBTree> _IbtreeP; // TODO: CREATE INTERFACE FOR TREE
-    void change_one_block_data(uint64_t hash, uint64_t startPos, uint64_t size, void* data) override {}
+    void change_one_block_data(std::pair<compio::tree_key, compio::tree_val>& node, uint64_t startPos, uint64_t size, void* data) override;
 };
 
 #endif //ZLIB_ADAPTER_H
