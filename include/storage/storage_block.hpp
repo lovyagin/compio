@@ -6,11 +6,11 @@
 
 class StorageBlock {
 public:
-    StorageBlock(uint64_t compressedSize, const void* compressedData = nullptr)
+    StorageBlock(uint64_t compressedSize, void* compressedData = nullptr)
             : compressedDataSize(compressedSize),
-              compressedData(static_cast<const Bytef*>(compressedData)) {};
+              compressedData(static_cast<Bytef*>(compressedData)) {};
 
-    const Bytef *compressedData;
+    Bytef *compressedData;
     uint64_t compressedDataSize;
 };
 

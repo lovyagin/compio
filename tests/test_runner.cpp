@@ -8,7 +8,8 @@
 #include "test_block.h"
 #include "test_btree.h"
 
-void testChangeData();
+void testChangeDataOneBlock();
+void testChangeDataTwoBlocks();
 
 int main() {
     CU_initialize_registry();
@@ -19,7 +20,8 @@ int main() {
     CU_basic_set_mode(CU_BRM_VERBOSE);
 
     CU_pSuite suite = CU_add_suite("ZLibAdapter Tests", nullptr, nullptr);
-    CU_add_test(suite, "testChangeData", testChangeData);
+    CU_add_test(suite, "testChangeDataOneBlock", testChangeDataOneBlock);
+    CU_add_test(suite, "testChangeDataTwoBlocks", testChangeDataTwoBlocks);
 
     CU_basic_run_tests();
 
