@@ -17,7 +17,6 @@ struct compio_archive {
     const compio_config* config; /**< Compio configuration */
     compio::header* header;      /**< Read file header */
     compio::btree* index;
-
     /**
      * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear
      * contents)

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <zconf.h>
 
+
 class StorageBlock {
 public:
     StorageBlock(uint64_t compressedSize, void* compressedData = nullptr)
