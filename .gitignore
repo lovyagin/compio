@@ -89,3 +89,5 @@ tests/Makefile
 
 .vscode/
 .gdb_history
+
+.github
