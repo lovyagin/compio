@@ -276,26 +276,29 @@ void btree::get_range(tree_key key_min, tree_key key_max, std::vector<std::pair<
 void btree::get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
                               std::vector<std::pair<tree_key, tree_val>>& result) {
     int num_keys = RO(node)->num_keys;
-    if (num_keys == 0)
-        return;
+    if (num_keys == 0) return;
     bool is_leaf = RO(node)->is_leaf;
 
-    auto start = _min<tree_key>();
-    auto end = RO(node)->keys[0];
+    tree_key start{0, 0};
+    tree_key end = RO(node)->keys[0];
+
     for (int i = 0; i <= num_keys; ++i) {
-        if (!is_leaf) {
-            if (key_min <= end && key_max > start) {
-                auto child = read_node(RO(node)->children[i]);
-                get_range_in_node(child, key_min, key_max, result);
-            }
+        if (!is_leaf && (key_min <= end) && (key_max > start)) {
+            auto child = read_node(RO(node)->children[i]);
+            get_range_in_node(child, key_min, key_max, result);
         }
-        if (i != num_keys) {
+
+        if (i < num_keys) {
             start = RO(node)->keys[i];
-            end = start + RO(node)->values[i].size;
-            if (key_min <= end && key_max > start)
-                result.push_back({start, RO(node)->values[i]});
+            end.pos = start.pos + RO(node)->values[i].size;
+            end.hash = start.hash;
+
+            if ((key_min <= end) && (key_max > start)) {
+                result.emplace_back(start, RO(node)->values[i]);
+            }
             start = end;
-            end = (i < num_keys - 1) ? RO(node)->keys[i + 1] : _max<tree_key>();
+            end = (i < num_keys - 1) ? RO(node)->keys[i + 1]
+                   : tree_key{UINT64_MAX, UINT64_MAX};
         }
     }
 }

@@ -86,13 +86,15 @@ private:
 };
 
 /**
- * @brief Type for key in btree
+ * @brief Key for B-Tree index entries
  *
+ * Uniquely identifies a data block by combining filename hash
+ * and position in the uncompressed file.
  */
-typedef struct {
-    uint64_t hash; /**< last 64 bits of hashed internal file name */
-    uint64_t pos;  /**< Position of block start in uncompressed file */
-} tree_key;
+struct tree_key {
+    uint64_t hash; /**< 64-bit hash of the internal filename */
+    uint64_t pos;  /**< Starting byte offset in uncompressed file */
+};
 
 /**
  * @brief Type for value in btree

@@ -3,11 +3,13 @@
  * @brief Implementation of block allocation management
  */
 
+#include <cinttypes>
 #include "compio_file.hpp"
 #include "allocator.hpp"
 #include "file.hpp"
 #include <cstdio>
 #include <algorithm>
+#include <utils.hpp>
 
 namespace compio {
 
@@ -236,15 +238,49 @@ namespace compio {
     }
 
     void block_allocator::perform_defragmentation() {
-        // 1. Collect all used blocks through B-tree
-        // 2. Reorganize blocks sequentially
-        // 3. Update B-tree indexes
-        // 4. Update free blocks list
+        std::vector<std::pair<tree_key, tree_val>> used_blocks;
+        tree_key key_min{};
+        tree_key key_max{};
+        key_max.hash = UINT64_MAX;
+        key_max.pos = UINT64_MAX;
+        archive_->index->get_range(key_min, key_max, used_blocks);
 
-        // Implementation details would require B-tree integration
-        printf("Performing defragmentation...\n");
-        blocks_manager_.defragment();
+        std::sort(used_blocks.begin(), used_blocks.end(),
+            [](const auto& a, const auto& b) { return a.second.addr < b.second.addr; });
+
+        uint64_t new_offset = sizeof(header);
+        std::vector<std::pair<tree_key, tree_val>> relocations;
+
+        for (const auto& [key, val] : used_blocks) {
+            if (val.addr == new_offset) {
+                new_offset += val.size;
+                continue;
+            }
+
+            std::vector<uint8_t> buffer(val.size);
+            fseek(archive_->file, val.addr, SEEK_SET);
+            fread(buffer.data(), 1, val.size, archive_->file);
+
+            fseek(archive_->file, new_offset, SEEK_SET);
+            fwrite(buffer.data(), 1, val.size, archive_->file);
+
+            relocations.emplace_back(key, tree_val{new_offset, val.size});
+            new_offset += val.size;
+        }
+
+        for (const auto& [key, new_val] : relocations) {
+            if (!archive_->index->update(key, new_val)) {
+                fprintf(stderr, "Failed to update B-tree for key (%" PRIu64 ", %" PRIu64 ")\n",
+                        key.hash, key.pos);
+            }
+        }
+
+        *blocks_manager_.get_file_size_ptr() = new_offset;
+        blocks_manager_.add_free_block(new_offset, UINT64_MAX - new_offset);
+
+        flush_header(archive_);
         last_fragmentation_ = blocks_manager_.calculate_fragmentation();
+        printf("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
     }
 
 } // namespace compio
