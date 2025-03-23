@@ -11,8 +11,6 @@
 
 namespace compio {
 
-// free_blocks_manager implementation
-
     free_blocks_manager::free_blocks_manager(uint64_t* file_size)
             : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
               total_free_(0), file_size_(file_size) {}
@@ -60,7 +58,7 @@ namespace compio {
                 target = find_worst_fit(size);
                 break;
             case allocation_strategy::NEXT_FIT:
-                // Implementation omitted for brevity
+                target = find_next_fit(size);
                 break;
         }
 
@@ -74,6 +72,7 @@ namespace compio {
             target->offset += size;
             target->size -= size;
             total_free_ -= size;
+            last_alloc_ = target; // Track remaining part
         } else {
             // Remove entire block
             total_free_ -= target->size;
@@ -83,10 +82,10 @@ namespace compio {
             if(target->next) target->next->prev = target->prev;
             else tail_ = target->prev;
 
+            last_alloc_ = target->prev; // Move to previous block
             delete target;
         }
 
-        last_alloc_ = target;
         return allocated_offset;
     }
 
@@ -165,6 +164,20 @@ namespace compio {
             }
         }
         return worst;
+    }
+
+    free_block* free_blocks_manager::find_next_fit(uint64_t size) const {
+        if(!last_alloc_) return find_first_fit(size);
+
+        free_block* start = last_alloc_;
+        free_block* current = start;
+
+        do {
+            if(current->size >= size) return current;
+            current = current->next ? current->next : head_;
+        } while(current && current != start);
+
+        return nullptr;
     }
 
 // block_allocator implementation
