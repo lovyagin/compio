@@ -12,8 +12,47 @@
 #include <vector>
 
 #include "compio.h"
+#include "infile_object.hpp"
 
 namespace compio {
+
+// struct files_table {
+//     uint64_t n_files;
+//     struct file {
+//         char name[COMPIO_FNAME_MAX_SIZE];
+//         uint64_t size;
+//     };
+//     std::vector<file> files;
+
+//     files_table();
+
+//     file* find(const char* name);
+//     file* add(const char* name);
+//     int remove(const char* name);
+// };
+
+// struct header : public infile_object {
+//     int32_t magic_number; /**< Constant bytes, file signature */
+//     uint64_t index_root;  /**< Address of B-Tree root in file */
+//     uint64_t file_size;
+//     files_table ftable; /**< Files table */
+
+//     void read_from(FILE* file, uint64_t addr) override;
+//     void write_to(FILE* file, uint64_t addr) const override;
+// };
+
+// struct index_node : public infile_object {
+//     uint8_t is_leaf;                /**< Is this node a leaf */
+//     uint32_t num_keys;              /**< Number of used keys in node */
+//     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
+//     std::vector<tree_val> values;   /**< Storage blocks addresses in archive file */
+//     std::vector<uint64_t> children; /**< Children addresses in archive file */
+
+//     int tree_degree; /**< B-Tree degree (not saved in file) */
+    
+//     void read_from(FILE* file, uint64_t addr) override;
+//     void write_to(FILE* file, uint64_t addr) const override;
+// };
 
 /**
  * @brief Files table for archive header

@@ -36,6 +36,10 @@ template <> constexpr tree_key _max<tree_key>() { return {(uint64_t)-1, (uint64_
 
 tree_key get_key(const char* fname, uint64_t pos);
 
+uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* stream);
+
+uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream);
+
 } // namespace compio
 
 #endif // UTILS_HEADER_
