@@ -1,11 +1,14 @@
 #ifndef INFILE_OBJECT_HPP
-
-#include "utils.hpp"
+#define INFILE_OBJECT_HPP
 
 #include <cstdint>
 #include <type_traits>
 
 #define readonly(x, t) (const_cast<const smart_infile_object<t>&>(x))
+
+uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* stream);
+
+uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream);
 
 class infile_object {
 public:
@@ -99,5 +102,4 @@ public:
     void modify() { S->modified = true; }
 };
 
-#define INFILE_OBJECT_HPP
 #endif // INFILE_OBJECT_HPP

@@ -15,6 +15,7 @@ set(SOURCES
     src/compressor.c
     src/file.cpp
     src/utils.cpp
+    src/infile_object.cpp
 )
 
 add_executable(compio ${SOURCES})
