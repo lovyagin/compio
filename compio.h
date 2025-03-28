@@ -28,7 +28,7 @@ typedef struct compio_compressor {
     /**
      * @brief Compress src_size of bytes from src buffer into dst buffer.
      * On success, return 0 and write real size of compressed data into
-     * dst_size. If dst buffer is to small, return non-zero code and set errno =
+     * dst_size. If dst buffer is too small, return non-zero code and set errno =
      * ENOBUFS.
      */
     int (*compress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
@@ -37,7 +37,7 @@ typedef struct compio_compressor {
      * @brief Decompress src_size of bytes, that was previously
      * compressed with the same compressor, from src buffer into dst buffer. On
      * success, return 0 and write real size of decompressed data into dst_size.
-     * If dst buffer is to small, return non-zero code and set errno = ENOBUFS.
+     * If dst buffer is too small, return non-zero code and set errno = ENOBUFS.
      */
     int (*decompress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
 } compio_compressor;
