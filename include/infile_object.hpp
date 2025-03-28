@@ -50,6 +50,8 @@ private:
     storage* S;
 
 public:
+    smart_infile_object() : S(nullptr) {}
+
     smart_infile_object(FILE* file, uint64_t addr, T* data) : S(new storage(file, addr, data)) {}
 
     smart_infile_object(FILE* file, uint64_t addr) : S(new storage(file, addr)) {}

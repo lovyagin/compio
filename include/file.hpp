@@ -16,113 +16,6 @@
 
 namespace compio {
 
-// struct files_table {
-//     uint64_t n_files;
-//     struct file {
-//         char name[COMPIO_FNAME_MAX_SIZE];
-//         uint64_t size;
-//     };
-//     std::vector<file> files;
-
-//     files_table();
-
-//     file* find(const char* name);
-//     file* add(const char* name);
-//     int remove(const char* name);
-// };
-
-// struct header : public infile_object {
-//     int32_t magic_number; /**< Constant bytes, file signature */
-//     uint64_t index_root;  /**< Address of B-Tree root in file */
-//     uint64_t file_size;
-//     files_table ftable; /**< Files table */
-
-//     void read_from(FILE* file, uint64_t addr) override;
-//     void write_to(FILE* file, uint64_t addr) const override;
-// };
-
-// struct index_node : public infile_object {
-//     uint8_t is_leaf;                /**< Is this node a leaf */
-//     uint32_t num_keys;              /**< Number of used keys in node */
-//     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
-//     std::vector<tree_val> values;   /**< Storage blocks addresses in archive file */
-//     std::vector<uint64_t> children; /**< Children addresses in archive file */
-
-//     int tree_degree; /**< B-Tree degree (not saved in file) */
-    
-//     void read_from(FILE* file, uint64_t addr) override;
-//     void write_to(FILE* file, uint64_t addr) const override;
-// };
-
-/**
- * @brief Files table for archive header
- *
- */
-struct files_table {
-    uint64_t n_files; /**< Current number of files in archive */
-
-    struct file {
-        char name[COMPIO_FNAME_MAX_SIZE];
-        uint64_t size;
-    };
-
-    file files[COMPIO_MAX_FILES];
-
-    files_table();                /**< Construct empty files table */
-    file* find(const char* name); /**< Find file by name, nullptr if doesn't exist */
-    file* add(const char* name);  /**< Add file, nullptr if table is full */
-    int remove(const char* name); /**< Remove file */
-
-    /**
-     * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
-     * and we want to swap bytes for writing to file
-     */
-    void _swap_endianness(bool from_valid);
-};
-
-/**
- * @brief File header of fixed size
- *
- */
-struct header {
-    int32_t magic_number; /**< Constant bytes, file signature */
-    uint64_t index_root;  /**< Address of B-Tree root in file */
-    uint64_t file_size;
-    files_table ftable; /**< Files table */
-
-    /**
-     * @brief Construct default header
-     *
-     */
-    header();
-
-    /**
-     * @brief Read header from file
-     *
-     * @param file opened file
-     * @return std::shared_ptr<header*>
-     */
-    header(FILE* file, bool swap_endianness);
-
-    /**
-     * @brief Write header to file
-     *
-     * @param file opened file
-     */
-    void write(FILE* file, bool swap_endianness);
-
-private:
-    /**
-     * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
-     * and we want to swap bytes for writing to file
-     */
-    void _swap_endianness(bool from_valid);
-};
-
 /**
  * @brief Type for key in btree
  *
@@ -142,10 +35,49 @@ typedef struct {
 } tree_val;
 
 /**
+ * @brief Files table for archive header
+ *
+ */
+struct files_table {
+    uint64_t n_files;
+    struct file {
+        char name[COMPIO_FNAME_MAX_SIZE];
+        uint64_t size;
+    };
+    std::vector<file> files;
+
+    files_table();
+
+    file* find(const char* name);
+    file* add(const char* name);
+    int remove(const char* name);
+};
+
+/**
+ * @brief File header of fixed size
+ *
+ */
+struct header : public infile_object {
+    int32_t magic_number; /**< Constant bytes, file signature */
+    uint64_t index_root;  /**< Address of B-Tree root in file */
+    uint64_t file_size;
+    files_table ftable; /**< Files table */
+
+    /**
+     * @brief Construct default header
+     *
+     */
+    header();
+
+    void read_from(FILE* file, uint64_t addr) override;
+    void write_to(FILE* file, uint64_t addr) const override;
+};
+
+/**
  * @brief B-Tree (index) node
  *
  */
-struct index_node {
+struct index_node : public infile_object {
     uint8_t is_leaf;                /**< Is this node a leaf */
     uint32_t num_keys;              /**< Number of used keys in node */
     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
@@ -161,31 +93,8 @@ struct index_node {
      */
     index_node(int tree_degree);
 
-    /**
-     * @brief Read index node from file
-     *
-     * @param file opened file
-     * @param addr address to read from
-     * @param tree_degree degree of b-tree
-     */
-    index_node(FILE* file, uint64_t addr, bool swap_endianness, int tree_degree);
-
-    /**
-     * @brief Write index node to file
-     *
-     * @param file opened file
-     * @param addr address to write to
-     */
-    void write(FILE* file, uint64_t addr, bool swap_endianness);
-
-private:
-    /**
-     * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
-     * and we want to swap bytes for writing to file
-     */
-    void _swap_endianness(bool from_valid);
+    void read_from(FILE* file, uint64_t addr) override;
+    void write_to(FILE* file, uint64_t addr) const override;
 };
 
 /**
@@ -203,7 +112,7 @@ private:
  * @brief Block of (usually compressed) data
  *
  */
-struct storage_block {
+struct storage_block : public infile_object {
     uint8_t is_compressed;     /**< Is this block compressed */
     uint64_t size;             /**< Size of data array */
     uint64_t original_size;    /**< Original size (size of uncompressed data) */
@@ -217,37 +126,9 @@ struct storage_block {
      */
     storage_block(uint64_t size);
 
-    /**
-     * @brief Read storage block from file
-     *
-     * @param file opened file
-     * @param addr address to read from
-     * @return std::shared_ptr<storage_block*>
-     */
-    storage_block(FILE* file, uint64_t addr, bool swap_endianness);
-
-    /**
-     * @brief Write storage block to file
-     *
-     * @param file opened file
-     * @param addr address to write to
-     */
-    void write(FILE* file, uint64_t addr, bool swap_endianness);
-
-private:
-    /**
-     * @brief Swap bytes of all integers in struct
-     * 
-     * @param from_valid True, when struct is valid before this function, 
-     * and we want to swap bytes for writing to file
-     */
-    void _swap_endianness(bool from_valid);
+    void read_from(FILE* file, uint64_t addr) override;
+    void write_to(FILE* file, uint64_t addr) const override;
 };
-
-/**
- * @brief Size of storage block metadata (without data)
- */
-#define STORAGE_BLOCK_METASIZE offsetof(storage_block, data)
 
 } // namespace compio
 
