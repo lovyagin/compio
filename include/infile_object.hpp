@@ -100,6 +100,9 @@ public:
     void remove() { S->removed = true; }
 
     void modify() { S->modified = true; }
+
+    // for developing purposes
+    void unmodify() const { S->modified = false; }
 };
 
 #endif // INFILE_OBJECT_HPP

@@ -48,6 +48,7 @@ struct files_table {
 
     files_table();
 
+    const file* find(const char* name) const;
     file* find(const char* name);
     file* add(const char* name);
     int remove(const char* name);
@@ -119,16 +120,23 @@ struct storage_block : public infile_object {
     tree_key index_key;        /**< Index key of this block */
     std::vector<uint8_t> data; /**< Data block */
 
+    storage_block(std::vector<uint8_t>&& data);
+
     /**
      * @brief Construct storage block with data of size
      *
      * @param size size of data
      */
     storage_block(uint64_t size);
-
+    
     void read_from(FILE* file, uint64_t addr) override;
     void write_to(FILE* file, uint64_t addr) const override;
 };
+
+/**
+ * @brief Size of storage block metadata (without data)
+ */
+#define STORAGE_BLOCK_METASIZE offsetof(storage_block, data)
 
 } // namespace compio
 

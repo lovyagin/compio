@@ -6,6 +6,8 @@
 
 using namespace compio;
 
+#define RO(x) readonly(x, index_node)
+
 uint64_t btree::allocate_node() { return allocate_block(archive, INDEX_NODE_SIZE(degree)); }
 
 void btree::free_node(shared_node node) {
@@ -13,22 +15,24 @@ void btree::free_node(shared_node node) {
     free_block(archive, node.addr(), INDEX_NODE_SIZE(degree));
 }
 
-shared_node btree::read_node(uint64_t addr) { return shared_node(archive->file, addr, archive->config->swap_endianness, degree); }
-
-shared_node btree::create_node() {
-    return shared_node(archive->file, allocate_node(), new index_node(degree), archive->config->swap_endianness);
+shared_node btree::read_node(uint64_t addr) {
+    auto result = shared_node(archive->file, addr, new index_node(degree));
+    result.unmodify();
+    return result;
 }
 
-shared_node btree::read_root() { return read_node(archive->header->index_root); }
+shared_node btree::create_node() {
+    return shared_node(archive->file, allocate_node(), new index_node(degree));
+}
+
+shared_node btree::read_root() { return read_node(readonly(archive->header, header)->index_root); }
 
 btree::btree(compio_archive* archive) : archive(archive), degree(archive->config->b_tree_degree) {
-    if (archive->header->index_root != 0)
+    if (readonly(archive->header, header)->index_root != 0)
         return;
 
     shared_node root = create_node();
-    root.modify();
     archive->header->index_root = root.addr();
-    flush_header(archive);
 }
 
 void btree::split_child(shared_node parent, shared_node child, int index) {
@@ -186,7 +190,6 @@ void btree::insert(tree_key key, tree_val value) {
         split_child(new_root, root, 0);
         insert_nonfull(new_root, key, value);
         archive->header->index_root = new_root.addr();
-        flush_header(archive);
     } else {
         insert_nonfull(root, key, value);
     }
@@ -258,7 +261,6 @@ void btree::remove(tree_key key) {
     if (RO(root)->num_keys == 0) {
         if (!RO(root)->is_leaf) {
             archive->header->index_root = RO(root)->children[0];
-            flush_header(archive);
             free_node(root);
         }
     }

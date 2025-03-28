@@ -4,18 +4,21 @@
 #include "btree.hpp"
 #include "compio.h"
 #include "file.hpp"
+#include "infile_object.hpp"
 
 // forward declaration
-namespace compio { class btree; }
+namespace compio {
+class btree;
+}
 
 /**
  * @brief Opened archive
  *
  */
 struct compio_archive {
-    FILE* file;                  /**< Opened stdio FILE */
-    const compio_config* config; /**< Compio configuration */
-    compio::header* header;      /**< Read file header */
+    FILE* file;                                 /**< Opened stdio FILE */
+    const compio_config* config;                /**< Compio configuration */
+    smart_infile_object<compio::header> header; /**< Read file header */
     compio::btree* index;
 
     /**
@@ -23,6 +26,8 @@ struct compio_archive {
      * contents)
      */
     uint8_t mode_b;
+
+    compio_archive(FILE* file, uint8_t mode_b, const compio_config* config);
 };
 
 /**

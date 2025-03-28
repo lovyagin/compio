@@ -16,9 +16,10 @@
 
 #include "allocator.hpp"
 #include "file.hpp"
-#include "shared_node.hpp"
 
 namespace compio {
+
+using shared_node = smart_infile_object<index_node>;
 
 /**
  * @brief B-Tree, that stores addresses of compressed blocks in

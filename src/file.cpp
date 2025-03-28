@@ -98,21 +98,25 @@ index_node::index_node(int tree_degree)
       values(2 * tree_degree - 1),
       children(2 * tree_degree) {}
 
-storage_block::storage_block(uint64_t size)
+storage_block::storage_block(std::vector<uint8_t>&& data)
     : is_compressed(0),
-      size(size),
+      size(data.size()),
       original_size(0),
       index_key({0, 0}),
-      data(size) {}
+      data(data) {}
+
+storage_block::storage_block(uint64_t size) : storage_block(std::vector<uint8_t>(size)) {}
 
 files_table::files_table() : n_files(0), files(COMPIO_MAX_FILES) {}
 
-files_table::file* files_table::find(const char* name) {
+const files_table::file* files_table::find(const char* name) const {
     for (int i = 0; i < n_files; ++i)
         if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
             return &files[i];
     return NULL;
 }
+
+files_table::file* files_table::find(const char* name) { return find(name); }
 
 files_table::file* files_table::add(const char* name) {
     if (n_files >= COMPIO_MAX_FILES)
