@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include "compio.h"
 #include "compio_file.hpp"
 #include "file.hpp"
@@ -58,8 +60,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
 }
 
 compio_file* compio_open_file(const char* name, compio_archive* archive) {
-    long name_len = strlen(name);
-    if (name_len > COMPIO_FNAME_MAX_SIZE) {
+    if (size_t name_len = strlen(name); name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return NULL;
     }
@@ -95,8 +96,7 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
 }
 
 int compio_remove_file(compio_archive* archive, const char* name) {
-    long name_len = strlen(name);
-    if (name_len > COMPIO_FNAME_MAX_SIZE) {
+    if (size_t name_len = strlen(name); name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return -2;
     }
@@ -241,54 +241,54 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 }
 
 uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
-    auto file_table_item = file->archive->header->ftable.find(file->name);
-    uint64_t fsize = file_table_item->size;
+    const auto file_table_item = file->archive->header->ftable.find(file->name);
+    const uint64_t fsize = file_table_item->size;
 
     // if cursor is after end of file, we can't read anything
     size = std::min(size, fsize - file->cursor);
-    if (size <= 0)
+    if (size == 0) {
         return 0;
+    }
 
     auto range = get_range_in_file(file, size);
-    if (range.size() == 0)
+    if (range.empty()) {
         return 0;
+    }
 
-    auto config = file->archive->config;
-    uint8_t* p_buf = (uint8_t*)ptr;
+    const auto config = file->archive->config;
+    auto* p_buf = static_cast<uint8_t*>(ptr);
 
     // number of bytes to skip in the beginning
-    int64_t offset = file->cursor - range[0].first.pos;
+    int64_t current_offset = static_cast<int64_t>(file->cursor) - static_cast<int64_t>(range[0].first.pos);
     // number of bytes we've left to read
-    int64_t remaining_size = size;
+    auto remaining_size = static_cast<int64_t>(size);
 
     // temporary buffer for decompressing
     std::vector<uint8_t> tmp_buf;
     tmp_buf.reserve(config->block_size);
+
     for (auto& [key, val] : range) {
         storage_block block(file->archive->file, val.addr, file->archive->config->swap_endianness);
 
         // index of last byte we need to read, in uncompressed block
-        uint64_t end = std::min(offset + remaining_size, (int64_t)(val.size));
-        // number of bytes copied into ptr on this iteration
-        uint64_t bytes_copied = 0;
-        if (end > offset) {
+        const uint64_t end = std::min(static_cast<uint64_t>(current_offset + remaining_size),
+                      static_cast<uint64_t>(val.size));
+
+        if (static_cast<uint64_t>(current_offset) < end) {
             tmp_buf.resize(block.original_size);
 
-            // decompress data from block data into tmp_buf
             uint64_t dst_size = block.original_size;
-            config->compressor.decompress(tmp_buf.data(), &dst_size, block.data.data(), block.data.size());
+            config->compressor.decompress(tmp_buf.data(), &dst_size,
+                                        block.data.data(), block.size);
 
-            // copy target block of uncompressed data into result
-            std::copy(tmp_buf.begin() + offset, tmp_buf.begin() + end, p_buf);
-            bytes_copied = end - offset;
-            p_buf += bytes_copied;
+            const auto bytes_to_copy = static_cast<int64_t>(end - static_cast<uint64_t>(current_offset));
+            std::copy_n(tmp_buf.begin() + current_offset, bytes_to_copy, p_buf);
+            p_buf += bytes_to_copy;
+            remaining_size -= bytes_to_copy;
         }
 
-        offset = std::max(static_cast<int64_t>(0), offset - static_cast<int64_t>(val.size));
-        remaining_size -= bytes_copied;
+        current_offset = std::max<int64_t>(0, current_offset - static_cast<int64_t>(val.size));
     }
 
-    uint64_t total_size = size - remaining_size;
-    compio_seek(file, total_size, COMP_SEEK_CUR);
-    return total_size;
+    return static_cast<uint64_t>(static_cast<int64_t>(size) - remaining_size);
 }
