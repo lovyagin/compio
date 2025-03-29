@@ -94,6 +94,12 @@ private:
 class block_allocator {
 public:
     /**
+     * @brief Get current fragmentation level
+     * @return Fragmentation percentage (0-100)
+     */
+    [[nodiscard]] uint8_t get_fragmentation() const;
+
+    /**
      * @brief Initialize allocator with archive configuration
      * @param archive Pointer to opened archive
      */

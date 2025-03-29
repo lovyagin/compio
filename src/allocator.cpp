@@ -67,6 +67,8 @@ namespace compio {
 
         if(!target) return UINT64_MAX;
 
+        last_alloc_ = target;
+
         // Allocate from the block
         const uint64_t allocated_offset = target->offset;
 
@@ -75,7 +77,6 @@ namespace compio {
             target->offset += size;
             target->size -= size;
             total_free_ -= size;
-            last_alloc_ = target; // Track remaining part
         } else {
             // Remove entire block
             total_free_ -= target->size;
@@ -92,15 +93,12 @@ namespace compio {
         return allocated_offset;
     }
 
-    void free_blocks_manager::defragment() const {
+void free_blocks_manager::defragment() const {
         free_block* current = head_;
-        while(current && current->next) {
-            if(current->offset + current->size == current->next->offset) {
-                current->size += current->next->size;
-                const free_block* to_delete = current->next;
-                current->next = to_delete->next;
-                if(to_delete->next) to_delete->next->prev = current;
-                delete to_delete;
+        while (current) {
+            if (current->next && current->offset + current->size == current->next->offset) {
+                merge_with_neighbors(current);
+                current = head_;
             } else {
                 current = current->next;
             }
@@ -185,12 +183,17 @@ namespace compio {
 
 // block_allocator implementation
 
+    uint8_t block_allocator::get_fragmentation() const {
+        return blocks_manager_.calculate_fragmentation();
+    }
+
     block_allocator::block_allocator(compio_archive* archive)
             : archive_(archive),
               blocks_manager_(archive->header ? &archive->header->file_size : nullptr),
               last_fragmentation_(0) {}
 
     uint64_t block_allocator::allocate(const uint64_t size) {
+        if (size == 0) return UINT64_MAX;
         // Try to allocate from free blocks first
         const auto strategy = static_cast<allocation_strategy>(
                 archive_->config->allocation_strategy
