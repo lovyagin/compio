@@ -44,7 +44,7 @@ struct files_table {
         char name[COMPIO_FNAME_MAX_SIZE];
         uint64_t size;
     };
-    std::vector<file> files;
+    file files[COMPIO_MAX_FILES];
 
     files_table();
 

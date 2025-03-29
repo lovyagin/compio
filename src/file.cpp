@@ -17,10 +17,9 @@ void header::read_from(FILE* file, uint64_t addr) {
     lendian_fread_member(index_root, file);
     lendian_fread_member(file_size, file);
     lendian_fread_member(ftable.n_files, file);
-    ftable.files.resize(ftable.n_files);
-    for (auto file_entry : ftable.files) {
-        lendian_fread(&file_entry.name, 1, sizeof(file_entry.name), file);
-        lendian_fread_member(file_entry.size, file);
+    for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
+        lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
+        lendian_fread_member(ftable.files[i].size, file);
     }
 }
 
@@ -30,9 +29,9 @@ void header::write_to(FILE* file, uint64_t addr) const {
     lendian_fwrite_member(index_root, file);
     lendian_fwrite_member(file_size, file);
     lendian_fwrite_member(ftable.n_files, file);
-    for (auto file_entry : ftable.files) {
-        lendian_fwrite(&file_entry.name, 1, sizeof(file_entry.name), file);
-        lendian_fwrite_member(file_entry.size, file);
+    for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
+        lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
+        lendian_fwrite_member(ftable.files[i].size, file);
     }
 }
 
@@ -116,7 +115,12 @@ const files_table::file* files_table::find(const char* name) const {
     return NULL;
 }
 
-files_table::file* files_table::find(const char* name) { return find(name); }
+files_table::file* files_table::find(const char* name) {
+    for (int i = 0; i < n_files; ++i)
+        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
+            return &files[i];
+    return NULL;
+}
 
 files_table::file* files_table::add(const char* name) {
     if (n_files >= COMPIO_MAX_FILES)
