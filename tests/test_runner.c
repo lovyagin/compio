@@ -8,6 +8,7 @@
 
 void add_btree_tests();
 void add_block_tests();
+void add_allocator_tests();
 
 int main() {
     CU_initialize_registry();
