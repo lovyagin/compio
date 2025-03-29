@@ -12,7 +12,9 @@ using namespace compio;
 header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable() {}
 
 void header::read_from(FILE* file, uint64_t addr) {
-    fseek(file, addr, SEEK_SET);
+    fprintf(stderr, "[R][header]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
     lendian_fread_member(magic_number, file);
     lendian_fread_member(index_root, file);
     lendian_fread_member(file_size, file);
@@ -24,7 +26,9 @@ void header::read_from(FILE* file, uint64_t addr) {
 }
 
 void header::write_to(FILE* file, uint64_t addr) const {
-    fseek(file, addr, SEEK_SET);
+    fprintf(stderr, "[W][header]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
     lendian_fwrite_member(magic_number, file);
     lendian_fwrite_member(index_root, file);
     lendian_fwrite_member(file_size, file);
@@ -36,7 +40,9 @@ void header::write_to(FILE* file, uint64_t addr) const {
 }
 
 void index_node::read_from(FILE* file, uint64_t addr) {
-    fseek(file, addr, SEEK_SET);
+    fprintf(stderr, "[R][index_node]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
     lendian_fread_member(is_leaf, file);
     lendian_fread_member(num_keys, file);
     keys.resize(2 * tree_degree - 1);
@@ -54,7 +60,9 @@ void index_node::read_from(FILE* file, uint64_t addr) {
 }
 
 void index_node::write_to(FILE* file, uint64_t addr) const {
-    fseek(file, addr, SEEK_SET);
+    fprintf(stderr, "[W][index_node]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
     lendian_fwrite_member(is_leaf, file);
     lendian_fwrite_member(num_keys, file);
     for (int i = 0; i < 2 * tree_degree - 1; ++i) {
@@ -69,7 +77,9 @@ void index_node::write_to(FILE* file, uint64_t addr) const {
 }
 
 void storage_block::read_from(FILE* file, uint64_t addr) {
-    fseek(file, addr, SEEK_SET);
+    fprintf(stderr, "[R][storage_block]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
     lendian_fread_member(is_compressed, file);
     lendian_fread_member(size, file);
     lendian_fread_member(original_size, file);
@@ -80,7 +90,9 @@ void storage_block::read_from(FILE* file, uint64_t addr) {
 }
 
 void storage_block::write_to(FILE* file, uint64_t addr) const {
-    fseek(file, addr, SEEK_SET);
+    fprintf(stderr, "[W][storage_block]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
     lendian_fwrite_member(is_compressed, file);
     lendian_fwrite_member(size, file);
     lendian_fwrite_member(original_size, file);
@@ -97,6 +109,8 @@ index_node::index_node(int tree_degree)
       values(2 * tree_degree - 1),
       children(2 * tree_degree) {}
 
+storage_block::storage_block() {}
+
 storage_block::storage_block(std::vector<uint8_t>&& data)
     : is_compressed(0),
       size(data.size()),
@@ -106,7 +120,7 @@ storage_block::storage_block(std::vector<uint8_t>&& data)
 
 storage_block::storage_block(uint64_t size) : storage_block(std::vector<uint8_t>(size)) {}
 
-files_table::files_table() : n_files(0), files(COMPIO_MAX_FILES) {}
+files_table::files_table() : n_files(0) {}
 
 const files_table::file* files_table::find(const char* name) const {
     for (int i = 0; i < n_files; ++i)

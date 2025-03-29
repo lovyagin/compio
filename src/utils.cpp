@@ -8,13 +8,13 @@ uint8_t parse_mode(const char* mode) {
     uint8_t mode_b = 0;
     switch (mode[0]) {
     case 'r':
-        mode_b |= read_bit;
+        mode_b |= mode_bit::r;
         break;
     case 'w':
-        mode_b |= write_bit;
+        mode_b |= mode_bit::w;
         break;
     case 'a':
-        mode_b |= read_bit | write_bit | append_bit;
+        mode_b |= mode_bit::a;
         break;
     default:
         return 0;
@@ -22,7 +22,7 @@ uint8_t parse_mode(const char* mode) {
 
     switch (mode[1]) {
     case '+':
-        mode_b |= read_bit | write_bit;
+        mode_b |= mode_bit::plus;
         break;
     case 0:
         break;

@@ -101,7 +101,7 @@ struct index_node : public infile_object {
 /**
  * @brief Size of index node metadata (without arrays)
  */
-#define INDEX_NODE_METASIZE offsetof(index_node, keys)
+#define INDEX_NODE_METASIZE (sizeof(index_node::is_leaf) + sizeof(index_node::num_keys))
 /**
  * @brief Whole size of index node
  */
@@ -120,6 +120,8 @@ struct storage_block : public infile_object {
     tree_key index_key;        /**< Index key of this block */
     std::vector<uint8_t> data; /**< Data block */
 
+    storage_block();
+
     storage_block(std::vector<uint8_t>&& data);
 
     /**
@@ -128,7 +130,7 @@ struct storage_block : public infile_object {
      * @param size size of data
      */
     storage_block(uint64_t size);
-    
+
     void read_from(FILE* file, uint64_t addr) override;
     void write_to(FILE* file, uint64_t addr) const override;
 };
@@ -136,7 +138,9 @@ struct storage_block : public infile_object {
 /**
  * @brief Size of storage block metadata (without data)
  */
-#define STORAGE_BLOCK_METASIZE offsetof(storage_block, data)
+#define STORAGE_BLOCK_METASIZE                                                                     \
+    (sizeof(storage_block::is_compressed) + sizeof(storage_block::size) +                          \
+     sizeof(storage_block::original_size) + sizeof(storage_block::index_key))
 
 } // namespace compio
 

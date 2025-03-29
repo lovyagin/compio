@@ -17,6 +17,7 @@ void btree::free_node(shared_node node) {
 
 shared_node btree::read_node(uint64_t addr) {
     auto result = shared_node(archive->file, addr, new index_node(degree));
+    result.read();
     result.unmodify();
     return result;
 }
