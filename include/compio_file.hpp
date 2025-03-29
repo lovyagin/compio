@@ -6,7 +6,7 @@
 #include "file.hpp"
 
 // forward declaration
-namespace compio { class btree; }
+namespace compio { struct btree; }
 
 /**
  * @brief Opened archive
