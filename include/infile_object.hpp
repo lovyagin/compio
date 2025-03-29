@@ -2,6 +2,7 @@
 #define INFILE_OBJECT_HPP
 
 #include <cstdint>
+#include <cstdio>
 #include <type_traits>
 
 #define readonly(x, t) (const_cast<const smart_infile_object<t>&>(x))
@@ -39,15 +40,19 @@ private:
 
         storage(FILE* file, uint64_t addr) : storage(file, addr, new T()) {
             modified = false;
-            data->read_from(file, addr);
+            read();
         }
 
         ~storage() {
             if (modified && !removed) {
-                data->write_to(file, addr);
+                write();
             }
             delete data;
         }
+
+        void read() { data->read_from(file, addr); }
+
+        void write() { data->write_to(file, addr); }
     };
 
     storage* S;
@@ -59,21 +64,27 @@ public:
 
     smart_infile_object(FILE* file, uint64_t addr) : S(new storage(file, addr)) {}
 
-    smart_infile_object(const smart_infile_object& other) {
-        S = other.S;
-        ++S->ref_count;
-    }
+    smart_infile_object(const smart_infile_object& other) { *this = other; }
 
-    smart_infile_object& operator=(smart_infile_object other) {
-        std::swap(S, other.S);
+    smart_infile_object(smart_infile_object&& other) { *this = other; }
+
+    smart_infile_object& operator=(const smart_infile_object& other) {
+        S = other.S;
         ++S->ref_count;
         return *this;
     }
 
+    smart_infile_object& operator=(smart_infile_object&& other) {
+        std::swap(S, other.S);
+        return *this;
+    }
+
     ~smart_infile_object() {
-        --S->ref_count;
-        if (S->ref_count == 0)
-            delete S;
+        if (S != nullptr) {
+            --S->ref_count;
+            if (S->ref_count == 0)
+                delete S;
+        }
     }
 
     uint64_t addr() const { return S->addr; }
@@ -103,6 +114,10 @@ public:
 
     // for developing purposes
     void unmodify() const { S->modified = false; }
+
+    void read() { S->read(); }
+
+    void write() { S->write(); }
 };
 
 #endif // INFILE_OBJECT_HPP

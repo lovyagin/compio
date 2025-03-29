@@ -8,6 +8,7 @@ static inline bool is_big_endian() {
 }
 
 uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* stream) {
+    uint64_t ret;
     if (is_big_endian() && size != sizeof(uint8_t)) {
         unsigned char* buffer = new unsigned char[size * nmemb];
         const unsigned char* input = static_cast<const unsigned char*>(ptr);
@@ -37,20 +38,26 @@ uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* st
         } else {
             throw std::invalid_argument("lendian_fwrite possible size values are 1, 2, 4, 8");
         }
-        int ret = fwrite((void*)buffer, size, nmemb, stream);
+        ret = fwrite((void*)buffer, size, nmemb, stream);
         delete buffer;
-        return ret;
     } else {
-        return fwrite(ptr, size, nmemb, stream);
+        ret = fwrite(ptr, size, nmemb, stream);
     }
+
+    if (ret != nmemb) {
+        fprintf(stderr,
+                "warning: failed to fwrite bytes to file "
+                "(expected: %llu bytes, actual: %llu bytes)\n",
+                size * nmemb, ret * size);
+    }
+    fflush(stream); // debug
+    return ret;
 }
 
 uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream) {
+    uint64_t ret;
     if (is_big_endian() && size != sizeof(uint8_t)) {
-        int ret = fread(ptr, size, nmemb, stream);
-        if (ret != nmemb) {
-            return ret;
-        }
+        ret = fread(ptr, size, nmemb, stream);
         unsigned char* output = static_cast<unsigned char*>(ptr);
         if (size == sizeof(uint16_t)) {
             for (uint32_t i = 0; i < nmemb; i++) {
@@ -73,6 +80,14 @@ uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream) {
         }
         return ret;
     } else {
-        return fread(ptr, size, nmemb, stream);
+        ret = fread(ptr, size, nmemb, stream);
     }
+
+    if (ret != nmemb) {
+        fprintf(stderr,
+                "warning: failed to fread bytes from file "
+                "(expected: %llu bytes, actual: %llu bytes)\n",
+                size * nmemb, ret * size);
+    }
+    return ret;
 }
