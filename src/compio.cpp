@@ -16,6 +16,7 @@ void compio_build_default_config(compio_config* result) {
     result->fill_holes_with_zeros = true;
     result->swap_endianness = false;
     result->block_size = 4096;
+    result->cache_size = -1;
 }
 
 compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* config)
@@ -109,9 +110,13 @@ int compio_close_file(compio_file* file) {
 int compio_close_archive(compio_archive* archive) {
     // destroy and flush header before closing the file
     archive->header = {};
+    
+    // do the same with btree node cache
+    delete archive->index;
+
+    // and finally we close the file
     if (fclose(archive->file))
         return -1;
-    delete archive->index;
     delete archive;
     return 0;
 }

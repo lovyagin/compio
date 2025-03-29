@@ -8,27 +8,64 @@ using namespace compio;
 
 #define RO(x) readonly(x, index_node)
 
+node_reader::node_reader(FILE* file, int tree_degree, int max_size)
+    : file(file),
+      tree_degree(tree_degree),
+      max_size(max_size),
+      cache() {}
+
+shared_node node_reader::read_node(uint64_t addr) {
+    auto node = cache.find(addr);
+    if (node == cache.end()) {
+        // cache miss
+
+        // TODO: new smart_infile_object constructor for this type of case (infile_object without
+        // default constructor)
+        auto result = shared_node(file, addr, new index_node(tree_degree));
+        result.read();     // read from file (because constructor with obj& does not read)
+        result.unmodify(); // constructor with obj& sets modified=true
+        
+        // TODO: lru cache, remove least-recently-used node when hitting max_size limit
+        cache.insert({addr, result});
+
+        return result;
+    } else {
+        // cache hit
+        return node->second;
+    }
+}
+
+shared_node node_reader::create_node(uint64_t addr) {
+    return shared_node(file, addr, new index_node(tree_degree));
+}
+
+void node_reader::remove_node(shared_node node) {
+    auto it = cache.find(node.addr());
+    if (it == cache.end()) {
+        fprintf(stderr, "warning: trying to remove non-existing index node\n");
+        return;
+    }
+    it->second.remove();
+    cache.erase(it);
+}
+
 uint64_t btree::allocate_node() { return allocate_block(archive, INDEX_NODE_SIZE(degree)); }
 
 void btree::free_node(shared_node node) {
-    node.remove();
+    reader.remove_node(node);
     free_block(archive, node.addr(), INDEX_NODE_SIZE(degree));
 }
 
-shared_node btree::read_node(uint64_t addr) {
-    auto result = shared_node(archive->file, addr, new index_node(degree));
-    result.read();
-    result.unmodify();
-    return result;
-}
+shared_node btree::read_node(uint64_t addr) { return reader.read_node(addr); }
 
-shared_node btree::create_node() {
-    return shared_node(archive->file, allocate_node(), new index_node(degree));
-}
+shared_node btree::create_node() { return reader.create_node(allocate_node()); }
 
 shared_node btree::read_root() { return read_node(readonly(archive->header, header)->index_root); }
 
-btree::btree(compio_archive* archive) : archive(archive), degree(archive->config->b_tree_degree) {
+btree::btree(compio_archive* archive)
+    : archive(archive),
+      degree(archive->config->b_tree_degree),
+      reader(archive->file, degree, archive->config->cache_size) {
     if (readonly(archive->header, header)->index_root != 0)
         return;
 
@@ -267,7 +304,8 @@ void btree::remove(tree_key key) {
     }
 }
 
-void btree::get_range(tree_key key_min, tree_key key_max, std::vector<std::pair<tree_key, tree_val>>& result) {
+void btree::get_range(tree_key key_min, tree_key key_max,
+                      std::vector<std::pair<tree_key, tree_val>>& result) {
     if (key_max <= key_min)
         return;
     get_range_in_node(read_root(), key_min, key_max, result);

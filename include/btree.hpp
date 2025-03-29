@@ -12,6 +12,7 @@
 
 #include <cstdbool>
 #include <cstddef>
+#include <map>
 #include <memory>
 
 #include "allocator.hpp"
@@ -20,6 +21,24 @@
 namespace compio {
 
 using shared_node = smart_infile_object<index_node>;
+
+/**
+ * @brief Struct for reading nodes from memory with caching
+ *
+ */
+struct node_reader {
+public:
+    node_reader(FILE* file, int tree_degree, int max_size);
+    shared_node read_node(uint64_t addr);
+    shared_node create_node(uint64_t addr);
+    void remove_node(shared_node node);
+
+private:
+    int max_size;
+    int tree_degree;
+    FILE* file;
+    std::map<uint64_t, shared_node> cache;
+};
 
 /**
  * @brief B-Tree, that stores addresses of compressed blocks in
@@ -64,7 +83,8 @@ public:
      * @param key_max
      * @return std::vector<uint64_t>
      */
-    void get_range(tree_key key_min, tree_key key_max, std::vector<std::pair<tree_key, tree_val>>& result);
+    void get_range(tree_key key_min, tree_key key_max,
+                   std::vector<std::pair<tree_key, tree_val>>& result);
 
     /**
      * @brief Update element
@@ -104,6 +124,9 @@ public:
     shared_node create_node();
     shared_node read_node(uint64_t addr);
     shared_node read_root();
+
+private:
+    node_reader reader;
 };
 
 } // namespace compio

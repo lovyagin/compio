@@ -67,6 +67,8 @@ typedef struct {
      * sparse files)
      */
     bool fill_holes_with_zeros;
+
+    int cache_size; /**< Maximum number of b-tree nodes in cache (-1 to set no limit) */
 } compio_config;
 
 /**
