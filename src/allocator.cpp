@@ -17,8 +17,8 @@ namespace compio {
             : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
               total_free_(0), file_size_(file_size) {}
 
-    void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
-        free_block* new_block = new free_block{offset, size, nullptr, nullptr};
+    void free_blocks_manager::add_free_block(const uint64_t offset, const uint64_t size) {
+        auto* new_block = new free_block{offset, size, nullptr, nullptr};
 
         if(!head_) {
             head_ = tail_ = new_block;
@@ -46,7 +46,8 @@ namespace compio {
         merge_with_neighbors(new_block);
     }
 
-    uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
+    uint64_t free_blocks_manager::allocate_block(const uint64_t size,
+                                                 const allocation_strategy strategy) {
         free_block* target = nullptr;
 
         switch(strategy) {
@@ -91,12 +92,12 @@ namespace compio {
         return allocated_offset;
     }
 
-    void free_blocks_manager::defragment() {
+    void free_blocks_manager::defragment() const {
         free_block* current = head_;
         while(current && current->next) {
             if(current->offset + current->size == current->next->offset) {
                 current->size += current->next->size;
-                free_block* to_delete = current->next;
+                const free_block* to_delete = current->next;
                 current->next = to_delete->next;
                 if(to_delete->next) to_delete->next->prev = current;
                 delete to_delete;
@@ -111,7 +112,7 @@ namespace compio {
 
         uint64_t max_free = 0;
         uint64_t total = 0;
-        for(auto* blk = head_; blk; blk = blk->next) {
+        for (const auto* blk = head_; blk; blk = blk->next) {
             max_free = std::max(max_free, blk->size);
             total += blk->size;
         }
@@ -134,21 +135,21 @@ namespace compio {
         // Merge with next
         if(block->next && block->offset + block->size == block->next->offset) {
             block->size += block->next->size;
-            free_block* to_delete = block->next;
+            const free_block* to_delete = block->next;
             block->next = to_delete->next;
             if(to_delete->next) to_delete->next->prev = block;
             delete to_delete;
         }
     }
 
-    free_block* free_blocks_manager::find_first_fit(uint64_t size) const {
+    free_block* free_blocks_manager::find_first_fit(const uint64_t size) const {
         for(auto* blk = head_; blk; blk = blk->next) {
             if(blk->size >= size) return blk;
         }
         return nullptr;
     }
 
-    free_block* free_blocks_manager::find_best_fit(uint64_t size) const {
+    free_block* free_blocks_manager::find_best_fit(const uint64_t size) const {
         free_block* best = nullptr;
         for(auto* blk = head_; blk; blk = blk->next) {
             if(blk->size >= size && (!best || blk->size < best->size)) {
@@ -158,7 +159,7 @@ namespace compio {
         return best;
     }
 
-    free_block* free_blocks_manager::find_worst_fit(uint64_t size) const {
+    free_block* free_blocks_manager::find_worst_fit(const uint64_t size) const {
         free_block* worst = nullptr;
         for(auto* blk = head_; blk; blk = blk->next) {
             if(blk->size >= size && (!worst || blk->size > worst->size)) {
@@ -168,7 +169,7 @@ namespace compio {
         return worst;
     }
 
-    free_block* free_blocks_manager::find_next_fit(uint64_t size) const {
+    free_block* free_blocks_manager::find_next_fit(const uint64_t size) const {
         if(!last_alloc_) return find_first_fit(size);
 
         free_block* start = last_alloc_;
@@ -189,7 +190,7 @@ namespace compio {
               blocks_manager_(archive->header ? &archive->header->file_size : nullptr),
               last_fragmentation_(0) {}
 
-    uint64_t block_allocator::allocate(uint64_t size) {
+    uint64_t block_allocator::allocate(const uint64_t size) {
         // Try to allocate from free blocks first
         const auto strategy = static_cast<allocation_strategy>(
                 archive_->config->allocation_strategy
@@ -210,12 +211,12 @@ namespace compio {
         return offset;
     }
 
-    void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+    void block_allocator::deallocate(const uint64_t offset, const uint64_t size) {
         blocks_manager_.add_free_block(offset, size);
 
         if(archive_->config->fill_holes_with_zeros) {
             // Zero-fill implementation
-            std::vector<uint8_t> zeros(size, 0);
+            const std::vector<uint8_t> zeros(size, 0);
             fseek(archive_->file, offset, SEEK_SET);
             fwrite(zeros.data(), 1, size, archive_->file);
         }
@@ -224,8 +225,8 @@ namespace compio {
     }
 
     void block_allocator::maintenance() {
-        const uint8_t frag = blocks_manager_.calculate_fragmentation();
-        if(frag > archive_->config->fragmentation_threshold) {
+        if (const uint8_t frag = blocks_manager_.calculate_fragmentation();
+            frag > archive_->config->fragmentation_threshold) {
             perform_defragmentation();
         }
     }
@@ -239,7 +240,7 @@ namespace compio {
 
     void block_allocator::perform_defragmentation() {
         std::vector<std::pair<tree_key, tree_val>> used_blocks;
-        tree_key key_min{};
+        constexpr tree_key key_min{};
         tree_key key_max{};
         key_max.hash = UINT64_MAX;
         key_max.pos = UINT64_MAX;

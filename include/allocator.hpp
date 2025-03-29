@@ -60,7 +60,7 @@ public:
     /**
      * @brief Merge adjacent free blocks
      */
-    void defragment();
+    void defragment() const;
 
     /**
      * @brief Calculate current fragmentation level
@@ -81,7 +81,7 @@ private:
     uint64_t total_free_;        /**< Total free space in bytes */
     uint64_t* file_size_;        /**< Reference to total file size */
 
-    void merge_with_neighbors(free_block* block);
+    static void merge_with_neighbors(free_block* block);
     free_block* find_first_fit(uint64_t size) const;
     free_block* find_best_fit(uint64_t size) const;
     free_block* find_worst_fit(uint64_t size) const;
