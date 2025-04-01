@@ -188,16 +188,15 @@ void free_blocks_manager::defragment() const {
     }
 
     block_allocator::block_allocator(compio_archive* archive)
-            : archive_(archive),
-              blocks_manager_(archive->header ? &archive->header->file_size : nullptr),
-              last_fragmentation_(0) {}
+    : archive_(archive),
+      blocks_manager_(archive->header ? &archive->header->file_size : nullptr),
+      last_fragmentation_(0) {}
 
     uint64_t block_allocator::allocate(const uint64_t size) {
         if (size == 0) return UINT64_MAX;
         // Try to allocate from free blocks first
-        const auto strategy = static_cast<allocation_strategy>(
-                archive_->config->allocation_strategy
-        );
+        const allocation_strategy strategy =
+        static_cast<allocation_strategy>(archive_->config->allocation_strategy);
 
         uint64_t offset = blocks_manager_.allocate_block(size, strategy);
 

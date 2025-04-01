@@ -14,6 +14,7 @@
 #ifndef COMPIO_COMPIO_H
 #define COMPIO_COMPIO_H
 
+#include <allocator.hpp>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -72,6 +73,11 @@ typedef struct {
      */
     compio_compressor compressor;
 
+    /**
+     * @brief Allocation strategy for free blocks
+     */
+    compio::allocation_strategy allocation_strategy;
+
     int b_tree_degree; /**< Maximum number of children of B-Tree node */
     int block_size;
     bool swap_endianness;
@@ -82,7 +88,6 @@ typedef struct {
      */
     bool fill_holes_with_zeros;
 
-    compio_allocation_strategy allocation_strategy;
     uint8_t fragmentation_threshold;
 } compio_config;
 

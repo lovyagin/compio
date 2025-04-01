@@ -25,10 +25,10 @@ struct free_block {
  * @brief Free blocks management strategies
  */
 enum class allocation_strategy {
-    FIRST_FIT,          /**< Allocate first suitable block */
-    BEST_FIT,           /**< Allocate smallest suitable block */
-    WORST_FIT,          /**< Allocate largest suitable block */
-    NEXT_FIT            /**< Continue search from last allocation */
+    FIRST_FIT,  /**< Allocate first suitable block */
+    BEST_FIT,   /**< Allocate smallest suitable block */
+    WORST_FIT,  /**< Allocate largest suitable block */
+    NEXT_FIT    /**< Continue search from last allocation */
 };
 
 /**
