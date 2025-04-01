@@ -93,7 +93,7 @@ namespace compio {
         return allocated_offset;
     }
 
-void free_blocks_manager::defragment() const {
+void free_blocks_manager::defragment() {
         free_block* current = head_;
         while (current) {
             if (current->next && current->offset + current->size == current->next->offset) {

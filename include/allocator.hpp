@@ -60,7 +60,7 @@ public:
     /**
      * @brief Merge adjacent free blocks
      */
-    void defragment() const;
+    void defragment();
 
     /**
      * @brief Calculate current fragmentation level
