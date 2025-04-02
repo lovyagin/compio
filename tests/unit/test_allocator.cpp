@@ -101,6 +101,27 @@ TEST(FreeBlocksManagerTest, AllocationStrategies) {
     EXPECT_EQ(worst_fit, 500);
 }
 
+TEST(FreeBlocksManagerTest, NextFitStrategy) {
+    uint64_t file_size = 1024;
+    free_blocks_manager manager(&file_size);
+
+    manager.add_free_block(100, 50);   // Block 1
+    manager.add_free_block(200, 50);   // Block 2
+    manager.add_free_block(300, 50);   // Block 3
+
+    uint64_t offset1 = manager.allocate_block(40, allocation_strategy::NEXT_FIT);
+    EXPECT_EQ(offset1, 100);
+
+    uint64_t offset2 = manager.allocate_block(30, allocation_strategy::NEXT_FIT);
+    EXPECT_EQ(offset2, 200);
+
+    uint64_t offset3 = manager.allocate_block(20, allocation_strategy::NEXT_FIT);
+    EXPECT_EQ(offset3, 300);
+
+    uint64_t offset4 = manager.allocate_block(10, allocation_strategy::NEXT_FIT);
+    EXPECT_EQ(offset4, 140);
+}
+
 TEST(FreeBlocksManagerTest, Defragmentation) {
     uint64_t file_size = 1024;
     free_blocks_manager manager(&file_size);

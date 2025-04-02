@@ -140,19 +140,33 @@ namespace compio {
 
         case allocation_strategy::NEXT_FIT: {
             if (!last_alloc_) last_alloc_ = head_;
-            free_block* start = last_alloc_;
-            free_block* current = start;
 
-            do {
-                if (current && current->size >= size) {
+            free_block* current = last_alloc_;
+            while (current) {
+                if (current->size >= size) {
                     target = current;
-                    last_alloc_ = current;
                     break;
                 }
-                current = current ? current->next : head_;
-            } while (current && current != start);
+                current = current->next;
+            }
+
+            if (!target && last_alloc_ != head_) {
+                current = head_;
+                while (current && current != last_alloc_) {
+                    if (current->size >= size) {
+                        target = current;
+                        break;
+                    }
+                    current = current->next;
+                }
+            }
+
+            if (target) {
+                last_alloc_ = target->next ? target->next : head_;
+            }
+
             break;
-        }
+    }
     }
 
     if (!target) return UINT64_MAX;
@@ -206,7 +220,7 @@ namespace compio {
                 current = current->next;
             }
         }
-        
+
         last_alloc_ = head_;
     }
 
