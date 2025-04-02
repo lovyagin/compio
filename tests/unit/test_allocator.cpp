@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <file.hpp>
 #include <vector>
 #include <cstdint>
 #include "btree.hpp"
@@ -106,21 +107,4 @@ TEST_F(AllocatorTestFixture, DeallocateAndReuseFreeBlock) {
 TEST_F(AllocatorTestFixture, ZeroSizeAllocation) {
     uint64_t offset = allocator->allocate(0);
     EXPECT_EQ(offset, UINT64_MAX);
-}
-
-// Dummy definitions to resolve unresolved external symbols.
-namespace compio {
-
-void flush_header(compio_archive* /*archive*/) {
-    // Stub: do nothing.
-}
-
-// Provide definitions for the member functions of compio::btree
-void btree::get_range(tree_key /*key_min*/, tree_key /*key_max*/, std::vector<std::pair<tree_key, tree_val>>& range) {
-    range.clear();
-}
-
-bool btree::update(tree_key /*key*/, tree_val /*new_value*/) {
-    return true;
-}
 }

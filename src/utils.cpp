@@ -1,4 +1,6 @@
 #include "utils.hpp"
+#include <cstdio>
+#include "allocator.hpp"
 #include "third_party/hash_sha256.h"
 #include <cstring>
 
