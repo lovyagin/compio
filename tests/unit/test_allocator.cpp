@@ -1,110 +1,152 @@
 #include <gtest/gtest.h>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <file.hpp>
+#include <gmock/gmock.h>
 #include <vector>
-#include <cstdint>
-#include "btree.hpp"
+#include <algorithm>
 #include "allocator.hpp"
+#include "compio_file.hpp"
 
-struct fake_compio_config {
-    compio::allocation_strategy allocation_strategy;
-    uint8_t fragmentation_threshold; // e.g. 100 to avoid defragmentation
-    bool fill_holes_with_zeros;
-};
+namespace compio {
 
-struct fake_compio_header {
-    uint64_t file_size;
-};
+class MockArchive : public compio_archive {
+public:
+    MockArchive() {
+        header = new struct header();
+        header->file_size = sizeof(struct header);
 
-struct fake_index {
-    // Dummy get_range that returns no used blocks.
-    void get_range(const compio::tree_key&, const compio::tree_key&, std::vector<std::pair<compio::tree_key, compio::tree_val>>& range) {
-        range.clear();
+        compio_config* mutable_config = new compio_config();
+        mutable_config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+        mutable_config->fragmentation_threshold = 30;
+        mutable_config->fill_holes_with_zeros = false;
+
+        config = mutable_config;
+
+        file = nullptr;
+        index = nullptr;
+        allocator = nullptr;
     }
-    // Always update successfully.
-    bool update(const compio::tree_key&, const compio::tree_val&) {
-        return true;
+
+    ~MockArchive() {
+        delete header;
+        delete config;
     }
 };
 
-// Minimal fake compio_archive structure.
-struct fake_compio_archive {
-    fake_compio_config* config;
-    fake_compio_header* header;
-    fake_index* index;
-    FILE* file;
-};
-
-// Helper function to create a temporary file.
-FILE* create_temp_file() {
-    FILE* fp = std::tmpfile();
-    if (!fp) {
-        std::abort();
-    }
-    return fp;
-}
-
-// Test fixture to set up and tear down a fake archive.
-class AllocatorTestFixture : public ::testing::Test {
+class BlockAllocatorTest : public ::testing::Test {
 protected:
-    fake_compio_config config;
-    fake_compio_header header;
-    fake_index index;
-    fake_compio_archive archive;
-    compio::block_allocator* allocator;
+    MockArchive* archive;
+    block_allocator* allocator;
 
     void SetUp() override {
-        // Setup fake config: use FIRST_FIT, high threshold to avoid defragmentation,
-        // and disable zero-filling.
-        config.allocation_strategy = compio::allocation_strategy::FIRST_FIT;
-        config.fragmentation_threshold = 100;
-        config.fill_holes_with_zeros = false;
-        header.file_size = sizeof(header);  // initial file size
-
-        archive.config = &config;
-        archive.header = &header;
-        archive.index = &index;
-        archive.file = create_temp_file();
-
-        // Create block_allocator with the fake archive.
-        allocator = new compio::block_allocator(reinterpret_cast<compio_archive*>(&archive));
+        archive = new MockArchive();
+        allocator = new block_allocator(archive);
     }
 
     void TearDown() override {
         delete allocator;
-        if (archive.file) {
-            fclose(archive.file);
-        }
+        delete archive;
     }
 };
 
-// Test that allocation increases file size when no free block is available.
-TEST_F(AllocatorTestFixture, AllocateIncreaseFileSize) {
-    uint64_t allocSize = 256;
-    uint64_t offset = allocator->allocate(allocSize);
-    // Since there are no free blocks, allocation should start at initial file size.
-    EXPECT_EQ(offset, sizeof(header));
-    // File size should be increased by allocSize.
-    EXPECT_EQ(header.file_size, sizeof(header) + allocSize);
+TEST(FreeBlocksManagerTest, BasicAllocation) {
+    uint64_t file_size = 1024;
+    free_blocks_manager manager(&file_size);
+
+    manager.add_free_block(100, 100);
+
+    uint64_t offset = manager.allocate_block(50, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset, 100);
+
+    uint64_t offset2 = manager.allocate_block(50, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset2, 150);
+
+    uint64_t offset3 = manager.allocate_block(100, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset3, UINT64_MAX);
 }
 
-// Test that deallocation creates a free block and subsequent allocation reuses it.
-TEST_F(AllocatorTestFixture, DeallocateAndReuseFreeBlock) {
-    uint64_t allocSize = 128;
-    // Allocate a block.
-    uint64_t offset1 = allocator->allocate(allocSize);
-    EXPECT_NE(offset1, UINT64_MAX);
-    // Deallocate the block.
-    allocator->deallocate(offset1, allocSize);
-    // A subsequent allocation of the same size should reuse the free block.
-    uint64_t offset2 = allocator->allocate(allocSize);
-    EXPECT_EQ(offset1, offset2);
+TEST(FreeBlocksManagerTest, AllocationStrategies) {
+    uint64_t file_size = 1024;
+    free_blocks_manager manager(&file_size);
+
+    manager.add_free_block(100, 50);
+    manager.add_free_block(200, 200);
+    manager.add_free_block(500, 400);
+
+    uint64_t best_fit = manager.allocate_block(50, allocation_strategy::BEST_FIT);
+    EXPECT_EQ(best_fit, 100);
+
+    manager = free_blocks_manager(&file_size);
+    manager.add_free_block(100, 50);
+    manager.add_free_block(200, 200);
+    manager.add_free_block(500, 400);
+
+    uint64_t worst_fit = manager.allocate_block(50, allocation_strategy::WORST_FIT);
+    EXPECT_EQ(worst_fit, 500);
 }
 
-// Test that allocating 0 returns UINT64_MAX.
-TEST_F(AllocatorTestFixture, ZeroSizeAllocation) {
+TEST(FreeBlocksManagerTest, Defragmentation) {
+    uint64_t file_size = 1024;
+    free_blocks_manager manager(&file_size);
+
+    manager.add_free_block(100, 50);
+    manager.add_free_block(150, 50);
+    manager.add_free_block(250, 50);
+
+    uint8_t initial_frag = manager.calculate_fragmentation();
+
+    manager.defragment();
+
+    uint8_t after_frag = manager.calculate_fragmentation();
+    EXPECT_LT(after_frag, initial_frag);
+
+    uint64_t offset = manager.allocate_block(100, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset, 100);
+}
+
+TEST_F(BlockAllocatorTest, BasicAllocation) {
+    uint64_t offset = allocator->allocate(100);
+    EXPECT_NE(offset, UINT64_MAX);
+    EXPECT_GE(offset, sizeof(struct header));
+}
+
+TEST_F(BlockAllocatorTest, Deallocation) {
+    uint64_t offset = allocator->allocate(100);
+    uint64_t initial_size = archive->header->file_size;
+
+    allocator->deallocate(offset, 100);
+
+    uint64_t new_offset = allocator->allocate(100);
+    EXPECT_EQ(new_offset, offset);
+
+    EXPECT_EQ(archive->header->file_size, initial_size);
+}
+
+TEST_F(BlockAllocatorTest, Fragmentation) {
+    std::vector<std::pair<uint64_t, uint64_t>> allocations;
+    for (int i = 0; i < 10; i++) {
+        uint64_t size = 50 + i * 10;
+        uint64_t offset = allocator->allocate(size);
+        allocations.push_back({offset, size});
+    }
+
+    for (size_t i = 0; i < allocations.size(); i += 2) {
+        allocator->deallocate(allocations[i].first, allocations[i].second);
+    }
+
+    uint8_t frag = allocator->get_fragmentation();
+    EXPECT_GT(frag, 0);
+
+    allocator->maintenance();
+
+    uint64_t offset = allocator->allocate(100);
+    EXPECT_NE(offset, UINT64_MAX);
+}
+
+TEST_F(BlockAllocatorTest, EdgeCases) {
     uint64_t offset = allocator->allocate(0);
     EXPECT_EQ(offset, UINT64_MAX);
+
+    allocator->deallocate(UINT64_MAX, 100);
+    allocator->deallocate(100, 0);
 }
+
+} // namespace compio

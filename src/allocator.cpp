@@ -7,100 +7,172 @@
 #include "compio_file.hpp"
 #include "allocator.hpp"
 #include "file.hpp"
+#include <algorithm>
 #include <cstdio>
 #include <algorithm>
 #include <utils.hpp>
+#include <cassert>
+#include <vector>
 
 namespace compio {
 
     free_blocks_manager::free_blocks_manager(uint64_t* file_size)
-            : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
-              total_free_(0), file_size_(file_size) {}
+    : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
+      total_free_(0), file_size_(file_size) {
+        assert(file_size_ != nullptr);
+    }
 
-    void free_blocks_manager::add_free_block(const uint64_t offset, const uint64_t size) {
-        auto* new_block = new free_block{offset, size, nullptr, nullptr};
+    void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
+    if (size == 0) return;
 
-        if(!head_) {
-            head_ = tail_ = new_block;
+    auto* new_block = new free_block{offset, size, nullptr, nullptr};
+
+    if (!head_) {
+        head_ = tail_ = new_block;
+    } else {
+        free_block* current = head_;
+        while (current && current->offset < offset) {
+            current = current->next;
+        }
+
+        if (current) {
+            new_block->next = current;
+            new_block->prev = current->prev;
+            if (current->prev) {
+                current->prev->next = new_block;
+            } else {
+                head_ = new_block;
+            }
+            current->prev = new_block;
         } else {
-            // Insert sorted by offset
+            tail_->next = new_block;
+            new_block->prev = tail_;
+            tail_ = new_block;
+        }
+    }
+
+    // Merge neighbors
+    if (new_block->prev && new_block->prev->offset + new_block->prev->size == new_block->offset) {
+        new_block->prev->size += new_block->size;
+        new_block->prev->next = new_block->next;
+        if (new_block->next) {
+            new_block->next->prev = new_block->prev;
+        } else {
+            tail_ = new_block->prev;
+        }
+        delete new_block;
+        new_block = new_block->prev;
+    }
+
+    if (new_block->next && new_block->offset + new_block->size == new_block->next->offset) {
+        new_block->size += new_block->next->size;
+        free_block* to_delete = new_block->next;
+        new_block->next = to_delete->next;
+        if (to_delete->next) {
+            to_delete->next->prev = new_block;
+        } else {
+            tail_ = new_block;
+        }
+        delete to_delete;
+    }
+
+    total_free_ += size;
+}
+
+    uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
+    if (size == 0 || !head_) return UINT64_MAX;
+
+    free_block* target = nullptr;
+
+    switch (strategy) {
+        case allocation_strategy::FIRST_FIT: {
             free_block* current = head_;
-            while(current && current->offset < offset) {
+            while (current && current->size < size) {
                 current = current->next;
             }
+            target = current;
+            break;
+        }
 
-            if(current) {
-                new_block->next = current;
-                new_block->prev = current->prev;
-                if(current->prev) current->prev->next = new_block;
-                else head_ = new_block;
-                current->prev = new_block;
-            } else {
-                tail_->next = new_block;
-                new_block->prev = tail_;
-                tail_ = new_block;
+        case allocation_strategy::BEST_FIT: {
+            free_block* best = nullptr;
+            for (free_block* current = head_; current; current = current->next) {
+                if (current->size >= size && (!best || current->size < best->size)) {
+                    best = current;
+                }
             }
+            target = best;
+            break;
         }
 
-        total_free_ += size;
-        merge_with_neighbors(new_block);
+        case allocation_strategy::WORST_FIT: {
+            free_block* worst = nullptr;
+            for (free_block* current = head_; current; current = current->next) {
+                if (current->size >= size && (!worst || current->size > worst->size)) {
+                    worst = current;
+                }
+            }
+            target = worst;
+            break;
+        }
+
+        case allocation_strategy::NEXT_FIT: {
+            if (!last_alloc_) last_alloc_ = head_;
+            free_block* start = last_alloc_;
+            free_block* current = start;
+
+            do {
+                if (current && current->size >= size) {
+                    target = current;
+                    last_alloc_ = current;
+                    break;
+                }
+                current = current ? current->next : head_;
+            } while (current && current != start);
+            break;
+        }
     }
 
-    uint64_t free_blocks_manager::allocate_block(const uint64_t size,
-                                                 const allocation_strategy strategy) {
-        free_block* target = nullptr;
+    if (!target) return UINT64_MAX;
 
-        switch(strategy) {
-            case allocation_strategy::FIRST_FIT:
-                target = find_first_fit(size);
-                break;
-            case allocation_strategy::BEST_FIT:
-                target = find_best_fit(size);
-                break;
-            case allocation_strategy::WORST_FIT:
-                target = find_worst_fit(size);
-                break;
-            case allocation_strategy::NEXT_FIT:
-                target = find_next_fit(size);
-                break;
-        }
+    const uint64_t allocated_offset = target->offset;
 
-        if(!target) return UINT64_MAX;
-
-        last_alloc_ = target;
-
-        // Allocate from the block
-        const uint64_t allocated_offset = target->offset;
-
-        if(target->size > size) {
-            // Split the block
-            target->offset += size;
-            target->size -= size;
-            total_free_ -= size;
+    if (target->size > size) {
+        target->offset += size;
+        target->size -= size;
+    } else {
+        if (target->prev) {
+            target->prev->next = target->next;
         } else {
-            // Remove entire block
-            total_free_ -= target->size;
-            if(target->prev) target->prev->next = target->next;
-            else head_ = target->next;
-
-            if(target->next) target->next->prev = target->prev;
-            else tail_ = target->prev;
-
-            last_alloc_ = target->prev; // Move to previous block
-            delete target;
+            head_ = target->next;
         }
 
-        return allocated_offset;
+        if (target->next) {
+            target->next->prev = target->prev;
+        } else {
+            tail_ = target->prev;
+        }
+
+        delete target;
     }
+
+    total_free_ -= size;
+    return allocated_offset;
+}
 
 void free_blocks_manager::defragment() {
-        free_block* current = head_;
-        while (current) {
-            if (current->next && current->offset + current->size == current->next->offset) {
-                merge_with_neighbors(current);
-                current = head_;
-            } else {
-                current = current->next;
+        bool merged = true;
+        while (merged) {
+            merged = false;
+            free_block* current = head_;
+            while (current) {
+                if (current->next && current->offset + current->size == current->next->offset) {
+                    merge_with_neighbors(current);
+                    merged = true;
+                    break;
+                } else {
+                    current = current->next;
+                }
             }
         }
     }
@@ -188,43 +260,37 @@ void free_blocks_manager::defragment() {
     }
 
     block_allocator::block_allocator(compio_archive* archive)
-            : archive_(archive),
-              blocks_manager_(archive->header ? &archive->header->file_size : nullptr),
-              last_fragmentation_(0) {}
+    : archive_(archive),
+    blocks_manager_(archive->header ? &archive->header->file_size : nullptr) {
+        assert(archive_ != nullptr);
+        assert(archive_->header != nullptr);
+    }
 
-    uint64_t block_allocator::allocate(const uint64_t size) {
-        if (size == 0) return UINT64_MAX;
-        // Try to allocate from free blocks first
-        const auto strategy = static_cast<allocation_strategy>(
-                archive_->config->allocation_strategy
-        );
+uint64_t block_allocator::allocate(uint64_t size) {
+        if (size == 0 || !archive_ || !archive_->header) return UINT64_MAX;
 
-        uint64_t offset = blocks_manager_.allocate_block(size, strategy);
+        uint64_t offset = blocks_manager_.allocate_block(size,
+            static_cast<allocation_strategy>(archive_->config->allocation_strategy));
 
         if (offset == UINT64_MAX) {
-            uint64_t* file_size_ptr = blocks_manager_.get_file_size_ptr();
-            if (!file_size_ptr) {
-                return UINT64_MAX;
-            }
-            offset = *file_size_ptr;
-            *file_size_ptr += size;
+            offset = archive_->header->file_size;
+            archive_->header->file_size += size;
         }
 
-        maintenance();
         return offset;
     }
 
-    void block_allocator::deallocate(const uint64_t offset, const uint64_t size) {
+void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+        if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) return;
+
         blocks_manager_.add_free_block(offset, size);
 
-        if(archive_->config->fill_holes_with_zeros) {
-            // Zero-fill implementation
-            const std::vector<uint8_t> zeros(size, 0);
+        if (archive_->config->fill_holes_with_zeros && archive_->file) {
+            std::vector<uint8_t> zeros(size, 0);
             fseek(archive_->file, offset, SEEK_SET);
             fwrite(zeros.data(), 1, size, archive_->file);
+            fflush(archive_->file);
         }
-
-        maintenance();
     }
 
     void block_allocator::maintenance() {
