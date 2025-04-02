@@ -55,9 +55,6 @@ TEST(FreeBlocksManagerTest, AddFreeBlock) {
     manager.add_free_block(150, 50);
     manager.add_free_block(250, 50);
 
-    std::cout << "Blocks after adding:" << std::endl;
-    manager.print_list();
-
     uint64_t offset = manager.allocate_block(50, allocation_strategy::FIRST_FIT);
     EXPECT_EQ(offset, 100);
 
@@ -109,17 +106,19 @@ TEST(FreeBlocksManagerTest, Defragmentation) {
     free_blocks_manager manager(&file_size);
 
     manager.add_free_block(100, 50);
-    manager.add_free_block(150, 50);
-    manager.add_free_block(250, 50);
+    manager.add_free_block(200, 50);
+    manager.add_free_block(300, 50);
 
     uint8_t initial_frag = manager.calculate_fragmentation();
+
+    manager.add_free_block(150, 50);
 
     manager.defragment();
 
     uint8_t after_frag = manager.calculate_fragmentation();
     EXPECT_LT(after_frag, initial_frag);
 
-    uint64_t offset = manager.allocate_block(100, allocation_strategy::FIRST_FIT);
+    uint64_t offset = manager.allocate_block(150, allocation_strategy::FIRST_FIT);
     EXPECT_EQ(offset, 100);
 }
 

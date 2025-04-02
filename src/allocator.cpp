@@ -183,88 +183,32 @@ namespace compio {
 }
 
     void free_blocks_manager::defragment() {
-    std::cout << "DEFRAG: Starting with validation checks" << std::endl;
+        if (!head_) return;
 
-    // Validate head state
-    if (!head_) {
-        std::cout << "DEFRAG: Empty list, nothing to do" << std::endl;
-        return;
-    }
+        free_block* current = head_;
+        while (current && current->next) {
+            if (current->offset + current->size == current->next->offset) {
+                current->size += current->next->size;
 
-    // Validate linked list integrity before starting
-    std::cout << "DEFRAG: Validating list integrity" << std::endl;
-    free_block* slow = head_;
-    free_block* fast = head_;
-    while (fast && fast->next) {
-        slow = slow->next;
-        fast = fast->next->next;
-        if (slow == fast) {
-            std::cout << "DEFRAG: CRITICAL - Circular reference detected!" << std::endl;
-            // Break the circle at this point
-            tail_ = slow->prev;
-            if (tail_) tail_->next = nullptr;
-            return;
-        }
-    }
+                free_block* to_delete = current->next;
+                current->next = to_delete->next;
 
-    // Validate all pointers both ways
-    free_block* current = head_;
-    free_block* prev = nullptr;
-    while (current) {
-        if (current->prev != prev) {
-            std::cout << "DEFRAG: CRITICAL - Broken prev pointer at offset " << current->offset << std::endl;
-            current->prev = prev; // Fix it
-        }
-        prev = current;
-        current = current->next;
-    }
+                if (current->next) {
+                    current->next->prev = current;
+                } else {
+                    tail_ = current;
+                }
 
-    if (prev != tail_) {
-        std::cout << "DEFRAG: CRITICAL - Tail pointer mismatch" << std::endl;
-        tail_ = prev; // Fix it
-    }
+                delete to_delete;
 
-    // In-place defragmentation with extensive error checking
-    std::cout << "DEFRAG: Starting merge phase" << std::endl;
-    current = head_;
-    while (current && current->next) {
-        std::cout << "DEFRAG: Checking " << current->offset << "+" << current->size
-                  << " vs " << current->next->offset << std::endl;
-
-        // Carefully check if blocks are adjacent
-        if (current->offset + current->size == current->next->offset) {
-            std::cout << "DEFRAG: Merging adjacent blocks" << std::endl;
-
-            // Store all the pointers we'll need
-            free_block* to_delete = current->next;
-            free_block* next_next = to_delete->next;
-
-            // Merge the blocks
-            current->size += to_delete->size;
-            current->next = next_next;
-
-            // Fix the backwards link
-            if (next_next) {
-                next_next->prev = current;
             } else {
-                tail_ = current;
+
+                current = current->next;
             }
-
-            // Delete the redundant block
-            delete to_delete;
-
-            // Don't advance current - we may be able to merge more
-        } else {
-            // Move to next block
-            current = current->next;
         }
+        
+        last_alloc_ = head_;
     }
-
-    // Reset allocation pointer
-    last_alloc_ = head_;
-
-    std::cout << "DEFRAG: Complete" << std::endl;
-}
 
     void free_blocks_manager::print_list() const {
         free_block* current = head_;
