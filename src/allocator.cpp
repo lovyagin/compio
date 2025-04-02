@@ -160,34 +160,47 @@ namespace compio {
     return allocated_offset;
 }
 
-void free_blocks_manager::defragment() {
-        bool merged = true;
-        while (merged) {
+    void free_blocks_manager::defragment() {
+        if (!head_) return;
+
+        bool merged;
+        do {
             merged = false;
             free_block* current = head_;
-            while (current) {
-                if (current->next && current->offset + current->size == current->next->offset) {
-                    merge_with_neighbors(current);
+
+            while (current && current->next) {
+                // Check if blocks are adjacent
+                if (current->offset + current->size == current->next->offset) {
+                    // Merge blocks
+                    current->size += current->next->size;
+                    free_block* to_delete = current->next;
+                    current->next = to_delete->next;
+                    delete to_delete;
                     merged = true;
                     break;
                 } else {
                     current = current->next;
                 }
             }
-        }
+        } while (merged);
     }
 
     uint8_t free_blocks_manager::calculate_fragmentation() const {
-        if(!head_ || !head_->next) return 0;
+        if (!head_) return 0;
 
-        uint64_t max_free = 0;
-        uint64_t total = 0;
-        for (const auto* blk = head_; blk; blk = blk->next) {
-            max_free = std::max(max_free, blk->size);
-            total += blk->size;
+        size_t free_space = 0;
+        size_t free_blocks = 0;
+        free_block* current = head_;
+
+        while (current) {
+            free_space += current->size;
+            free_blocks++;
+            current = current->next;
         }
 
-        return static_cast<uint8_t>((1 - (max_free / static_cast<double>(total))) * 100);
+        if (free_space == 0) return 0;
+
+        return static_cast<uint8_t>((free_blocks - 1) * 100 / free_blocks);
     }
 
 // Private helper methods
@@ -266,17 +279,20 @@ void free_blocks_manager::defragment() {
         assert(archive_->header != nullptr);
     }
 
-uint64_t block_allocator::allocate(uint64_t size) {
-        if (size == 0 || !archive_ || !archive_->header) return UINT64_MAX;
+    uint64_t block_allocator::allocate(uint64_t size) {
+        if (!size) return UINT64_MAX;  // Can't allocate zero bytes
 
+        // Try to find in free blocks first
         uint64_t offset = blocks_manager_.allocate_block(size,
             static_cast<allocation_strategy>(archive_->config->allocation_strategy));
 
-        if (offset == UINT64_MAX) {
-            offset = archive_->header->file_size;
-            archive_->header->file_size += size;
+        if (offset != UINT64_MAX) {
+            return offset;
         }
 
+        // Extend the file if no suitable block found
+        offset = archive_->header->file_size;
+        archive_->header->file_size += size;
         return offset;
     }
 
@@ -294,9 +310,9 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
     }
 
     void block_allocator::maintenance() {
-        if (const uint8_t frag = blocks_manager_.calculate_fragmentation();
-            frag > archive_->config->fragmentation_threshold) {
-            perform_defragmentation();
+        uint8_t frag = get_fragmentation();
+        if (frag > archive_->config->fragmentation_threshold) {
+            blocks_manager_.defragment();
         }
     }
 
