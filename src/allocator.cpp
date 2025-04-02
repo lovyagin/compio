@@ -129,11 +129,17 @@ namespace compio {
 
         case allocation_strategy::WORST_FIT: {
             free_block* worst = nullptr;
-            for (free_block* current = head_; current; current = current->next) {
-                if (current->size >= size && (!worst || current->size > worst->size)) {
+            uint64_t max_size = 0;
+
+            free_block* current = head_;
+            while (current) {
+                if (current->size >= size && current->size > max_size) {
                     worst = current;
+                    max_size = current->size;
                 }
+                current = current->next;
             }
+
             target = worst;
             break;
         }
@@ -166,7 +172,7 @@ namespace compio {
             }
 
             break;
-    }
+        }
     }
 
     if (!target) return UINT64_MAX;

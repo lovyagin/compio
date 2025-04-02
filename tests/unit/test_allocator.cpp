@@ -104,7 +104,7 @@ TEST(FreeBlocksManagerTest, AllocationStrategies) {
 TEST(FreeBlocksManagerTest, BestFitStrategy) {
     uint64_t file_size = 1024;
     free_blocks_manager manager(&file_size);
-    
+
     manager.add_free_block(100, 50);   // Small block
     manager.add_free_block(200, 100);  // Medium block
     manager.add_free_block(400, 200);  // Large block
@@ -124,6 +124,31 @@ TEST(FreeBlocksManagerTest, BestFitStrategy) {
 
     uint64_t offset5 = manager.allocate_block(100, allocation_strategy::BEST_FIT);
     EXPECT_EQ(offset5, UINT64_MAX);
+}
+
+TEST(FreeBlocksManagerTest, WorstFitStrategy) {
+    uint64_t file_size = 1024;
+    free_blocks_manager manager(&file_size);
+
+    manager.add_free_block(100, 50);   // Small block
+    manager.add_free_block(200, 100);  // Medium block
+    manager.add_free_block(400, 200);  // Large block
+    manager.add_free_block(700, 150);  // Another medium block
+
+    uint64_t offset1 = manager.allocate_block(40, allocation_strategy::WORST_FIT);
+    EXPECT_EQ(offset1, 400);
+
+    uint64_t offset2 = manager.allocate_block(55, allocation_strategy::WORST_FIT);
+    EXPECT_EQ(offset2, 440);
+
+    uint64_t offset3 = manager.allocate_block(90, allocation_strategy::WORST_FIT);
+    EXPECT_EQ(offset3, 700);
+
+    uint64_t offset4 = manager.allocate_block(30, allocation_strategy::WORST_FIT);
+    EXPECT_EQ(offset4, 495);
+
+    uint64_t offset5 = manager.allocate_block(100, allocation_strategy::WORST_FIT);
+    EXPECT_EQ(offset5, 200);
 }
 
 TEST(FreeBlocksManagerTest, NextFitStrategy) {
