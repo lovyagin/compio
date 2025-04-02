@@ -63,6 +63,11 @@ public:
     void defragment();
 
     /**
+     * @brief Print current free blocks list for debugging
+     */
+    void print_list() const;
+
+    /**
      * @brief Calculate current fragmentation level
      * @return Fragmentation percentage (0-100)
      */
@@ -81,7 +86,6 @@ private:
     uint64_t total_free_;        /**< Total free space in bytes */
     uint64_t* file_size_;        /**< Reference to total file size */
 
-    static void merge_with_neighbors(free_block* block);
     free_block* find_first_fit(uint64_t size) const;
     free_block* find_best_fit(uint64_t size) const;
     free_block* find_worst_fit(uint64_t size) const;

@@ -9,6 +9,7 @@
 #include "file.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <iostream>
 #include <algorithm>
 #include <utils.hpp>
 #include <cassert>
@@ -25,58 +26,79 @@ namespace compio {
     void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
     if (size == 0) return;
 
+    free_block* prev_merge = nullptr;
+    free_block* next_merge = nullptr;
+
+    for (free_block* current = head_; current; current = current->next) {
+        if (current->offset + current->size == offset) {
+            prev_merge = current;
+        }
+        else if (offset + size == current->offset) {
+            next_merge = current;
+        }
+    }
+
+    if (prev_merge && next_merge) {
+        prev_merge->size += size + next_merge->size;
+
+        if (next_merge->next) {
+            next_merge->next->prev = prev_merge;
+        } else {
+            tail_ = prev_merge;
+        }
+
+        prev_merge->next = next_merge->next;
+        delete next_merge;
+
+        total_free_ += size;
+        return;
+    }
+    else if (prev_merge) {
+        prev_merge->size += size;
+        total_free_ += size;
+        return;
+    }
+    else if (next_merge) {
+        next_merge->offset = offset;
+        next_merge->size += size;
+        total_free_ += size;
+        return;
+    }
+
     auto* new_block = new free_block{offset, size, nullptr, nullptr};
 
     if (!head_) {
-        head_ = tail_ = new_block;
+        head_ = tail_ = last_alloc_ = new_block;
+        total_free_ += size;
+        return;
+    }
+
+    if (offset < head_->offset) {
+        new_block->next = head_;
+        head_->prev = new_block;
+        head_ = new_block;
+        total_free_ += size;
+        return;
+    }
+
+    free_block* current = head_;
+    while (current->next && current->next->offset < offset) {
+        current = current->next;
+    }
+
+    new_block->next = current->next;
+    new_block->prev = current;
+
+    if (current->next) {
+        current->next->prev = new_block;
     } else {
-        free_block* current = head_;
-        while (current && current->offset < offset) {
-            current = current->next;
-        }
-
-        if (current) {
-            new_block->next = current;
-            new_block->prev = current->prev;
-            if (current->prev) {
-                current->prev->next = new_block;
-            } else {
-                head_ = new_block;
-            }
-            current->prev = new_block;
-        } else {
-            tail_->next = new_block;
-            new_block->prev = tail_;
-            tail_ = new_block;
-        }
+        tail_ = new_block;
     }
 
-    // Merge neighbors
-    if (new_block->prev && new_block->prev->offset + new_block->prev->size == new_block->offset) {
-        new_block->prev->size += new_block->size;
-        new_block->prev->next = new_block->next;
-        if (new_block->next) {
-            new_block->next->prev = new_block->prev;
-        } else {
-            tail_ = new_block->prev;
-        }
-        delete new_block;
-        new_block = new_block->prev;
-    }
-
-    if (new_block->next && new_block->offset + new_block->size == new_block->next->offset) {
-        new_block->size += new_block->next->size;
-        free_block* to_delete = new_block->next;
-        new_block->next = to_delete->next;
-        if (to_delete->next) {
-            to_delete->next->prev = new_block;
-        } else {
-            tail_ = new_block;
-        }
-        delete to_delete;
-    }
-
+    current->next = new_block;
     total_free_ += size;
+
+    if (!last_alloc_) last_alloc_ = head_;
 }
 
     uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
@@ -161,28 +183,95 @@ namespace compio {
 }
 
     void free_blocks_manager::defragment() {
-        if (!head_) return;
+    std::cout << "DEFRAG: Starting with validation checks" << std::endl;
 
-        bool merged;
-        do {
-            merged = false;
-            free_block* current = head_;
+    // Validate head state
+    if (!head_) {
+        std::cout << "DEFRAG: Empty list, nothing to do" << std::endl;
+        return;
+    }
 
-            while (current && current->next) {
-                // Check if blocks are adjacent
-                if (current->offset + current->size == current->next->offset) {
-                    // Merge blocks
-                    current->size += current->next->size;
-                    free_block* to_delete = current->next;
-                    current->next = to_delete->next;
-                    delete to_delete;
-                    merged = true;
-                    break;
-                } else {
-                    current = current->next;
-                }
+    // Validate linked list integrity before starting
+    std::cout << "DEFRAG: Validating list integrity" << std::endl;
+    free_block* slow = head_;
+    free_block* fast = head_;
+    while (fast && fast->next) {
+        slow = slow->next;
+        fast = fast->next->next;
+        if (slow == fast) {
+            std::cout << "DEFRAG: CRITICAL - Circular reference detected!" << std::endl;
+            // Break the circle at this point
+            tail_ = slow->prev;
+            if (tail_) tail_->next = nullptr;
+            return;
+        }
+    }
+
+    // Validate all pointers both ways
+    free_block* current = head_;
+    free_block* prev = nullptr;
+    while (current) {
+        if (current->prev != prev) {
+            std::cout << "DEFRAG: CRITICAL - Broken prev pointer at offset " << current->offset << std::endl;
+            current->prev = prev; // Fix it
+        }
+        prev = current;
+        current = current->next;
+    }
+
+    if (prev != tail_) {
+        std::cout << "DEFRAG: CRITICAL - Tail pointer mismatch" << std::endl;
+        tail_ = prev; // Fix it
+    }
+
+    // In-place defragmentation with extensive error checking
+    std::cout << "DEFRAG: Starting merge phase" << std::endl;
+    current = head_;
+    while (current && current->next) {
+        std::cout << "DEFRAG: Checking " << current->offset << "+" << current->size
+                  << " vs " << current->next->offset << std::endl;
+
+        // Carefully check if blocks are adjacent
+        if (current->offset + current->size == current->next->offset) {
+            std::cout << "DEFRAG: Merging adjacent blocks" << std::endl;
+
+            // Store all the pointers we'll need
+            free_block* to_delete = current->next;
+            free_block* next_next = to_delete->next;
+
+            // Merge the blocks
+            current->size += to_delete->size;
+            current->next = next_next;
+
+            // Fix the backwards link
+            if (next_next) {
+                next_next->prev = current;
+            } else {
+                tail_ = current;
             }
-        } while (merged);
+
+            // Delete the redundant block
+            delete to_delete;
+
+            // Don't advance current - we may be able to merge more
+        } else {
+            // Move to next block
+            current = current->next;
+        }
+    }
+
+    // Reset allocation pointer
+    last_alloc_ = head_;
+
+    std::cout << "DEFRAG: Complete" << std::endl;
+}
+
+    void free_blocks_manager::print_list() const {
+        free_block* current = head_;
+        while (current) {
+            std::cout << "Block: " << current->offset << ", " << current->size << "\n";
+            current = current->next;
+        }
     }
 
     uint8_t free_blocks_manager::calculate_fragmentation() const {
@@ -204,26 +293,6 @@ namespace compio {
     }
 
 // Private helper methods
-
-    void free_blocks_manager::merge_with_neighbors(free_block* block) {
-        // Merge with previous
-        if(block->prev && block->prev->offset + block->prev->size == block->offset) {
-            block->prev->size += block->size;
-            block->prev->next = block->next;
-            if(block->next) block->next->prev = block->prev;
-            delete block;
-            block = block->prev;
-        }
-
-        // Merge with next
-        if(block->next && block->offset + block->size == block->next->offset) {
-            block->size += block->next->size;
-            const free_block* to_delete = block->next;
-            block->next = to_delete->next;
-            if(to_delete->next) to_delete->next->prev = block;
-            delete to_delete;
-        }
-    }
 
     free_block* free_blocks_manager::find_first_fit(const uint64_t size) const {
         for(auto* blk = head_; blk; blk = blk->next) {
@@ -253,15 +322,19 @@ namespace compio {
     }
 
     free_block* free_blocks_manager::find_next_fit(const uint64_t size) const {
-        if(!last_alloc_) return find_first_fit(size);
+        if (!last_alloc_ || !head_) return find_first_fit(size);
 
-        free_block* start = last_alloc_;
-        free_block* current = start;
+        free_block* current = last_alloc_;
+        while (current) {
+            if (current->size >= size) return current;
+            current = current->next;
+        }
 
-        do {
-            if(current->size >= size) return current;
-            current = current->next ? current->next : head_;
-        } while(current && current != start);
+        current = head_;
+        while (current && current != last_alloc_) {
+            if (current->size >= size) return current;
+            current = current->next;
+        }
 
         return nullptr;
     }

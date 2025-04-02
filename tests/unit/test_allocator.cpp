@@ -47,6 +47,27 @@ protected:
     }
 };
 
+TEST(FreeBlocksManagerTest, AddFreeBlock) {
+    uint64_t file_size = 1024;
+    free_blocks_manager manager(&file_size);
+
+    manager.add_free_block(100, 50);
+    manager.add_free_block(150, 50);
+    manager.add_free_block(250, 50);
+
+    std::cout << "Blocks after adding:" << std::endl;
+    manager.print_list();
+
+    uint64_t offset = manager.allocate_block(50, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset, 100);
+
+    offset = manager.allocate_block(50, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset, 150);
+
+    offset = manager.allocate_block(50, allocation_strategy::FIRST_FIT);
+    EXPECT_EQ(offset, 250);
+}
+
 TEST(FreeBlocksManagerTest, BasicAllocation) {
     uint64_t file_size = 1024;
     free_blocks_manager manager(&file_size);
