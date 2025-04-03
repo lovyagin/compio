@@ -369,4 +369,46 @@ TEST_F(BlockAllocatorTest, EdgeCases) {
     allocator->deallocate(100, 0);
 }
 
+TEST_F(BlockAllocatorTest, AllocateWithNoSuitableBlock) {
+    uint64_t offset1 = allocator->allocate(100);
+    EXPECT_NE(offset1, UINT64_MAX);
+
+    allocator->deallocate(offset1, 100);
+
+    uint64_t offset2 = allocator->allocate(200);
+    EXPECT_NE(offset2, UINT64_MAX);
+
+    EXPECT_GE(offset2, archive->header->file_size - 200);
+
+    uint64_t all_space = allocator->allocate(100);
+    EXPECT_EQ(all_space, offset1);
+
+    uint64_t previous_size = archive->header->file_size;
+    uint64_t offset3 = allocator->allocate(50);
+    EXPECT_NE(offset3, UINT64_MAX);
+    EXPECT_GE(offset3, previous_size);
+    EXPECT_EQ(archive->header->file_size, previous_size + 50);
+}
+
+TEST_F(BlockAllocatorTest, DeallocateAdjacentBlocks) {
+    uint64_t offset1 = allocator->allocate(100);
+    uint64_t offset2 = allocator->allocate(150);
+    uint64_t offset3 = allocator->allocate(200);
+
+    EXPECT_EQ(offset2, offset1 + 100);
+    EXPECT_EQ(offset3, offset2 + 150);
+
+    allocator->deallocate(offset1, 100);
+    allocator->deallocate(offset3, 200);
+    allocator->deallocate(offset2, 150);
+
+    uint64_t new_offset = allocator->allocate(450);
+    EXPECT_EQ(new_offset, offset1);
+
+    uint64_t next_offset = allocator->allocate(50);
+    EXPECT_NE(next_offset, offset1 + 100);
+    EXPECT_NE(next_offset, offset2 + 150);
+    EXPECT_GE(next_offset, offset1 + 450);
+}
+
 } // namespace compio

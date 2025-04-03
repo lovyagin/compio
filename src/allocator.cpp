@@ -394,7 +394,7 @@ namespace compio {
 
         if (current_fragmentation > threshold) {
             std::cout << "Performing defragmentation..." << std::endl;
-            
+
             blocks_manager_.defragment();
             blocks_manager_.update_fragmentation();
 
