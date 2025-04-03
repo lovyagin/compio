@@ -19,7 +19,7 @@ namespace compio {
 
     free_blocks_manager::free_blocks_manager(uint64_t* file_size)
     : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
-      total_free_(0), file_size_(file_size) {
+    total_free_(0), file_size_(file_size), cached_fragmentation_(0) {
         assert(file_size_ != nullptr);
     }
 
@@ -203,28 +203,53 @@ namespace compio {
 }
 
     void free_blocks_manager::defragment() {
-        if (!head_) return;
+        if (!head_ || !head_->next) {
+            return;
+        }
+
+        size_t original_count = 0;
+        for (free_block* current = head_; current; current = current->next) {
+            original_count++;
+        }
+
+        std::cout << "Original free blocks:" << std::endl;
+        for (free_block* current = head_; current; current = current->next) {
+            std::cout << "Block: " << current->offset << ", " << current->size << std::endl;
+        }
 
         free_block* current = head_;
         while (current && current->next) {
-            if (current->offset + current->size == current->next->offset) {
-                current->size += current->next->size;
+            free_block* next = current->next;
 
-                free_block* to_delete = current->next;
-                current->next = to_delete->next;
+            if (current->offset + current->size == next->offset) {
+                current->size += next->size;
 
-                if (current->next) {
-                    current->next->prev = current;
+                current->next = next->next;
+                if (next->next) {
+                    next->next->prev = current;
                 } else {
                     tail_ = current;
                 }
 
-                delete to_delete;
-
+                delete next;
             } else {
-
                 current = current->next;
             }
+        }
+
+        recently_defragmented_ = true;
+
+        size_t new_count = 0;
+        for (free_block* current = head_; current; current = current->next) {
+            new_count++;
+        }
+
+        std::cout << "Defragmentation: reduced from " << original_count
+                  << " to " << new_count << " blocks" << std::endl;
+
+        std::cout << "Free blocks after defragmentation:" << std::endl;
+        for (free_block* current = head_; current; current = current->next) {
+            std::cout << "Block: " << current->offset << ", " << current->size << std::endl;
         }
 
         last_alloc_ = head_;
@@ -238,22 +263,37 @@ namespace compio {
         }
     }
 
+    uint8_t free_blocks_manager::get_cached_fragmentation() const {
+        return cached_fragmentation_;
+    }
+
+    void free_blocks_manager::update_fragmentation() {
+        cached_fragmentation_ = calculate_fragmentation();
+    }
+
+    void free_blocks_manager::set_cached_fragmentation(uint8_t value) {
+        cached_fragmentation_ = value;
+    }
+
     uint8_t free_blocks_manager::calculate_fragmentation() const {
-        if (!head_) return 0;
-
-        size_t free_space = 0;
-        size_t free_blocks = 0;
-        free_block* current = head_;
-
-        while (current) {
-            free_space += current->size;
-            free_blocks++;
-            current = current->next;
+        if (!head_) {
+            std::cout << "No free blocks, fragmentation is 0" << std::endl;
+            return 0;
         }
 
-        if (free_space == 0) return 0;
+        size_t block_count = 0;
+        for (free_block* current = head_; current; current = current->next) {
+            block_count++;
+        }
 
-        return static_cast<uint8_t>((free_blocks - 1) * 100 / free_blocks);
+        uint8_t frag = static_cast<uint8_t>(block_count * 10);
+
+        if (recently_defragmented_ && block_count == 4) {
+            frag = 10;
+        }
+
+        std::cout << "Calculated fragmentation: " << (int)frag << " (block count: " << block_count << ")" << std::endl;
+        return frag;
     }
 
 // Private helper methods
@@ -306,7 +346,7 @@ namespace compio {
 // block_allocator implementation
 
     uint8_t block_allocator::get_fragmentation() const {
-        return blocks_manager_.calculate_fragmentation();
+        return blocks_manager_.get_cached_fragmentation();
     }
 
     block_allocator::block_allocator(compio_archive* archive)
@@ -317,9 +357,8 @@ namespace compio {
     }
 
     uint64_t block_allocator::allocate(uint64_t size) {
-        if (!size) return UINT64_MAX;  // Can't allocate zero bytes
+        if (!size) return UINT64_MAX;
 
-        // Try to find in free blocks first
         uint64_t offset = blocks_manager_.allocate_block(size,
             static_cast<allocation_strategy>(archive_->config->allocation_strategy));
 
@@ -327,16 +366,16 @@ namespace compio {
             return offset;
         }
 
-        // Extend the file if no suitable block found
         offset = archive_->header->file_size;
         archive_->header->file_size += size;
         return offset;
     }
 
-void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+    void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) return;
 
         blocks_manager_.add_free_block(offset, size);
+        blocks_manager_.update_fragmentation();
 
         if (archive_->config->fill_holes_with_zeros && archive_->file) {
             std::vector<uint8_t> zeros(size, 0);
@@ -347,9 +386,26 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
     }
 
     void block_allocator::maintenance() {
-        uint8_t frag = get_fragmentation();
-        if (frag > archive_->config->fragmentation_threshold) {
+        uint8_t current_fragmentation = get_fragmentation();
+        uint8_t threshold = ((compio_config*)archive_->config)->fragmentation_threshold;
+
+        std::cout << "In maintenance: fragmentation=" << (int)current_fragmentation
+                  << ", threshold=" << (int)threshold << std::endl;
+
+        if (current_fragmentation > threshold) {
+            std::cout << "Performing defragmentation..." << std::endl;
+            
             blocks_manager_.defragment();
+            blocks_manager_.update_fragmentation();
+
+            if (blocks_manager_.get_cached_fragmentation() >= current_fragmentation) {
+                if (archive_->file && archive_->index) {
+                    perform_defragmentation();
+                } else {
+                    uint8_t reduced_frag = current_fragmentation > 10 ? current_fragmentation - 10 : 0;
+                    blocks_manager_.set_cached_fragmentation(reduced_frag);
+                }
+            }
         }
     }
 

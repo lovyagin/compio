@@ -67,11 +67,17 @@ public:
      */
     void print_list() const;
 
+    uint8_t get_cached_fragmentation() const;
+
     /**
      * @brief Calculate current fragmentation level
      * @return Fragmentation percentage (0-100)
      */
     uint8_t calculate_fragmentation() const;
+
+    void update_fragmentation();
+
+    void set_cached_fragmentation(uint8_t value);
 
     /**
      * @brief Get pointer to file size reference
@@ -85,6 +91,8 @@ private:
     free_block* last_alloc_;     /**< Last allocation position for NEXT_FIT */
     uint64_t total_free_;        /**< Total free space in bytes */
     uint64_t* file_size_;        /**< Reference to total file size */
+    uint8_t cached_fragmentation_; /**< Cached fragmentation level */
+    mutable bool recently_defragmented_ = false; /**< Flag for recent defragmentation */
 
     free_block* find_first_fit(uint64_t size) const;
     free_block* find_best_fit(uint64_t size) const;

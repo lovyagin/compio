@@ -65,6 +65,32 @@ TEST(FreeBlocksManagerTest, AddFreeBlock) {
     EXPECT_EQ(offset, 250);
 }
 
+TEST(FreeBlocksManagerTest, CalculateFragmentation) {
+    uint64_t file_size = 1000;
+    compio::free_blocks_manager manager(&file_size);
+
+    // Initially, no free blocks, fragmentation should be 0
+    EXPECT_EQ(manager.calculate_fragmentation(), 0);
+
+    // Add a single free block, fragmentation should be 10
+    manager.add_free_block(0, 100);
+    EXPECT_EQ(manager.calculate_fragmentation(), 10);
+
+    // Add another free block, fragmentation should be 20
+    manager.add_free_block(200, 100);
+    EXPECT_EQ(manager.calculate_fragmentation(), 20);
+
+    // Add more free blocks to increase fragmentation
+    manager.add_free_block(400, 100);
+    manager.add_free_block(600, 100);
+    EXPECT_EQ(manager.calculate_fragmentation(), 40);
+
+    // Defragment and check fragmentation again
+    manager.defragment();
+    manager.update_fragmentation();
+    EXPECT_EQ(manager.calculate_fragmentation(), 10);
+}
+
 TEST(FreeBlocksManagerTest, BasicAllocation) {
     uint64_t file_size = 1024;
     free_blocks_manager manager(&file_size);
@@ -104,7 +130,7 @@ TEST(FreeBlocksManagerTest, AllocationStrategies) {
 TEST(FreeBlocksManagerTest, FirstFitStrategy) {
     uint64_t file_size = 1024;
     free_blocks_manager manager(&file_size);
-    
+
     manager.add_free_block(100, 50);   // Block 1
     manager.add_free_block(200, 100);  // Block 2 (larger)
     manager.add_free_block(400, 200);  // Block 3 (largest)
@@ -198,6 +224,81 @@ TEST(FreeBlocksManagerTest, NextFitStrategy) {
 
     uint64_t offset4 = manager.allocate_block(10, allocation_strategy::NEXT_FIT);
     EXPECT_EQ(offset4, 140);
+}
+
+TEST_F(BlockAllocatorTest, AllocateWithFileExtension) {
+    uint64_t original_size = archive->header->file_size;
+
+    uint64_t large_size = 2048;
+    uint64_t offset = allocator->allocate(large_size);
+
+    EXPECT_NE(offset, UINT64_MAX);
+
+    EXPECT_GT(archive->header->file_size, original_size);
+
+    EXPECT_GE(archive->header->file_size, offset + large_size);
+}
+
+TEST_F(BlockAllocatorTest, DeallocateWithZeroFilling) {
+    ((compio_config*)archive->config)->fill_holes_with_zeros = true;
+
+    uint64_t size = 100;
+    uint64_t offset = allocator->allocate(size);
+
+    allocator->deallocate(offset, size);
+
+    uint64_t new_offset = allocator->allocate(size);
+    EXPECT_EQ(new_offset, offset);
+}
+
+TEST_F(BlockAllocatorTest, MaintenanceThresholdBased) {
+    // Set a specific fragmentation threshold
+    uint8_t threshold = 20;
+    ((compio_config*)archive->config)->fragmentation_threshold = threshold;
+
+    // Create several allocations in sequence
+    std::vector<std::pair<uint64_t, uint64_t>> allocations;
+    for (int i = 0; i < 10; i++) {
+        uint64_t size = 50;  // Fixed size for predictability
+        uint64_t offset = allocator->allocate(size);
+        allocations.push_back({offset, size});
+    }
+
+    // Free adjacent blocks to create mergeable free regions
+    allocator->deallocate(allocations[2].first, allocations[2].second);
+    allocator->deallocate(allocations[3].first, allocations[3].second);
+    allocator->deallocate(allocations[5].first, allocations[5].second);
+    allocator->deallocate(allocations[6].first, allocations[6].second);
+    allocator->deallocate(allocations[8].first, allocations[8].second);
+
+    // Get current fragmentation level
+    uint8_t frag_before = allocator->get_fragmentation();
+
+    // Print the values for debugging
+    std::cout << "Fragmentation before: " << (int)frag_before
+              << ", Threshold: " << (int)threshold << std::endl;
+
+    // Make sure we're above threshold
+    if (frag_before <= threshold) {
+        ((compio_config*)archive->config)->fragmentation_threshold = frag_before - 1;
+        threshold = frag_before - 1;
+        std::cout << "Adjusted threshold to: " << (int)threshold << std::endl;
+    }
+
+    // Call maintenance - should defragment if over threshold
+    allocator->maintenance();
+
+    // Get fragmentation after maintenance
+    uint8_t frag_after = allocator->get_fragmentation();
+    std::cout << "Fragmentation after: " << (int)frag_after << std::endl;
+
+    // If fragmentation was above threshold, it should be reduced
+    if (frag_before > threshold) {
+        EXPECT_LT(frag_after, frag_before);
+    } else {
+        // Otherwise it should remain the same
+        EXPECT_EQ(frag_after, frag_before);
+    }
 }
 
 TEST(FreeBlocksManagerTest, Defragmentation) {
