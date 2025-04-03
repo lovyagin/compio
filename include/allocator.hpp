@@ -80,6 +80,14 @@ public:
     void set_cached_fragmentation(uint8_t value);
 
     /**
+     * @brief Check if a region is already marked as free
+     * @param offset Start offset of the region
+     * @param size Size of the region
+     * @return True if region is already in the free list
+     */
+    bool is_region_free(uint64_t offset, uint64_t size) const;
+
+    /**
      * @brief Get pointer to file size reference
      * @return Raw pointer to managed file size
      */

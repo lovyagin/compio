@@ -275,6 +275,20 @@ namespace compio {
         cached_fragmentation_ = value;
     }
 
+    bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
+        if (file_size_ && offset >= *file_size_) {
+            return true;
+        }
+
+        for (free_block* current = head_; current; current = current->next) {
+            if (current->offset <= offset && offset + size <= current->offset + current->size) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     uint8_t free_blocks_manager::calculate_fragmentation() const {
         if (!head_) {
             std::cout << "No free blocks, fragmentation is 0" << std::endl;
@@ -373,6 +387,12 @@ namespace compio {
 
     void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) return;
+
+        if (offset + size > archive_->header->file_size) return;
+
+        if (blocks_manager_.is_region_free(offset, size)) {
+            return;
+        }
 
         blocks_manager_.add_free_block(offset, size);
         blocks_manager_.update_fragmentation();

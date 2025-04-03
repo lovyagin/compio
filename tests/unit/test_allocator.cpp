@@ -411,4 +411,71 @@ TEST_F(BlockAllocatorTest, DeallocateAdjacentBlocks) {
     EXPECT_GE(next_offset, offset1 + 450);
 }
 
+TEST_F(BlockAllocatorTest, ZeroSizeAllocationRequest) {
+    uint64_t offset = allocator->allocate(0);
+    EXPECT_EQ(offset, UINT64_MAX);
+
+    uint64_t valid_offset = allocator->allocate(100);
+    EXPECT_NE(valid_offset, UINT64_MAX);
+}
+
+TEST_F(BlockAllocatorTest, HighlyFragmentedAllocation) {
+    std::vector<uint64_t> offsets;
+
+    for (int i = 0; i < 10; i++) {
+        uint64_t offset = allocator->allocate(10);
+        offsets.push_back(offset);
+        allocator->allocate(10);
+    }
+
+    for (auto offset : offsets) {
+        allocator->deallocate(offset, 10);
+    }
+
+    uint64_t large_offset = allocator->allocate(15);
+    EXPECT_NE(large_offset, UINT64_MAX);
+
+    EXPECT_GE(large_offset, archive->header->file_size - 15);
+}
+
+TEST_F(BlockAllocatorTest, MaxSizeAllocation) {
+    uint64_t max_size = UINT16_MAX;
+    uint64_t offset = allocator->allocate(max_size);
+    EXPECT_NE(offset, UINT64_MAX);
+    EXPECT_GE(archive->header->file_size, offset + max_size);
+}
+
+TEST_F(BlockAllocatorTest, VerySmallAllocation) {
+    uint64_t offset = allocator->allocate(1);
+    EXPECT_NE(offset, UINT64_MAX);
+
+    allocator->deallocate(offset, 1);
+    uint64_t new_offset = allocator->allocate(1);
+    EXPECT_EQ(new_offset, offset);
+}
+
+TEST_F(BlockAllocatorTest, InvalidSizeDeallocation) {
+    uint64_t offset = allocator->allocate(100);
+    uint64_t initial_frag = allocator->get_fragmentation();
+
+    allocator->deallocate(offset, 50);
+
+    uint64_t new_offset = allocator->allocate(100);
+    EXPECT_NE(new_offset, offset);
+}
+
+TEST_F(BlockAllocatorTest, RepeatedDeallocation) {
+    uint64_t offset = allocator->allocate(100);
+    uint64_t initial_frag = allocator->get_fragmentation();
+
+    allocator->deallocate(offset, 100);
+
+    allocator->deallocate(offset, 100);
+
+    EXPECT_LE(allocator->get_fragmentation(), initial_frag + 10);
+
+    uint64_t new_offset = allocator->allocate(100);
+    EXPECT_NE(new_offset, UINT64_MAX);
+}
+
 } // namespace compio
