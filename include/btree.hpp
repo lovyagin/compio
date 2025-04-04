@@ -17,6 +17,7 @@
 
 #include "allocator.hpp"
 #include "file.hpp"
+#include "third_party/lrucache.hpp"
 
 namespace compio {
 
@@ -34,10 +35,10 @@ public:
     void remove_node(shared_node node);
 
 private:
-    int max_size;
     int tree_degree;
     FILE* file;
-    std::map<uint64_t, shared_node> cache;
+
+    cache::lru_cache<uint64_t, shared_node> cache;
 };
 
 /**

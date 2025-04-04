@@ -11,12 +11,10 @@ using namespace compio;
 node_reader::node_reader(FILE* file, int tree_degree, int max_size)
     : file(file),
       tree_degree(tree_degree),
-      max_size(max_size),
-      cache() {}
+      cache(max_size) {}
 
 shared_node node_reader::read_node(uint64_t addr) {
-    auto node = cache.find(addr);
-    if (node == cache.end()) {
+    if (!cache.exists(addr)) {
         // cache miss
 
         // TODO: new smart_infile_object constructor for this type of case (infile_object without
@@ -25,13 +23,12 @@ shared_node node_reader::read_node(uint64_t addr) {
         result.read();     // read from file (because constructor with obj& does not read)
         result.unmodify(); // constructor with obj& sets modified=true
         
-        // TODO: lru cache, remove least-recently-used node when hitting max_size limit
-        cache.insert({addr, result});
+        cache.put(addr, result);
 
         return result;
     } else {
         // cache hit
-        return node->second;
+        return cache.get(addr);
     }
 }
 
@@ -40,13 +37,11 @@ shared_node node_reader::create_node(uint64_t addr) {
 }
 
 void node_reader::remove_node(shared_node node) {
-    auto it = cache.find(node.addr());
-    if (it == cache.end()) {
+    if (!cache.exists(node.addr())) {
         fprintf(stderr, "warning: trying to remove non-existing index node\n");
         return;
     }
-    it->second.remove();
-    cache.erase(it);
+    cache.remove(node.addr());
 }
 
 uint64_t btree::allocate_node() { return allocate_block(archive, INDEX_NODE_SIZE(degree)); }
