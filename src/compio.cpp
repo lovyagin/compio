@@ -18,33 +18,46 @@ void compio_build_default_config(compio_config* result) {
     result->fill_holes_with_zeros = true;
     result->swap_endianness = false;
     result->block_size = 4096;
+    result->cache_size = -1;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
 }
 
-compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
-    auto archive = new compio_archive();
-
-    archive->config = c;
-    archive->mode_b = parse_mode(mode);
-    if (!archive->mode_b) {
-        delete archive;
-        return NULL;
-    }
-
-    // if user passed "w" as mode, we still should open file as readable
-    const char* archive_open_mode;
-    if (archive->mode_b & append_bit)
-        archive_open_mode = "a+";
+compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* config)
+    : file(file),
+      config(config),
+      mode_b(mode_b) {
+    fseek(file, 0, SEEK_END);
+    long fsize = ftell(file);
+    if (fsize == 0)
+        header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
-        archive_open_mode = "w+";
+        header = smart_infile_object<compio::header>(file, 0);
 
-    archive->file = fopen(fp, archive_open_mode);
-    if (!archive->file) {
-        delete archive;
+    index = new btree(this);
+}
+
+compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
+    uint8_t mode_b = parse_mode(mode);
+    if (!mode_b) {
+        errno = EINVAL;
         return NULL;
     }
 
+    // if w+ passed as mode, we have to clear file contents (using w+)
+    //, otherwise we open with a+ mode to read and write
+    const char* archive_open_mode;
+    if (mode_b & mode_bit::w)
+        archive_open_mode = "w+";
+    else
+        archive_open_mode = "a+";
+
+    auto file = fopen(fp, archive_open_mode);
+    if (file == nullptr)
+        return NULL;
+
+    return new compio_archive(file, mode_b, c);
+  /*
     fseek(archive->file, 0, SEEK_END);
     long fsize = ftell(archive->file);
     if (fsize == 0) {
@@ -57,6 +70,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
     archive->allocator = new compio::block_allocator(archive);
 
     return archive;
+    */
 }
 
 compio_file* compio_open_file(const char* name, compio_archive* archive) {
@@ -65,15 +79,15 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
         return NULL;
     }
 
-    auto file_table_item = archive->header->ftable.find(name);
+    auto file_table_item = readonly(archive->header, compio::header)->ftable.find(name);
     if (file_table_item == nullptr) {
-        if (archive->mode_b & write_bit) {
+        // if mode != "r"
+        if (!((archive->mode_b & mode_bit::r) && (!(archive->mode_b & mode_bit::plus)))) {
             file_table_item = archive->header->ftable.add(name);
             if (file_table_item == NULL) {
                 errno = ENFILE;
                 return NULL;
             }
-            flush_header(archive);
         } else {
             errno = EROFS;
             return NULL;
@@ -84,7 +98,7 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
 
     file->size = file_table_item->size;
 
-    if (archive->mode_b & 0b100)
+    if (archive->mode_b & mode_bit::a)
         file->cursor = file->size;
     else
         file->cursor = 0;
@@ -110,11 +124,20 @@ int compio_close_file(compio_file* file) {
 }
 
 int compio_close_archive(compio_archive* archive) {
+    // destroy and flush header before closing the file
+    archive->header = {};
+    
+    // do the same with btree node cache
+    delete archive->index;
+
+    // and finally we close the file
     if (fclose(archive->file))
         return -1;
-    delete archive->header;
-    delete archive->index;
+
+    //delete archive->header;
+    //delete archive->index;
     delete archive->allocator;
+
     delete archive;
     return 0;
 }
@@ -157,7 +180,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     // get range of blocks, that intersect our workspace
     auto range = get_range_in_file(file, size);
 
-    // find file in file table (it must exist, because compio_file was 
+    // find file in file table (it must exist, because compio_file was
     // created with compio_open_file, which adds file into file table)
     auto file_table_item = file->archive->header->ftable.find(file->name);
     uint64_t fsize = file_table_item->size;
@@ -178,19 +201,21 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     std::vector<uint8_t> tmp_buf;
     tmp_buf.reserve(config->block_size);
     for (const auto& [key, val] : range) {
-        storage_block block(file->archive->file, val.addr, file->archive->config->swap_endianness);
+        const smart_infile_object<storage_block> block(file->archive->file, val.addr);
 
         // copy compressed data from block into tmp_buf
-        tmp_buf.resize(block.size);
-        std::copy(block.data.begin(), block.data.end(), tmp_buf.begin());
+        tmp_buf.resize(block->size);
+        std::copy(block->data.begin(), block->data.end(), tmp_buf.begin());
 
         // decompress data from tmp_buf into big buf
-        uint64_t dst_size = block.original_size;
+        uint64_t dst_size = block->original_size;
         config->compressor.decompress(p_buf, &dst_size, tmp_buf.data(), tmp_buf.size());
         p_buf += dst_size;
 
         // remove this block from file (we will add modified block as a new one)
-        file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block.size);
+        free_block(file->archive, val.addr, STORAGE_BLOCK_METASIZE + block->size);
+
+        //file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block.size);
     }
 
     // modify uncompressed data in buffer with data from user
@@ -203,46 +228,54 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         uint64_t uncompressed_size = std::min(end - b_start, (uint64_t)config->block_size);
         p_buf = buf + offset;
 
-        storage_block block(uncompressed_size);
-        block.original_size = uncompressed_size;
-        block.index_key = get_key(file->name, b_start);
-        int ret =
-            config->compressor.compress(block.data.data(), &block.size, p_buf, uncompressed_size);
+        std::vector<uint8_t> block_data(uncompressed_size);
+        uint64_t size;
+
+        auto index_key = get_key(file->name, b_start);
+        int ret = config->compressor.compress(block_data.data(), &size, p_buf, uncompressed_size);
         if (ret != 0) {
             // if compressed size > uncompressed size, write uncompressed data instead
-            block.is_compressed = false;
-            block.size = uncompressed_size;
-            std::copy(p_buf, p_buf + uncompressed_size, block.data.begin());
+            size = uncompressed_size;
+            block_data.resize(uncompressed_size);
+            std::copy(p_buf, p_buf + uncompressed_size, block_data.begin());
+        } else {
+            // remove unneccesary bytes from buffer
+            block_data.resize(size);
         }
 
-        // remove unneccesary bytes from buffer
-        block.data.resize(block.size);
-
         // get new address in archive file and write block into it
-        uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + block.size);
-        block.write(file->archive->file, addr, file->archive->config->swap_endianness);
+        uint64_t addr = allocate_block(file->archive, STORAGE_BLOCK_METASIZE + size);
+
+        smart_infile_object<storage_block> block(file->archive->file, addr,
+                                                 new storage_block(std::move(block_data)));
+        block->original_size = uncompressed_size;
+        block->is_compressed = ret == 0;
+        block->index_key = index_key;
+//        uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + block.size);
+//        block.write(file->archive->file, addr, file->archive->config->swap_endianness);
 
         tree_val new_value = {addr, uncompressed_size};
         // if block already in tree, just update it, otherwise insert
         if (std::find_if(range.begin(), range.end(),
                          [&block](const std::pair<tree_key, tree_val>& x) {
-                             return x.first == block.index_key;
+                             return x.first == block->index_key;
                          }) != range.end())
-            file->archive->index->update(block.index_key, new_value);
+            file->archive->index->update(block->index_key, new_value);
         else
-            file->archive->index->insert(block.index_key, new_value);
+            file->archive->index->insert(block->index_key, new_value);
     }
 
     delete[] buf;
     compio_seek(file, size, COMP_SEEK_CUR);
     file_table_item->size = std::max(file_table_item->size, end);
-    flush_header(file->archive);
     return size;
 }
 
 uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
-    const auto file_table_item = file->archive->header->ftable.find(file->name);
-    const uint64_t fsize = file_table_item->size;
+    auto file_table_item = readonly(file->archive->header, header)->ftable.find(file->name);
+    uint64_t fsize = file_table_item->size;
+//    const auto file_table_item = file->archive->header->ftable.find(file->name);
+//    const uint64_t fsize = file_table_item->size;
 
     // if cursor is after end of file, we can't read anything
     size = std::min(size, fsize - file->cursor);
@@ -268,9 +301,20 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     tmp_buf.reserve(config->block_size);
 
     for (auto& [key, val] : range) {
-        storage_block block(file->archive->file, val.addr, file->archive->config->swap_endianness);
+        const smart_infile_object<storage_block> block(file->archive->file, val.addr);
 
         // index of last byte we need to read, in uncompressed block
+        uint64_t end = std::min(offset + remaining_size, (int64_t)(val.size));
+        // number of bytes copied into ptr on this iteration
+        uint64_t bytes_copied = 0;
+        if (end > offset) {
+            tmp_buf.resize(block->original_size);
+
+            // decompress data from block data into tmp_buf
+            uint64_t dst_size = block->original_size;
+            config->compressor.decompress(tmp_buf.data(), &dst_size, block->data.data(),
+                                          block->data.size());
+  /*
         const uint64_t end = std::min(static_cast<uint64_t>(current_offset + remaining_size),
                       static_cast<uint64_t>(val.size));
 
@@ -280,6 +324,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             uint64_t dst_size = block.original_size;
             config->compressor.decompress(tmp_buf.data(), &dst_size,
                                         block.data.data(), block.size);
+  */                                        
 
             const auto bytes_to_copy = static_cast<int64_t>(end - static_cast<uint64_t>(current_offset));
             std::copy_n(tmp_buf.begin() + current_offset, bytes_to_copy, p_buf);
@@ -287,7 +332,11 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             remaining_size -= bytes_to_copy;
         }
 
-        current_offset = std::max<int64_t>(0, current_offset - static_cast<int64_t>(val.size));
+        offset -= val.size;
+        if (offset < 0)
+            offset = 0;
+        remaining_size -= bytes_copied;
+  //      current_offset = std::max<int64_t>(0, current_offset - static_cast<int64_t>(val.size));
     }
 
     return static_cast<uint64_t>(static_cast<int64_t>(size) - remaining_size);

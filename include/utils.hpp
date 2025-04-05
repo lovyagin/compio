@@ -6,13 +6,9 @@
 
 namespace compio {
 
-const uint8_t read_bit = 0b001;
-const uint8_t write_bit = 0b010;
-const uint8_t append_bit = 0b100;
+enum mode_bit { r = 0b0001, w = 0b0010, a = 0b0100, plus = 0b1000 };
 
 uint8_t parse_mode(const char* mode);
-
-void flush_header(compio_archive* archive);
 
 tree_key operator+(tree_key x, uint64_t size);
 

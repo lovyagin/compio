@@ -7,31 +7,66 @@
 
 using namespace compio;
 
-uint64_t btree::allocate_node() const {
-    return archive->allocator->allocate(INDEX_NODE_SIZE(degree));
+#define RO(x) readonly(x, index_node)
+
+node_reader::node_reader(FILE* file, int tree_degree, int max_size)
+    : file(file),
+      tree_degree(tree_degree),
+      cache(max_size) {}
+
+shared_node node_reader::read_node(uint64_t addr) {
+    if (!cache.exists(addr)) {
+        // cache miss
+
+        // TODO: new smart_infile_object constructor for this type of case (infile_object without
+        // default constructor)
+        auto result = shared_node(file, addr, new index_node(tree_degree));
+        result.read();     // read from file (because constructor with obj& does not read)
+        result.unmodify(); // constructor with obj& sets modified=true
+        
+        cache.put(addr, result);
+
+        return result;
+    } else {
+        // cache hit
+        return cache.get(addr);
+    }
 }
+
+shared_node node_reader::create_node(uint64_t addr) {
+    return shared_node(file, addr, new index_node(tree_degree));
+}
+
+void node_reader::remove_node(shared_node node) {
+    if (!cache.exists(node.addr())) {
+        fprintf(stderr, "warning: trying to remove non-existing index node\n");
+        return;
+    }
+    cache.remove(node.addr());
+}
+
+uint64_t btree::allocate_node() const { return allocate_block(archive, INDEX_NODE_SIZE(degree)); }
 
 void btree::free_node(shared_node node) const {
-    node.remove();
-    archive->allocator->deallocate(node.addr(), INDEX_NODE_SIZE(degree));
+    reader.remove_node(node);
+    free_block(archive, node.addr(), INDEX_NODE_SIZE(degree));
 }
 
-shared_node btree::read_node(uint64_t addr) const { return {archive->file, addr, archive->config->swap_endianness, degree}; }
+shared_node btree::read_node(uint64_t addr) const { return reader.read_node(addr); }
 
-shared_node btree::create_node() const {
-    return {archive->file, allocate_node(), new index_node(degree), archive->config->swap_endianness};
-}
+shared_node btree::create_node() const { return reader.create_node(allocate_node()); }
 
-shared_node btree::read_root() const { return read_node(archive->header->index_root); }
+shared_node btree::read_root() const { return read_node(readonly(archive->header, header)->index_root); }
 
-btree::btree(compio_archive* archive) : archive(archive), degree(archive->config->b_tree_degree) {
-    if (archive->header->index_root != 0)
+btree::btree(compio_archive* archive)
+    : archive(archive),
+      degree(archive->config->b_tree_degree),
+      reader(archive->file, degree, archive->config->cache_size) {
+    if (readonly(archive->header, header)->index_root != 0)
         return;
 
     shared_node root = create_node();
-    root.modify();
     archive->header->index_root = root.addr();
-    flush_header(archive);
 }
 
 void btree::split_child(shared_node parent, shared_node child, const int index) const {
@@ -188,7 +223,6 @@ void btree::insert(const tree_key key, const tree_val value) {
         split_child(new_root, root, 0);
         insert_nonfull(new_root, key, value);
         archive->header->index_root = new_root.addr();
-        flush_header(archive);
     } else {
         insert_nonfull(root, key, value);
     }
@@ -260,13 +294,13 @@ void btree::remove(const tree_key key) {
     if (RO(root)->num_keys == 0) {
         if (!RO(root)->is_leaf) {
             archive->header->index_root = RO(root)->children[0];
-            flush_header(archive);
             free_node(root);
         }
     }
 }
 
-void btree::get_range(const tree_key key_min, const tree_key key_max, std::vector<std::pair<tree_key, tree_val>>& result) {
+void btree::get_range(tree_key key_min, tree_key key_max,
+                      std::vector<std::pair<tree_key, tree_val>>& result) {
     if (key_max <= key_min)
         return;
     get_range_in_node(read_root(), key_min, key_max, result);

@@ -1,11 +1,3 @@
-#ifdef _MSC_VER
-#include <intrin.h>
-#define __bswap_64(x) _byteswap_uint64(x)
-#define __bswap_32(x) _byteswap_ulong(x)
-#else
-#include <byteswap.h>
-#endif
-
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
@@ -15,15 +7,99 @@
 
 using namespace compio;
 
+#define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
+#define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
+
 header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable() {}
 
-header::header(FILE* file, bool swap_endianness) {
-    fseek(file, 0, SEEK_SET);
-    int count = fread(this, sizeof(header), 1, file);
-    if (count < 1)
-        throw std::runtime_error("Failed to read header from file");
-    if (swap_endianness)
-        _swap_endianness(false);
+void header::read_from(FILE* file, uint64_t addr) {
+    fprintf(stderr, "[R][header]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
+    lendian_fread_member(magic_number, file);
+    lendian_fread_member(index_root, file);
+    lendian_fread_member(file_size, file);
+    lendian_fread_member(ftable.n_files, file);
+    for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
+        lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
+        lendian_fread_member(ftable.files[i].size, file);
+    }
+}
+
+void header::write_to(FILE* file, uint64_t addr) const {
+    fprintf(stderr, "[W][header]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
+    lendian_fwrite_member(magic_number, file);
+    lendian_fwrite_member(index_root, file);
+    lendian_fwrite_member(file_size, file);
+    lendian_fwrite_member(ftable.n_files, file);
+    for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
+        lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
+        lendian_fwrite_member(ftable.files[i].size, file);
+    }
+}
+
+void index_node::read_from(FILE* file, uint64_t addr) {
+    fprintf(stderr, "[R][index_node]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
+    lendian_fread_member(is_leaf, file);
+    lendian_fread_member(num_keys, file);
+    keys.resize(2 * tree_degree - 1);
+    values.resize(2 * tree_degree - 1);
+    children.resize(2 * tree_degree);
+    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
+        lendian_fread_member(keys[i].hash, file);
+        lendian_fread_member(keys[i].pos, file);
+    }
+    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
+        lendian_fread_member(values[i].addr, file);
+        lendian_fread_member(values[i].size, file);
+    }
+    lendian_fread(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
+}
+
+void index_node::write_to(FILE* file, uint64_t addr) const {
+    fprintf(stderr, "[W][index_node]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
+    lendian_fwrite_member(is_leaf, file);
+    lendian_fwrite_member(num_keys, file);
+    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
+        lendian_fwrite_member(keys[i].hash, file);
+        lendian_fwrite_member(keys[i].pos, file);
+    }
+    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
+        lendian_fwrite_member(values[i].addr, file);
+        lendian_fwrite_member(values[i].size, file);
+    }
+    lendian_fwrite(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
+}
+
+void storage_block::read_from(FILE* file, uint64_t addr) {
+    fprintf(stderr, "[R][storage_block]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
+    lendian_fread_member(is_compressed, file);
+    lendian_fread_member(size, file);
+    lendian_fread_member(original_size, file);
+    lendian_fread_member(index_key.hash, file);
+    lendian_fread_member(index_key.pos, file);
+    data.resize(size);
+    lendian_fread(data.data(), 1, size, file);
+}
+
+void storage_block::write_to(FILE* file, uint64_t addr) const {
+    fprintf(stderr, "[W][storage_block]addr=%llu\n", addr);
+    if (fseek(file, addr, SEEK_SET))
+        fprintf(stderr, "warning: fseek failed\n");
+    lendian_fwrite_member(is_compressed, file);
+    lendian_fwrite_member(size, file);
+    lendian_fwrite_member(original_size, file);
+    lendian_fwrite_member(index_key.hash, file);
+    lendian_fwrite_member(index_key.pos, file);
+    lendian_fwrite(data.data(), 1, size, file);
 }
 
 index_node::index_node(int tree_degree)
@@ -34,6 +110,9 @@ index_node::index_node(int tree_degree)
       values(2 * tree_degree - 1),
       children(2 * tree_degree) {}
 
+storage_block::storage_block() {}
+
+  /*
 index_node::index_node(FILE* file, uint64_t addr, bool swap_endianness, int tree_degree) : index_node(tree_degree) {
     if (fseek(file, addr, SEEK_SET))
         throw std::runtime_error("Invalid addr while reading index node from file");
@@ -66,30 +145,33 @@ index_node::index_node(FILE* file, uint64_t addr, bool swap_endianness, int tree
         printf("%llu, ", children[i]);
     printf("\n");
 }
+*/
 
-storage_block::storage_block(uint64_t size)
+
+storage_block::storage_block(std::vector<uint8_t>&& data)
     : is_compressed(0),
-      size(size),
+      size(data.size()),
       original_size(0),
       index_key({0, 0}),
-      data(size) {}
+      data(data) {}
 
-storage_block::storage_block(FILE* file, uint64_t addr, bool swap_endianness) {
-    if (fseek(file, addr, SEEK_SET))
-        throw std::runtime_error("Invalid addr while reading storage block from file");
+storage_block::storage_block(uint64_t size) : storage_block(std::vector<uint8_t>(size)) {}
 
-    if (fread(this, STORAGE_BLOCK_METASIZE, 1, file) < 1)
-        throw std::runtime_error("Failed to read storage block metadata from file");
+files_table::files_table() : n_files(0) {}
 
-    if (swap_endianness)
-        _swap_endianness(false);
-
+const files_table::file* files_table::find(const char* name) const {
+    for (int i = 0; i < n_files; ++i)
+        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
+            return &files[i];
+    return NULL;
+/*
     data.resize(size);
     int count = fread(data.data(), sizeof(uint8_t), size, file);
     if (count < size)
         throw std::runtime_error("Failed to read storage block data from file");
+*/        
 }
-
+/*
 void header::write(FILE* file, bool swap_endianness) {
     fseek(file, 0, SEEK_SET);
     if (swap_endianness)
@@ -148,9 +230,9 @@ void storage_block::write(FILE* file, uint64_t addr, bool swap_endianness) {
 
     if (fwrite(data.data(), sizeof(uint8_t), size, file) < size)
         throw std::runtime_error("Failed to write storage block data to file");
-}
+*/
 
-files_table::files_table() : n_files(0) { memset(files, 0, sizeof(files)); }
+}
 
 files_table::file* files_table::find(const char* name) {
     for (int i = 0; i < n_files; ++i)
@@ -174,42 +256,4 @@ int files_table::remove(const char* name) {
         }
     }
     return -1;
-}
-
-void files_table::_swap_endianness(bool from_valid) {
-    if (!from_valid)
-        n_files = __bswap_64(n_files);
-    for (int i = 0; i < n_files; ++i)
-        files[i].size = __bswap_64(files[i].size);
-    if (from_valid)
-        n_files = __bswap_64(n_files);
-}
-
-void header::_swap_endianness(bool from_valid) {
-    magic_number = __bswap_32(magic_number);
-    file_size = __bswap_64(file_size);
-    index_root = __bswap_64(index_root);
-    ftable._swap_endianness(from_valid);
-}
-
-void index_node::_swap_endianness(bool from_valid) {
-    num_keys = __bswap_32(num_keys);
-    for (int i = 0; i < keys.size(); ++i) {
-        keys[i].hash = __bswap_64(keys[i].hash);
-        keys[i].pos = __bswap_64(keys[i].pos);
-    }
-    for (int i = 0; i < values.size(); ++i) {
-        values[i].addr = __bswap_64(values[i].addr);
-        values[i].size = __bswap_64(values[i].size);
-    }
-    for (int i = 0; i < children.size(); ++i) {
-        children[i] = __bswap_64(children[i]);
-    }
-}
-
-void storage_block::_swap_endianness(bool from_valid) {
-    size = __bswap_64(size);
-    original_size = __bswap_64(original_size);
-    index_key.hash = __bswap_64(index_key.hash);
-    index_key.pos = __bswap_64(index_key.pos);
 }
