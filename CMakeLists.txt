@@ -58,6 +58,7 @@ target_include_directories(compio_lib PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}
 )
+
 find_package(ZLIB REQUIRED)
 if(ZLIB_FOUND)
     target_link_libraries(compio PRIVATE ZLIB::ZLIB)
@@ -70,6 +71,10 @@ if(TARGET unofficial::cunit::cunit)
     target_link_libraries(compio PRIVATE unofficial::cunit::cunit)
 else()
     message(FATAL_ERROR "CUnit not found. Please install it using your package manager.")
+endif()
+
+if (MSVC)
+    target_compile_definitions(compio PRIVATE _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING)
 endif()
 
 if (MSVC)
