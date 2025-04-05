@@ -230,9 +230,9 @@ void storage_block::write(FILE* file, uint64_t addr, bool swap_endianness) {
 
     if (fwrite(data.data(), sizeof(uint8_t), size, file) < size)
         throw std::runtime_error("Failed to write storage block data to file");
+}
 */
 
-}
 
 files_table::file* files_table::find(const char* name) {
     for (int i = 0; i < n_files; ++i)

@@ -365,9 +365,9 @@ namespace compio {
 
     block_allocator::block_allocator(compio_archive* archive)
     : archive_(archive),
-    blocks_manager_(archive->header ? &archive->header->file_size : nullptr) {
+    blocks_manager_(archive->header.ptr() ? &archive->header->file_size : nullptr) {
         assert(archive_ != nullptr);
-        assert(archive_->header != nullptr);
+        assert(archive_->header.ptr() != nullptr);
     }
 
     uint64_t block_allocator::allocate(uint64_t size) {
@@ -386,7 +386,7 @@ namespace compio {
     }
 
     void block_allocator::deallocate(uint64_t offset, uint64_t size) {
-        if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) return;
+        if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header.ptr()) return;
 
         if (offset + size > archive_->header->file_size) return;
 
@@ -477,7 +477,7 @@ namespace compio {
         *blocks_manager_.get_file_size_ptr() = new_offset;
         blocks_manager_.add_free_block(new_offset, UINT64_MAX - new_offset);
 
-        flush_header(archive_);
+//        flush_header(archive_);
         last_fragmentation_ = blocks_manager_.calculate_fragmentation();
         printf("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
     }

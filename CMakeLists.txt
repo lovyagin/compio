@@ -16,13 +16,15 @@ add_executable(compio
         src/btree.cpp
         src/file.cpp
         src/compressor.c
+        src/infile_object.cpp
+        src/utils.cpp
 )
 
 target_sources(compio PRIVATE
-        src/block.c
-        src/compressor.c
-        src/storage.c
-        src/btree.c
+#        src/block.c
+#        src/compressor.c
+#        src/storage.c
+#        src/btree.c
 
         src/btree.cpp
         src/allocator.cpp
@@ -34,12 +36,15 @@ target_sources(compio PRIVATE
 )
 
 add_library(compio_lib STATIC
-        src/block.c
-        src/btree.c
+#        src/block.c
+#        src/btree.c
+        src/compio.cpp
+        src/allocator.cpp
         src/btree.cpp
         src/file.cpp
+        src/compressor.c
+        src/infile_object.cpp
         src/utils.cpp
-        src/allocator.cpp
 )
 
 target_link_libraries(compio PRIVATE compio_lib)
@@ -63,7 +68,7 @@ else()
     message(FATAL_ERROR "ZLIB not found. Please install it using vcpkg.")
 endif()
 
-if(WIN32)
+#if(WIN32)
     # Cunit for windows
     find_package(unofficial-cunit CONFIG REQUIRED)
     if(TARGET unofficial::cunit::cunit)
@@ -72,18 +77,18 @@ if(WIN32)
         message(FATAL_ERROR "CUnit not found. Please install it using vcpkg.")
     endif()
 
-elseif(UNIX)
+#elseif(UNIX)
     # Cunit for Linux/MacOS
-    find_package(CUnit REQUIRED)
-    if(TARGET CUnit)
-        target_link_libraries(compio PRIVATE CUnit)
-    else()
-        message(FATAL_ERROR "CUnit not found. Please install it using your package manager.")
-    endif()
+#    find_package(CUnit REQUIRED)
+#    if(TARGET CUnit)
+#        target_link_libraries(compio PRIVATE CUnit)
+#    else()
+#        message(FATAL_ERROR "CUnit not found. Please install it using your package manager.")
+#    endif()
 
-else()
-    message(FATAL_ERROR "Unsupported platform")
-endif()
+#else()
+#    message(FATAL_ERROR "Unsupported platform")
+#endif()
 
 if (MSVC)
     target_compile_definitions(compio PRIVATE _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING)

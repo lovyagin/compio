@@ -213,9 +213,9 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         p_buf += dst_size;
 
         // remove this block from file (we will add modified block as a new one)
-        free_block(file->archive, val.addr, STORAGE_BLOCK_METASIZE + block->size);
+        //free_block(file->archive, val.addr, STORAGE_BLOCK_METASIZE + block->size);
 
-        //file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block.size);
+        file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block->size);
     }
 
     // modify uncompressed data in buffer with data from user
@@ -244,15 +244,17 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         }
 
         // get new address in archive file and write block into it
-        uint64_t addr = allocate_block(file->archive, STORAGE_BLOCK_METASIZE + size);
+//        uint64_t addr = allocate_block(file->archive, STORAGE_BLOCK_METASIZE + size);
+        uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + size);
+//        block.write(file->archive->file, addr, file->archive->config->swap_endianness);
 
         smart_infile_object<storage_block> block(file->archive->file, addr,
                                                  new storage_block(std::move(block_data)));
         block->original_size = uncompressed_size;
         block->is_compressed = ret == 0;
         block->index_key = index_key;
-//        uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + block.size);
-//        block.write(file->archive->file, addr, file->archive->config->swap_endianness);
+
+
 
         tree_val new_value = {addr, uncompressed_size};
         // if block already in tree, just update it, otherwise insert
@@ -304,10 +306,10 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
         const smart_infile_object<storage_block> block(file->archive->file, val.addr);
 
         // index of last byte we need to read, in uncompressed block
-        uint64_t end = std::min(offset + remaining_size, (int64_t)(val.size));
+        uint64_t end = std::min(current_offset + remaining_size, (int64_t)(val.size));
         // number of bytes copied into ptr on this iteration
         uint64_t bytes_copied = 0;
-        if (end > offset) {
+        if (end > current_offset) {
             tmp_buf.resize(block->original_size);
 
             // decompress data from block data into tmp_buf
@@ -332,9 +334,9 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             remaining_size -= bytes_to_copy;
         }
 
-        offset -= val.size;
-        if (offset < 0)
-            offset = 0;
+        current_offset -= val.size;
+        if (current_offset < 0)
+            current_offset = 0;
         remaining_size -= bytes_copied;
   //      current_offset = std::max<int64_t>(0, current_offset - static_cast<int64_t>(val.size));
     }

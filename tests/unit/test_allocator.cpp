@@ -9,8 +9,8 @@ namespace compio {
 
 class MockArchive : public compio_archive {
 public:
-    MockArchive() {
-        header = new struct header();
+    MockArchive():compio_archive(0,0,0) {
+        header = smart_infile_object<compio::header>(0, 0, new struct header());
         header->file_size = sizeof(struct header);
 
         compio_config* mutable_config = new compio_config();
@@ -26,7 +26,7 @@ public:
     }
 
     ~MockArchive() {
-        delete header;
+        //delete header;
         delete config;
     }
 };

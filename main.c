@@ -4,6 +4,7 @@
 #include <string.h>
 
 int main(int argc, char* argv[]) {
+/*
     compio_config config;
     compio_build_default_config(&config);
     config.b_tree_degree = 3;
@@ -55,6 +56,6 @@ int main(int argc, char* argv[]) {
         compio_close_file(file);
         compio_close_archive(archive);
     }
-
+*/
     return 0;
 }

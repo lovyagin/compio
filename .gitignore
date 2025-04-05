@@ -89,3 +89,8 @@ tests/Makefile
 
 .vscode/
 .gdb_history
+
+Makefile
+compio
+docs/html/**
+tests/compio_gtest
