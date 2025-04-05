@@ -87,22 +87,22 @@ public:
     uint64_t search_node(tree_key key);
 
     void insert_nonfull(shared_node node, tree_key key, tree_val value);
-    void split_child(shared_node parent, shared_node child, int index);
-    void merge_children(shared_node parent, int idx);
-    void borrow_from_prev(shared_node parent, int idx);
-    void borrow_from_next(shared_node parent, int idx);
-    tree_key find_max_in_node(shared_node node);
-    tree_key find_min_in_node(shared_node node);
+    void split_child(shared_node parent, shared_node child, int index) const;
+    void merge_children(shared_node parent, int idx) const;
+    void borrow_from_prev(shared_node parent, int idx) const;
+    void borrow_from_next(shared_node parent, int idx) const;
+    tree_key find_max_in_node(const shared_node& node) const;
+    tree_key find_min_in_node(const shared_node& node) const;
     void remove_node(shared_node node, tree_key key);
-    void get_range_in_node(shared_node node, tree_key key_min, tree_key key_max,
+    void get_range_in_node(const shared_node& node, tree_key key_min, tree_key key_max,
                            std::vector<std::pair<tree_key, tree_val>>& result);
     bool update_in_node(shared_node node, tree_key key, tree_val new_value);
 
-    uint64_t allocate_node();
-    void free_node(shared_node node);
-    shared_node create_node();
-    shared_node read_node(uint64_t addr);
-    shared_node read_root();
+    uint64_t allocate_node() const;
+    void free_node(shared_node node) const;
+    shared_node create_node() const;
+    shared_node read_node(uint64_t addr) const;
+    shared_node read_root() const;
 };
 
 } // namespace compio

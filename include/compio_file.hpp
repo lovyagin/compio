@@ -6,7 +6,7 @@
 #include "file.hpp"
 
 // forward declaration
-namespace compio { class btree; }
+namespace compio { struct btree; }
 
 /**
  * @brief Opened archive
@@ -23,6 +23,7 @@ struct compio_archive {
      * contents)
      */
     uint8_t mode_b;
+    compio::block_allocator* allocator;
 };
 
 /**

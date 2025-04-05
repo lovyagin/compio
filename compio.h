@@ -47,7 +47,21 @@ typedef struct compio_compressor {
  *
  * @param result
  */
+#ifdef __cplusplus
+extern "C" {
+#endif
 void compio_build_dummy_compressor(compio_compressor* result);
+
+#ifdef __cplusplus
+}
+#endif
+
+typedef enum {
+    COMPIO_ALLOC_FIRST_FIT,
+    COMPIO_ALLOC_BEST_FIT,
+    COMPIO_ALLOC_WORST_FIT,
+    COMPIO_ALLOC_NEXT_FIT
+} compio_allocation_strategy;
 
 /**
  * @brief Configuration
@@ -67,6 +81,9 @@ typedef struct {
      * sparse files)
      */
     bool fill_holes_with_zeros;
+
+    compio_allocation_strategy allocation_strategy;
+    uint8_t fragmentation_threshold;
 } compio_config;
 
 /**

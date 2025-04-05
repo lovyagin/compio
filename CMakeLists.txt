@@ -11,6 +11,11 @@ set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.c
 
 add_executable(compio
         main.c
+        src/compio.cpp
+        src/allocator.cpp
+        src/btree.cpp
+        src/file.cpp
+        src/compressor.c
 )
 
 target_sources(compio PRIVATE
@@ -28,10 +33,12 @@ target_sources(compio PRIVATE
         archivers/zlib_adapter.c
 )
 
-add_library(compio_lib
+add_library(compio_lib STATIC
         src/block.c
         src/btree.c
-
+        src/btree.cpp
+        src/file.cpp
+        src/utils.cpp
         src/allocator.cpp
 )
 
@@ -41,6 +48,8 @@ target_include_directories(compio PRIVATE
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}
 )
+
+add_library(compio::compio_lib ALIAS compio_lib)
 
 target_include_directories(compio_lib PUBLIC
         ${CMAKE_SOURCE_DIR}/include
