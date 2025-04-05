@@ -28,6 +28,8 @@ struct compio_archive {
     uint8_t mode_b;
 
     compio_archive(FILE* file, uint8_t mode_b, const compio_config* config);
+
+    compio::block_allocator* allocator;
 };
 
 /**

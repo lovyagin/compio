@@ -1,9 +1,10 @@
 #include <errno.h>
 #include <string.h>
+#include <stdint.h>
 
 #include "compio.h"
 
-int dummy_compress(void* dst, size_t* dst_size, const void* src, size_t src_size) {
+int dummy_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     if (*dst_size < src_size) {
         errno = ENOBUFS;
         return -1;
@@ -13,8 +14,7 @@ int dummy_compress(void* dst, size_t* dst_size, const void* src, size_t src_size
     return 0;
 }
 
-int dummy_decompress(void* dst, size_t* dst_size, const void* src, size_t src_size) {
-    // same as compress: just copy contents
+int dummy_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     return dummy_compress(dst, dst_size, src, src_size);
 }
 

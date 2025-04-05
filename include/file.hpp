@@ -63,7 +63,8 @@ struct header : public infile_object {
     uint64_t index_root;  /**< Address of B-Tree root in file */
     uint64_t file_size;
     files_table ftable; /**< Files table */
-
+    uint64_t allocator_state_offset;
+    uint64_t allocator_state_size;
     /**
      * @brief Construct default header
      *
@@ -73,6 +74,26 @@ struct header : public infile_object {
     void read_from(FILE* file, uint64_t addr) override;
     void write_to(FILE* file, uint64_t addr) const override;
 };
+
+/**
+ * @brief Key for B-Tree index entries
+ *
+ * Uniquely identifies a data block by combining filename hash
+ * and position in the uncompressed file.
+ */
+//struct tree_key {
+//    uint64_t hash; /**< 64-bit hash of the internal filename */
+//    uint64_t pos;  /**< Starting byte offset in uncompressed file */
+//};
+
+/**
+ * @brief Type for value in btree
+ *
+ */
+//typedef struct {
+//    uint64_t addr; /**< Address of storage_block in archive file */
+//    uint64_t size; /**< Original size of uncompressed block */
+//} tree_val;
 
 /**
  * @brief B-Tree (index) node

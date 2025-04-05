@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cstring>
+#include <cinttypes>
 #include <stdexcept>
 
 #include "file.hpp"
@@ -111,6 +112,42 @@ index_node::index_node(int tree_degree)
 
 storage_block::storage_block() {}
 
+  /*
+index_node::index_node(FILE* file, uint64_t addr, bool swap_endianness, int tree_degree) : index_node(tree_degree) {
+    if (fseek(file, addr, SEEK_SET))
+        throw std::runtime_error("Invalid addr while reading index node from file");
+
+    if (fread(this, INDEX_NODE_METASIZE, 1, file) < 1)
+        throw std::runtime_error("Failed to read index node metadata from file");
+
+    int count = 0;
+    count += fread(keys.data(), sizeof(tree_key), keys.size(), file);
+    count += fread(values.data(), sizeof(tree_val), values.size(), file);
+    count += fread(children.data(), sizeof(uint64_t), children.size(), file);
+
+    if (count < keys.size() + values.size() + children.size())
+        throw std::runtime_error("Failed to read index node data from file");
+
+    if (swap_endianness)
+        _swap_endianness(false);
+
+    printf("[LOAD] ADDR: %llu\n", addr);
+    printf("\tkeys: ");
+    for (int i = 0; i < num_keys; ++i)
+        printf("%llu-%llu, ", keys[i].hash, keys[i].pos);
+    printf("\n");
+    printf("\tvalues: ");
+    for (int i = 0; i < num_keys; ++i)
+        printf("%llu(%llu), ", values[i].addr, values[i].size);
+    printf("\n");
+    printf("\tchildren: ");
+    for (int i = 0; i <= num_keys; ++i)
+        printf("%llu, ", children[i]);
+    printf("\n");
+}
+*/
+
+
 storage_block::storage_block(std::vector<uint8_t>&& data)
     : is_compressed(0),
       size(data.size()),
@@ -127,6 +164,74 @@ const files_table::file* files_table::find(const char* name) const {
         if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
             return &files[i];
     return NULL;
+/*
+    data.resize(size);
+    int count = fread(data.data(), sizeof(uint8_t), size, file);
+    if (count < size)
+        throw std::runtime_error("Failed to read storage block data from file");
+*/        
+}
+/*
+void header::write(FILE* file, bool swap_endianness) {
+    fseek(file, 0, SEEK_SET);
+    if (swap_endianness)
+        _swap_endianness(true);
+    fwrite(this, sizeof(header), 1, file);
+    if (swap_endianness)
+        _swap_endianness(false);
+}
+
+void index_node::write(FILE* file, uint64_t addr, bool swap_endianness) {
+    if (fseek(file, addr, SEEK_SET))
+        throw std::runtime_error("Invalid addr while reading index node from file");
+
+    printf("[SAVE] ADDR: %llu\n", addr);
+    printf("\tkeys: ");
+    for (int i = 0; i < num_keys; ++i)
+        printf("%llu-%llu, ", keys[i].hash, keys[i].pos);
+    printf("\n");
+    printf("\tvalues: ");
+    for (int i = 0; i < num_keys; ++i)
+        printf("%llu(%llu), ", values[i].addr, values[i].size);
+    printf("\n");
+    printf("\tchildren: ");
+    for (int i = 0; i <= num_keys; ++i)
+        printf("%llu, ", children[i]);
+    printf("\n");
+
+    if (swap_endianness)
+        _swap_endianness(true);
+
+    if (fwrite(this, INDEX_NODE_METASIZE, 1, file) < 1)
+        throw std::runtime_error("Failed to write index node metadata to file");
+
+    int count = 0;
+    count += fwrite(keys.data(), sizeof(tree_key), 2 * tree_degree - 1, file);
+    count += fwrite(values.data(), sizeof(tree_val), 2 * tree_degree - 1, file);
+    count += fwrite(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
+
+    if (count < keys.size() + values.size() + children.size())
+        throw std::runtime_error("Failed to write index node data to file");
+    
+    if (swap_endianness)
+        _swap_endianness(false);
+}
+
+void storage_block::write(FILE* file, uint64_t addr, bool swap_endianness) {
+    if (fseek(file, addr, SEEK_SET))
+        throw std::runtime_error("Invalid addr while reading storage block from file");
+
+    if (swap_endianness)
+        _swap_endianness(true);
+    if (fwrite(this, STORAGE_BLOCK_METASIZE, 1, file) < 1)
+        throw std::runtime_error("Failed to write storage block metadata to file");
+    if (swap_endianness)
+        _swap_endianness(false);
+
+    if (fwrite(data.data(), sizeof(uint8_t), size, file) < size)
+        throw std::runtime_error("Failed to write storage block data to file");
+*/
+
 }
 
 files_table::file* files_table::find(const char* name) {
