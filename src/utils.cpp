@@ -60,15 +60,9 @@ tree_key get_key(const char* fname, uint64_t pos) {
     auto hashed_fname = hash.sha256_final();
     uint64_t hash_tail;
 
-<<<<<<< HEAD
-    // Исправление: преобразование итератора в указатель
-    memcpy(&hash_tail, hashed_fname.data(), sizeof(uint64_t)); // Если есть .data()
-    // ИЛИ
-    memcpy(&hash_tail, &(*hashed_fname.begin()), sizeof(uint64_t)); // Для итераторов
-=======
+
     memcpy(&hash_tail, hashed_fname.data(), sizeof(uint64_t));
     memcpy(&hash_tail, &(*hashed_fname.begin()), sizeof(uint64_t));
->>>>>>> develop
 
     return {hash_tail, pos};
 }
