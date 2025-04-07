@@ -50,7 +50,6 @@ uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* st
                 "(expected: %llu bytes, actual: %llu bytes)\n",
                 size * nmemb, ret * size);
     }
-    fflush(stream); // debug
     return ret;
 }
 
