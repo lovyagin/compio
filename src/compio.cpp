@@ -185,20 +185,19 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     uint64_t start = (range.size() > 0) ? range[0].first.pos : fsize;
     uint64_t end = file->cursor + size;
     // create buffer for uncompressed data
-    uint8_t* buf = new uint8_t[end - start];
     // if cursor is set after end of file, (eof, cursor) must be
     // filled with zeros, so we initialize buffer with zeros
-    std::fill(buf, buf + (end - start), 0);
+    std::vector<uint8_t> buf(end - start, 0);
 
     auto config = file->archive->config;
     uint64_t n_blocks = (end - start + config->block_size - 1) / config->block_size;
 
-    uint8_t* p_buf = buf;
+    std::vector<uint8_t>::iterator p_buf = buf.begin();
     // temporary buffer for compressed data from one block
     std::vector<uint8_t> tmp_buf;
     tmp_buf.reserve(config->block_size);
     for (const auto& [key, val] : range) {
-        const smart_infile_object<storage_block> block(file->archive->file, val.addr);
+        smart_infile_object<storage_block> block(file->archive->file, val.addr);
 
         // copy compressed data from block into tmp_buf
         tmp_buf.resize(block->size);
@@ -206,28 +205,31 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
         // decompress data from tmp_buf into big buf
         uint64_t dst_size = block->original_size;
-        config->compressor.decompress(p_buf, &dst_size, tmp_buf.data(), tmp_buf.size());
+        config->compressor.decompress(&(*p_buf), &dst_size, tmp_buf.data(), tmp_buf.size());
         p_buf += dst_size;
 
         // remove this block from file (we will add modified block as a new one)
         file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block->size);
+
+        // set removed=true, so it won't flush into file in destructor (smart_infile_object)
+        block.remove();
     }
 
     // modify uncompressed data in buffer with data from user
-    std::copy((uint8_t*)ptr, (uint8_t*)ptr + size, buf + (file->cursor - start));
+    std::copy_n(reinterpret_cast<const uint8_t*>(ptr), size, buf.begin());
 
     for (int i = 0; i < n_blocks; ++i) {
         // splitting uncompressed data into blocks of fixed size
         uint64_t offset = config->block_size * i;
         uint64_t b_start = start + offset;
         uint64_t uncompressed_size = std::min(end - b_start, (uint64_t)config->block_size);
-        p_buf = buf + offset;
+        p_buf = buf.begin() + offset;
 
         std::vector<uint8_t> block_data(uncompressed_size);
         uint64_t size;
 
         auto index_key = get_key(file->name, b_start);
-        int ret = config->compressor.compress(block_data.data(), &size, p_buf, uncompressed_size);
+        int ret = config->compressor.compress(block_data.data(), &size, &(*p_buf), uncompressed_size);
         if (ret != 0) {
             // if compressed size > uncompressed size, write uncompressed data instead
             size = uncompressed_size;
@@ -257,7 +259,6 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             file->archive->index->insert(block->index_key, new_value);
     }
 
-    delete[] buf;
     compio_seek(file, size, COMP_SEEK_CUR);
     file_table_item->size = std::max(file_table_item->size, end);
     return size;
