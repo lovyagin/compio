@@ -94,3 +94,5 @@ Makefile
 compio
 docs/html/**
 tests/compio_gtest
+
+vcpkg/*
