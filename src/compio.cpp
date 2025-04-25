@@ -34,7 +34,13 @@ compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* 
     else
         header = smart_infile_object<compio::header>(file, 0);
 
-    index = new btree(this);
+    // btree constructor is called in compio_open_archive to break 
+    // the dependence cycle (archive -> index -> allocator -> archive)
+    //
+    // so if you use compio_archive constructor directly (without compio_open_archive),
+    // you should call archive->index = new btree(archive) after this constructor call
+    //
+    // index = new btree(this);
 }
 
 compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
