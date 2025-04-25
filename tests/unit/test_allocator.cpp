@@ -4,29 +4,20 @@
 #include <algorithm>
 #include "allocator.hpp"
 #include "compio_file.hpp"
+#include "utils.hpp"
 
-namespace compio {
+using namespace compio;
 
 class MockArchive : public compio_archive {
 public:
-    MockArchive():compio_archive(0,0,0) {
-        header = smart_infile_object<compio::header>(0, 0, new struct header());
-        header->file_size = sizeof(struct header);
+    MockArchive(FILE* file, uint64_t mode_b, const compio_config* config) : compio_archive(file, mode_b, config) {
+        header = smart_infile_object<compio::header>(file, 0, new struct header());
 
-        compio_config* mutable_config = new compio_config();
-        mutable_config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
-        mutable_config->fragmentation_threshold = 30;
-        mutable_config->fill_holes_with_zeros = false;
-
-        config = mutable_config;
-
-        file = nullptr;
         index = nullptr;
         allocator = nullptr;
     }
 
     ~MockArchive() {
-        //delete header;
         delete config;
     }
 };
@@ -37,7 +28,17 @@ protected:
     block_allocator* allocator;
 
     void SetUp() override {
-        archive = new MockArchive();
+        auto file = fopen("test.tmp", "w+");
+        if (!file) {
+            throw std::runtime_error("failed to create/open file for testing");
+        }
+
+        compio_config* mutable_config = new compio_config();
+        mutable_config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+        mutable_config->fragmentation_threshold = 30;
+        mutable_config->fill_holes_with_zeros = false;
+
+        archive = new MockArchive(file, mode_bit::w & mode_bit::r, mutable_config);
         allocator = new block_allocator(archive);
     }
 
@@ -477,5 +478,3 @@ TEST_F(BlockAllocatorTest, RepeatedDeallocation) {
     uint64_t new_offset = allocator->allocate(100);
     EXPECT_NE(new_offset, UINT64_MAX);
 }
-
-} // namespace compio

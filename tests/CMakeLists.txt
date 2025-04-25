@@ -3,8 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 find_package(GTest REQUIRED)
 
 add_executable(compio_gtest
-    # кажется не нужен, потому что подключаем GTest::Main?
-    # test_runner.cpp
+    test_runner.cpp
     unit/test_allocator.cpp
 )
 
