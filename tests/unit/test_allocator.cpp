@@ -24,11 +24,15 @@ public:
 
 class BlockAllocatorTest : public ::testing::Test {
 protected:
+    char fn[L_tmpnam];
+    FILE* file;
     MockArchive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        auto file = fopen("test.tmp", "w+");
+        tmpnam(fn);
+
+        file = fopen(fn, "w+");
         if (!file) {
             throw std::runtime_error("failed to create/open file for testing");
         }
@@ -45,6 +49,9 @@ protected:
     void TearDown() override {
         delete allocator;
         delete archive;
+
+        fclose(file);
+        remove(fn);
     }
 };
 
