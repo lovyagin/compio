@@ -145,8 +145,8 @@ int compio_close_archive(compio_archive* archive) {
     return 0;
 }
 
-int compio_seek(compio_file* file, uint64_t offset, uint8_t origin) {
-    uint64_t new_cursor = file->cursor;
+int compio_seek(compio_file* file, int64_t offset, uint8_t origin) {
+    int64_t new_cursor = file->cursor;
     switch (origin) {
     case COMP_SEEK_SET:
         new_cursor = offset;

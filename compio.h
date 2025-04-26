@@ -159,7 +159,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file);
  *  - COMP_SEEK_END - offset is counter from the end of a file
  * @return int
  */
-int compio_seek(compio_file* file, uint64_t offset, uint8_t origin);
+int compio_seek(compio_file* file, int64_t offset, uint8_t origin);
 
 /**
  * @brief Get current position inside of a file
