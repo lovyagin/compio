@@ -141,6 +141,7 @@ files_table::file* files_table::add(const char* name) {
     if (n_files >= COMPIO_MAX_FILES)
         return NULL;
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE);
+    files[n_files].size = 0;
     return &files[n_files++];
 }
 
