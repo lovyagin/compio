@@ -25,6 +25,16 @@ protected:
 
         remove(fn);
     }
+
+    void Reset() {
+        // close and open file (cursor in the beginning after opening)
+
+        compio_close_file(file);
+        compio_close_archive(archive);
+        
+        archive = compio_open_archive(fn, "r+", &config);
+        file = compio_open_file("A", archive);
+    }
 };
 
 class OpenedFileTest : public ::testing::Test {
@@ -57,57 +67,77 @@ TEST_F(OpenedFileTest, OpenClose) {
 }
 
 TEST_F(OpenedFileTest, BasicWriteRead) {
-    unsigned char in_data[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-    unsigned char out_data[sizeof(in_data)];
-    std::fill_n(out_data, sizeof(in_data), '?');
+    std::vector<unsigned char> in_data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    const std::size_t size = in_data.size();
+
+    std::vector<unsigned char> out_data(size, '?');
 
     EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_write(in_data, sizeof(in_data), file), sizeof(in_data));
-    EXPECT_EQ(compio_tell(file), sizeof(in_data));
+    EXPECT_EQ(compio_write(in_data.data(), size, file), size);
+    EXPECT_EQ(compio_tell(file), size);
     
     EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_CUR), 0);
-    EXPECT_EQ(compio_tell(file), sizeof(in_data));
+    EXPECT_EQ(compio_tell(file), size);
     
     EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
-    EXPECT_EQ(compio_tell(file), sizeof(in_data));
+    EXPECT_EQ(compio_tell(file), size);
 
     EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_read(out_data, sizeof(in_data), file), sizeof(in_data));
+    EXPECT_EQ(compio_read(out_data.data(), size, file), size);
 
-    for (uint64_t i = 0; i < sizeof(in_data); ++i) {
+    for (std::size_t i = 0; i < size; ++i) {
         EXPECT_EQ(in_data[i], out_data[i]);
     }
 }
 
-TEST_P(WriteReadNBytesTest, RandomWriteRead) {
-    uint64_t size = GetParam();
-    unsigned char* in_data = new unsigned char[size];
-    unsigned char* out_data = new unsigned char[size];
-    std::fill_n(out_data, size, '?');
+std::vector<unsigned char> generate_random_buffer(std::size_t size) {
+    std::vector<unsigned char> data(size);
 
     std::independent_bits_engine<std::default_random_engine, 32, uint32_t> eng;
 
-    // randomly fill in_data with bytes
     for (uint64_t i = 0; i < size; i += sizeof(uint32_t)) {
         auto x = eng();
         for (int j = 0; j < sizeof(uint32_t) && i + j < size; ++j) {
-            in_data[i + j] = reinterpret_cast<char*>(&x)[j];
+            data[i + j] = reinterpret_cast<char*>(&x)[j];
         }
     }
 
-    // write and read
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_write(in_data, size, file), size);
+    return data;
+}
+
+TEST_P(WriteReadNBytesTest, RandomWriteRead) {
+    uint64_t size = GetParam();
+    auto in_data = generate_random_buffer(size);
+    std::vector<unsigned char> out_data(size, '?');
+
+    EXPECT_EQ(compio_write(in_data.data(), size, file), size);
     EXPECT_EQ(compio_tell(file), size);
 
     EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
     EXPECT_EQ(compio_tell(file), size);
-
+    
     EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_read(out_data, size, file), size);
+    EXPECT_EQ(compio_tell(file), 0);
+    EXPECT_EQ(compio_read(out_data.data(), size, file), size);
+    EXPECT_EQ(compio_tell(file), size);
 
-    // check in_data == out_data
-    for (uint64_t i = 0; i < size; ++i) {
+    for (std::size_t i = 0; i < size; ++i) {
+        EXPECT_EQ(in_data[i], out_data[i]);
+    }
+}
+
+TEST_P(WriteReadNBytesTest, RandomWriteResetRead) {
+    uint64_t size = GetParam();
+    auto in_data = generate_random_buffer(size);
+    std::vector<unsigned char> out_data(size, '?');
+
+    EXPECT_EQ(compio_write(in_data.data(), size, file), size);
+
+    Reset();
+
+    EXPECT_EQ(compio_read(out_data.data(), size, file), size);
+
+    for (std::size_t i = 0; i < size; ++i) {
         EXPECT_EQ(in_data[i], out_data[i]);
     }
 }
