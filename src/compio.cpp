@@ -265,9 +265,9 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             file->archive->index->insert(block->index_key, new_value);
     }
 
-    compio_seek(file, size, COMP_SEEK_CUR);
     file_table_item->size = std::max(file_table_item->size, end);
     file->size = file_table_item->size;
+    file->cursor += size;
     return size;
 }
 
@@ -329,5 +329,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
         remaining_size -= bytes_copied;
     }
 
-    return static_cast<uint64_t>(static_cast<int64_t>(size) - remaining_size);
+    uint64_t bytes_read = static_cast<int64_t>(size) - remaining_size;
+    file->cursor += bytes_read;
+    return bytes_read;
 }
