@@ -267,6 +267,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
     compio_seek(file, size, COMP_SEEK_CUR);
     file_table_item->size = std::max(file_table_item->size, end);
+    file->size = file_table_item->size;
     return size;
 }
 
