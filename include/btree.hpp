@@ -126,6 +126,9 @@ public:
     shared_node read_node(uint64_t addr);
     shared_node read_root();
 
+    // for debug
+    void print_btree();
+
 private:
     node_reader reader;
 };

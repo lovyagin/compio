@@ -1,6 +1,7 @@
 #include "btree.hpp"
 #include "allocator.hpp"
 #include "utils.hpp"
+#include "debug_print.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -39,7 +40,7 @@ shared_node node_reader::create_node(uint64_t addr) {
 
 void node_reader::remove_node(shared_node node) {
     if (!cache.exists(node.addr())) {
-        fprintf(stderr, "warning: trying to remove non-existing index node\n");
+        WARNING_PRINT("warning: trying to remove non-existing index node\n");
         return;
     }
     cache.remove(node.addr());
@@ -365,4 +366,23 @@ bool btree::update_in_node(shared_node node, const tree_key key, const tree_val 
     if (!is_leaf)
         return update_in_node(read_node(RO(node)->children[num_keys]), key, new_value);
     return false;
+}
+
+static void print_btree_(btree* tree, const shared_node node, int depth = 0) {
+    for (std::size_t i = 0; i <= node->num_keys; ++i) {
+        if (!node->is_leaf) {
+            print_btree_(tree, tree->read_node(node->children[i]), depth + 1);
+        }
+
+        if (i < node->num_keys) {
+            auto key = node->keys[i];
+            auto val = node->values[i];
+    
+            DEBUG_PRINT("%s{%ull} -> {%ull, %ull}\n", std::string(depth * 2, ' ').c_str(), key.pos, val.addr, val.size);
+        }
+    }
+}
+
+void btree::print_btree() {
+    print_btree_(this, read_root());
 }
