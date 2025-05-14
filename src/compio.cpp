@@ -18,7 +18,7 @@ void compio_build_default_config(compio_config* result) {
     result->fill_holes_with_zeros = true;
     result->swap_endianness = false;
     result->block_size = 4096;
-    result->cache_size = -1;
+    result->cache_size = 128;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
 }
