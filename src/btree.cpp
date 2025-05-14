@@ -380,7 +380,7 @@ static void print_btree_(btree* tree, const shared_node node, int depth = 0) {
             auto key = node->keys[i];
             auto val = node->values[i];
     
-            DEBUG_PRINT("%s{%ull} -> {%ull, %ull}\n", std::string(depth * 2, ' ').c_str(), key.pos, val.addr, val.size);
+            DEBUG_PRINT("%s{%llu} -> {%llu, %llu}\n", std::string(depth * 2, ' ').c_str(), key.pos, val.addr, val.size);
         }
     }
 }

@@ -159,7 +159,6 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
 
     compio_build_default_config(&config);
     config.block_size = 128;
-    config.cache_size = 0;
 
     tmpnam(fn);
 
