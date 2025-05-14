@@ -188,30 +188,40 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     auto file_table_item = file->archive->header->ftable.find(file->name);
     uint64_t fsize = file_table_item->size;
 
-    uint64_t start = (range.size() > 0) ? range[0].first.pos : fsize;
-    uint64_t end = file->cursor + size;
+    auto config = file->archive->config;
+
+    // start of segment to unpack into buffer
+    uint64_t outer_segment_start = (range.size() > 0) ? range[0].first.pos : fsize;
+    // end of segment to unpack into buffer
+    uint64_t outer_segment_end = file->cursor + size;
+    if (range.size() > 0) {
+        const auto& last_block = range[range.size() - 1];
+        outer_segment_end = std::max(outer_segment_end, last_block.first.pos + last_block.second.size);
+    }
+    // size of segment to unpack = size of buffer to allocate
+    uint64_t outer_segment_size = outer_segment_end - outer_segment_start;
+    if (outer_segment_end <= outer_segment_start) {
+        return 0;
+    }
+
+    // offset inside of outer segment to write ptr data to
+    int inner_offset = file->cursor - outer_segment_start;
+
     // create buffer for uncompressed data
     // if cursor is set after end of file, (eof, cursor) must be
     // filled with zeros, so we initialize buffer with zeros
-    std::vector<uint8_t> buf(end - start, 0);
+    std::vector<uint8_t> buf(outer_segment_size, 0);
 
-    auto config = file->archive->config;
-    uint64_t n_blocks = (end - start + config->block_size - 1) / config->block_size;
+    // number of blocks to divide segment to after
+    uint64_t n_blocks = (outer_segment_size + config->block_size - 1) / config->block_size;
 
     std::vector<uint8_t>::iterator p_buf = buf.begin();
-    // temporary buffer for compressed data from one block
-    std::vector<uint8_t> tmp_buf;
-    tmp_buf.reserve(config->block_size);
     for (const auto& [key, val] : range) {
         smart_infile_object<storage_block> block(file->archive->file, val.addr);
 
-        // copy compressed data from block into tmp_buf
-        tmp_buf.resize(block->size);
-        std::copy(block->data.begin(), block->data.end(), tmp_buf.begin());
-
-        // decompress data from tmp_buf into big buf
+        // decompress data from block->data into big buf
         uint64_t dst_size = block->original_size;
-        config->compressor.decompress(&(*p_buf), &dst_size, tmp_buf.data(), tmp_buf.size());
+        config->compressor.decompress(&(*p_buf), &dst_size, block->data.data(), block->data.size());
         p_buf += dst_size;
 
         // remove this block from file (we will add modified block as a new one)
@@ -221,14 +231,14 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         block.remove();
     }
 
-    // modify uncompressed data in buffer with data from user
-    std::copy_n(reinterpret_cast<const uint8_t*>(ptr), size, buf.begin());
+    // modify uncompressed data in buffer with data from user (starting from inner_offset)
+    std::copy_n(reinterpret_cast<const uint8_t*>(ptr), size, buf.begin() + inner_offset);
 
     for (int i = 0; i < n_blocks; ++i) {
         // splitting uncompressed data into blocks of fixed size
         uint64_t offset = config->block_size * i;
-        uint64_t b_start = start + offset;
-        uint64_t uncompressed_size = std::min(end - b_start, (uint64_t)config->block_size);
+        uint64_t b_start = outer_segment_start + offset;
+        uint64_t uncompressed_size = std::min(outer_segment_end - b_start, (uint64_t)config->block_size);
         p_buf = buf.begin() + offset;
 
         std::vector<uint8_t> block_data(uncompressed_size);
@@ -265,7 +275,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             file->archive->index->insert(block->index_key, new_value);
     }
 
-    file_table_item->size = std::max(file_table_item->size, end);
+    file_table_item->size = std::max(file_table_item->size, outer_segment_end);
     file->size = file_table_item->size;
     file->cursor += size;
     return size;
@@ -299,14 +309,14 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     tmp_buf.reserve(config->block_size);
 
     for (auto& [key, val] : range) {
-        // read block from file
-        const smart_infile_object<storage_block> block(file->archive->file, val.addr);
-
         // index of last byte we need to read, in uncompressed block
         uint64_t end = std::min(current_offset + remaining_size, (int64_t)(val.size));
         // number of bytes copied into ptr on this iteration
         uint64_t bytes_copied = 0;
         if (end > current_offset) {
+            // read block from file
+            const smart_infile_object<storage_block> block(file->archive->file, val.addr);
+
             tmp_buf.resize(block->original_size);
 
             // decompress data from block data into tmp_buf
