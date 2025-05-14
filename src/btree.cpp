@@ -202,20 +202,20 @@ void btree::borrow_from_next(shared_node parent, const int idx) {
     sibling->num_keys--;
 }
 
-tree_key btree::find_max_in_node(const shared_node& node) {
+std::pair<tree_key, tree_val> btree::find_max_in_node(const shared_node node) {
     auto current = node;
     while (!RO(current)->is_leaf) {
         current = read_node(RO(current)->children[RO(current)->num_keys]);
     }
-    return RO(current)->keys[current->num_keys - 1];
+    return {RO(current)->keys[current->num_keys - 1], RO(current)->values[current->num_keys - 1]};
 }
 
-tree_key btree::find_min_in_node(const shared_node& node) {
+std::pair<tree_key, tree_val> btree::find_min_in_node(const shared_node node) {
     auto current = node;
     while (!RO(current)->is_leaf) {
         current = read_node(RO(current)->children[0]);
     }
-    return RO(current)->keys[0];
+    return {RO(current)->keys[0], RO(current)->values[0]};
 }
 
 void btree::insert(const tree_key key, const tree_val value) {
@@ -249,13 +249,15 @@ void btree::remove_node(shared_node node, const tree_key key) {
             auto child = read_node(RO(node)->children[idx]);
             const auto successor = read_node(RO(node)->children[idx + 1]);
             if (child->num_keys >= degree) {
-                const auto predecessor_key = find_max_in_node(child);
-                node->keys[idx] = predecessor_key;
-                remove_node(child, predecessor_key);
+                const auto [p_key, p_val] = find_max_in_node(child);
+                node->keys[idx] = p_key;
+                node->values[idx] = p_val;
+                remove_node(child, p_key);
             } else if (RO(successor)->num_keys >= degree) {
-                const auto successor_key = find_min_in_node(successor);
-                node->keys[idx] = successor_key;
-                remove_node(successor, successor_key);
+                const auto [s_key, s_val] = find_min_in_node(successor);
+                node->keys[idx] = s_key;
+                node->values[idx] = s_val;
+                remove_node(successor, s_key);
             } else {
                 merge_children(node, idx);
                 remove_node(child, key);
