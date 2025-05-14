@@ -5,6 +5,7 @@
 
 #include <cinttypes>
 #include "compio_file.hpp"
+#include "debug_print.hpp"
 #include "allocator.hpp"
 #include "file.hpp"
 #include <algorithm>
@@ -212,9 +213,9 @@ namespace compio {
             original_count++;
         }
 
-        std::cout << "Original free blocks:" << std::endl;
+        DEBUG_PRINT("Original free blocks:\n");
         for (free_block* current = head_; current; current = current->next) {
-            std::cout << "Block: " << current->offset << ", " << current->size << std::endl;
+            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
         }
 
         free_block* current = head_;
@@ -244,12 +245,11 @@ namespace compio {
             new_count++;
         }
 
-        std::cout << "Defragmentation: reduced from " << original_count
-                  << " to " << new_count << " blocks" << std::endl;
+        DEBUG_PRINT("Defragmentation: reduced from %d to %d blocks\n", original_count, new_count);
 
-        std::cout << "Free blocks after defragmentation:" << std::endl;
+        DEBUG_PRINT("Free blocks after defragmentation:\n");
         for (free_block* current = head_; current; current = current->next) {
-            std::cout << "Block: " << current->offset << ", " << current->size << std::endl;
+            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
         }
 
         last_alloc_ = head_;
@@ -258,7 +258,7 @@ namespace compio {
     void free_blocks_manager::print_list() const {
         free_block* current = head_;
         while (current) {
-            std::cout << "Block: " << current->offset << ", " << current->size << "\n";
+            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
             current = current->next;
         }
     }
@@ -291,7 +291,7 @@ namespace compio {
 
     uint8_t free_blocks_manager::calculate_fragmentation() const {
         if (!head_) {
-            std::cout << "No free blocks, fragmentation is 0" << std::endl;
+            // DEBUG_PRINT("No free blocks, fragmentation is 0\n");
             return 0;
         }
 
@@ -306,7 +306,7 @@ namespace compio {
             frag = 10;
         }
 
-        std::cout << "Calculated fragmentation: " << (int)frag << " (block count: " << block_count << ")" << std::endl;
+        // DEBUG_PRINT("Calculated fragmentation: %d (block count: %d)\n", frag, block_count);
         return frag;
     }
 
@@ -377,15 +377,19 @@ namespace compio {
             static_cast<allocation_strategy>(archive_->config->allocation_strategy));
 
         if (offset != UINT64_MAX) {
+            DEBUG_PRINT("[AL] allocate (%d)-(%d)\n", offset, offset + size);
             return offset;
         }
 
         offset = archive_->header->file_size;
         archive_->header->file_size += size;
+        DEBUG_PRINT("[Al] allocate (%d)-(%d)\n", offset, offset + size);
         return offset;
     }
 
     void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+        DEBUG_PRINT("[AL] free (%d)-(%d)\n", offset, offset + size);
+
         if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header.ptr()) return;
 
         if (offset + size > archive_->header->file_size) return;
@@ -409,11 +413,10 @@ namespace compio {
         uint8_t current_fragmentation = get_fragmentation();
         uint8_t threshold = ((compio_config*)archive_->config)->fragmentation_threshold;
 
-        std::cout << "In maintenance: fragmentation=" << (int)current_fragmentation
-                  << ", threshold=" << (int)threshold << std::endl;
+        DEBUG_PRINT("In maintenance: fragmentation=%d, threshold=%d\n", current_fragmentation, threshold);
 
         if (current_fragmentation > threshold) {
-            std::cout << "Performing defragmentation..." << std::endl;
+            DEBUG_PRINT("Performing defragmentation...\n");
 
             blocks_manager_.defragment();
             blocks_manager_.update_fragmentation();
