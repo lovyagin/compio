@@ -139,11 +139,12 @@ void btree::insert_nonfull(shared_node node, const tree_key key, const tree_val 
         while (i > 0 && key < node->keys[i - 1]) {
             i--;
         }
-        const auto child = read_node(node->children[i]);
+        auto child = read_node(node->children[i]);
         if (RO(child)->num_keys == (2 * degree - 1)) {
             split_child(node, child, i);
             if (key > node->keys[i]) {
                 i++;
+                child = read_node(node->children[i]);
             }
         }
         insert_nonfull(child, key, value);
