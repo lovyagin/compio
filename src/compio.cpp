@@ -5,6 +5,7 @@
 #include "file.hpp"
 #include "utils.hpp"
 #include "allocator.hpp"
+#include "debug_print.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -181,7 +182,13 @@ static auto get_range_in_file(compio_file* file, uint64_t size) {
 
 uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     // get range of blocks, that intersect our workspace
-    auto range = get_range_in_file(file, size);
+    const auto range = get_range_in_file(file, size);
+
+    DEBUG_PRINT("[CW-1] range: {\n");
+    for (const auto& elem : range) {
+        DEBUG_PRINT("\t{%llu} -> (%llu)-(?)\n", elem.first.pos, elem.second.addr);
+    }
+    DEBUG_PRINT("}\n\n");
 
     // find file in file table (it must exist, because compio_file was
     // created with compio_open_file, which adds file into file table)
@@ -224,6 +231,8 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         config->compressor.decompress(&(*p_buf), &dst_size, block->data.data(), block->data.size());
         p_buf += dst_size;
 
+        DEBUG_PRINT("[CW-2] deallocate {%llu} -> (%llu)-(%llu)\n", key.pos, val.addr, val.addr + STORAGE_BLOCK_METASIZE + block->size);
+
         // remove this block from file (we will add modified block as a new one)
         file->archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + block->size);
 
@@ -233,6 +242,9 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
     // modify uncompressed data in buffer with data from user (starting from inner_offset)
     std::copy_n(reinterpret_cast<const uint8_t*>(ptr), size, buf.begin() + inner_offset);
+
+    // true, if block was updated in b-tree, otherwise false
+    std::vector<bool> processed(range.size(), false);
 
     for (int i = 0; i < n_blocks; ++i) {
         // splitting uncompressed data into blocks of fixed size
@@ -265,14 +277,24 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         block->index_key = index_key;
 
         tree_val new_value = {addr, uncompressed_size};
-        // if block already in tree, just update it, otherwise insert
-        if (std::find_if(range.begin(), range.end(),
-                         [&block](const std::pair<tree_key, tree_val>& x) {
-                             return x.first == block->index_key;
-                         }) != range.end())
+        // if block already in b-tree, just update it, otherwise insert
+        auto j = std::find_if(range.begin(), range.end(), [&block](const std::pair<tree_key, tree_val>& x) { return x.first == block->index_key; });
+        if (j != range.end()) {
+            DEBUG_PRINT("[CW-3] update {%llu} -> (%llu)-(%llu)\n", index_key.pos, new_value.addr, new_value.addr + STORAGE_BLOCK_METASIZE + block->size);
+            processed[std::distance(range.begin(), j)] = true;
             file->archive->index->update(block->index_key, new_value);
-        else
+        } else {
+            DEBUG_PRINT("[CW-3] insert {%llu} -> (%llu)-(%llu)\n", index_key.pos, new_value.addr, new_value.addr + STORAGE_BLOCK_METASIZE + block->size);
             file->archive->index->insert(block->index_key, new_value);
+        }
+    }
+
+    // remove blocks, that was not updated
+    for (int i = 0; i < range.size(); ++i) {
+        if (!processed[i]) {
+            DEBUG_PRINT("[CW-3] remove {%llu} -> (%llu)-(?)\n", range[i].first.pos, range[i].second.addr);
+            file->archive->index->remove(range[i].first);
+        }
     }
 
     file_table_item->size = std::max(file_table_item->size, outer_segment_end);
