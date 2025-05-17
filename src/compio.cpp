@@ -70,6 +70,12 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
     archive->allocator = new compio::block_allocator(archive);
     archive->index = new btree(archive);
 
+    // Load allocator state if it exists
+    if (archive->header->allocator_state_offset != 0 &&
+        archive->header->allocator_state_size > 0) {
+        archive->allocator->blocks_manager_.load_from_file(archive);
+    }
+
     return archive;
 }
 
@@ -135,6 +141,11 @@ int compio_close_archive(compio_archive* archive) {
     
     // do the same with btree node cache
     delete archive->index;
+
+    // Save allocator state
+    if (archive && archive->file && archive->allocator) {
+        archive->allocator->blocks_manager_.save_to_file(archive);
+    }
 
     // destroy allocator before closing file, so it can save it's state in it (todo)
     delete archive->allocator;

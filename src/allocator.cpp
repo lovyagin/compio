@@ -291,7 +291,6 @@ namespace compio {
 
     uint8_t free_blocks_manager::calculate_fragmentation() const {
         if (!head_) {
-            // DEBUG_PRINT("No free blocks, fragmentation is 0\n");
             return 0;
         }
 
@@ -300,14 +299,152 @@ namespace compio {
             block_count++;
         }
 
-        uint8_t frag = static_cast<uint8_t>(block_count * 10);
-
-        if (recently_defragmented_ && block_count == 4) {
-            frag = 10;
+        // Calculate fragmentation as a percentage:
+        // 1 block = 0% fragmentation (ideal state)
+        // Each additional block adds to fragmentation
+        // Cap at 100%
+        uint8_t frag = 0;
+        if (block_count > 1) {
+            // Using 10 blocks as the "fully fragmented" state (100%)
+            // This maintains similar scale to original calculation
+            const size_t max_fragmentation_blocks = 10;
+            frag = static_cast<uint8_t>(std::min(
+                100.0,
+                (block_count - 1) * 100.0 / (max_fragmentation_blocks - 1)
+            ));
         }
 
-        // DEBUG_PRINT("Calculated fragmentation: %d (block count: %d)\n", frag, block_count);
         return frag;
+    }
+
+    uint32_t free_blocks_manager::serialize(std::vector<uint8_t>& buffer) {
+        // Count the number of blocks in the linked list
+        size_t block_count = 0;
+        for (free_block* current = head_; current; current = current->next) {
+            block_count++;
+        }
+
+        // Calculate required buffer size: count of blocks + (offset,size) pairs
+        uint32_t size_needed = sizeof(uint64_t) + block_count * 2 * sizeof(uint64_t);
+
+        // Resize buffer to fit all data
+        buffer.resize(size_needed);
+
+        // Write number of blocks first
+        uint64_t count = block_count;
+        memcpy(buffer.data(), &count, sizeof(uint64_t));
+
+        // Write each block's offset and size
+        uint64_t* data_ptr = reinterpret_cast<uint64_t*>(buffer.data() + sizeof(uint64_t));
+        for (free_block* current = head_; current; current = current->next) {
+            *data_ptr++ = current->offset;
+            *data_ptr++ = current->size;
+        }
+
+        return size_needed;
+    }
+
+    bool free_blocks_manager::deserialize(const uint8_t* buffer, uint32_t size) {
+        // Check if buffer contains at least the count
+        if (size < sizeof(uint64_t)) {
+            return false;
+        }
+
+        // Read count of blocks
+        uint64_t count;
+        memcpy(&count, buffer, sizeof(uint64_t));
+
+        // Check buffer is large enough for all data
+        uint32_t expected_size = sizeof(uint64_t) + count * 2 * sizeof(uint64_t);
+        if (size < expected_size) {
+            return false;
+        }
+
+        // Clear existing blocks (delete the linked list)
+        while (head_) {
+            free_block* temp = head_;
+            head_ = head_->next;
+            delete temp;
+        }
+        head_ = tail_ = last_alloc_ = nullptr;
+        total_free_ = 0;
+
+        // Read each block and add to manager
+        const uint64_t* data_ptr = reinterpret_cast<const uint64_t*>(buffer + sizeof(uint64_t));
+        for (uint64_t i = 0; i < count; i++) {
+            uint64_t offset = *data_ptr++;
+            uint64_t block_size = *data_ptr++;
+            add_free_block(offset, block_size);
+        }
+
+        update_fragmentation();
+
+        return true;
+    }
+
+    bool free_blocks_manager::save_to_file(compio_archive* archive) {
+        if (!archive || !archive->file || !archive->header) {
+            return false;
+        }
+
+        // Serialize free blocks to buffer
+        std::vector<uint8_t> buffer;
+        uint32_t size = serialize(buffer);
+
+        // Seek to end of file for allocator state
+        if (fseek(archive->file, 0, SEEK_END) != 0) {
+            return false;
+        }
+
+        // Get current file position
+        long pos = ftell(archive->file);
+        if (pos < 0) {
+            return false;
+        }
+
+        // Write serialized data
+        size_t written = fwrite(buffer.data(), 1, size, archive->file);
+        if (written != size) {
+            return false;
+        }
+
+        // Update header with allocator state location
+        archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
+        archive->header->allocator_state_size = size;
+
+        // Ensure data is written to disk
+        fflush(archive->file);
+
+        return true;
+    }
+
+    bool free_blocks_manager::load_from_file(compio_archive* archive) {
+        if (!archive || !archive->file || !archive->header) {
+            return false;
+        }
+
+        // Check if allocator state exists
+        if (archive->header->allocator_state_offset == 0 ||
+            archive->header->allocator_state_size == 0) {
+            return false;
+        }
+
+        // Seek to allocator state position
+        if (fseek(archive->file, static_cast<long>(archive->header->allocator_state_offset), SEEK_SET) != 0) {
+            return false;
+        }
+
+        // Create buffer for reading data
+        std::vector<uint8_t> buffer(archive->header->allocator_state_size);
+
+        // Read allocator state data
+        size_t read = fread(buffer.data(), 1, archive->header->allocator_state_size, archive->file);
+        if (read != archive->header->allocator_state_size) {
+            return false;
+        }
+
+        // Deserialize buffer into this manager
+        return deserialize(buffer.data(), static_cast<uint32_t>(buffer.size()));
     }
 
 // Private helper methods
