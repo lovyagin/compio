@@ -35,7 +35,9 @@ shared_node node_reader::read_node(uint64_t addr) {
 }
 
 shared_node node_reader::create_node(uint64_t addr) {
-    return shared_node(file, addr, new index_node(tree_degree));
+    auto result = shared_node(file, addr, new index_node(tree_degree));
+    cache.put(addr, result);
+    return result;
 }
 
 void node_reader::remove_node(shared_node node) {
