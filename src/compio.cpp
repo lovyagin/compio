@@ -19,6 +19,7 @@ void compio_build_default_config(compio_config* result) {
     result->fill_holes_with_zeros = true;
     result->block_size = 4096;
     result->cache_size = 128;
+    result->block_cache_size = 16;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
 }
@@ -26,7 +27,8 @@ void compio_build_default_config(compio_config* result) {
 compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* config)
     : file(file),
       config(config),
-      mode_b(mode_b) {
+      mode_b(mode_b), 
+      block_reader(file, config->block_cache_size) {
     fseek(file, 0, SEEK_END);
     long fsize = ftell(file);
     if (fsize == 0)
@@ -112,7 +114,7 @@ int compio_remove_file(compio_archive* archive, const char* name) {
         errno = ENAMETOOLONG;
         return -2;
     }
-
+    // TODO: remove all blocks from this file
     return archive->header->ftable.remove(name);
 }
 
@@ -136,6 +138,9 @@ int compio_close_archive(compio_archive* archive) {
 
     // destroy allocator before closing file, so it can save it's state in it (todo)
     delete archive->allocator;
+
+    // clear block_reader cache to flush all blocks into file
+    archive->block_reader.clear_cache();
 
     // and finally we close the file
     if (fclose(archive->file))
@@ -223,7 +228,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
     std::vector<uint8_t>::iterator p_buf = buf.begin();
     for (const auto& [key, val] : range) {
-        smart_infile_object<storage_block> block(file->archive->file, val.addr);
+        auto block = file->archive->block_reader.read_block(val.addr);
 
         // decompress data from block->data into big buf
         uint64_t dst_size = block->original_size;
@@ -237,6 +242,9 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
         // set removed=true, so it won't flush into file in destructor (smart_infile_object)
         block.remove();
+
+        // also remove block from cache
+        file->archive->block_reader.remove_block(block);
     }
 
     // modify uncompressed data in buffer with data from user (starting from inner_offset)
@@ -269,8 +277,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         // allocate memory in file for new block
         uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + size);
 
-        smart_infile_object<storage_block> block(file->archive->file, addr,
-                                                 new storage_block(std::move(block_data)));
+        auto block = file->archive->block_reader.create_block(addr, std::move(block_data));
         block->original_size = uncompressed_size;
         block->is_compressed = ret == 0;
         block->index_key = index_key;
@@ -336,7 +343,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
         uint64_t bytes_copied = 0;
         if (end > current_offset) {
             // read block from file
-            const smart_infile_object<storage_block> block(file->archive->file, val.addr);
+            const auto block = file->archive->block_reader.read_block(val.addr);
 
             tmp_buf.resize(block->original_size);
 

@@ -24,6 +24,7 @@ add_library(compio SHARED
     src/compressor.c
     src/file.cpp
     src/infile_object.cpp
+    src/storage_block_reader.cpp
     src/utils.cpp
 )
 

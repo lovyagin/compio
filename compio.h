@@ -81,7 +81,8 @@ typedef struct {
      */
     bool fill_holes_with_zeros;
 
-    int cache_size; /**< Maximum number of b-tree nodes in cache (-1 to set no limit) */
+    int cache_size; /**< Maximum number of b-tree nodes in cache */
+    int block_cache_size; /**< Maximum number of storage blocks in cache */
     compio_allocation_strategy allocation_strategy;
     uint8_t fragmentation_threshold;
 } compio_config;
