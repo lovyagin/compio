@@ -5,7 +5,7 @@
 
 #include <benchmark/benchmark.h>
 
-static void BM_stdio_RandomRead(benchmark::State& state) {
+static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
     const size_t n_blocks = state.range(0);
     const size_t block_size = state.range(1);
 
@@ -70,7 +70,7 @@ static void BM_stdio_RandomRead(benchmark::State& state) {
     remove(fn);
 }
 
-static void BM_compio_RandomRead(benchmark::State& state) {
+static void BM_compio_ConsecutiveRead(benchmark::State& state) {
     const size_t n_blocks = state.range(0);
     const size_t block_size = state.range(1);
 
@@ -161,12 +161,12 @@ static void BM_compio_RandomRead(benchmark::State& state) {
 
 const std::vector<std::vector<int64_t>> params_grid = {{4096, 65536}, {512, 1024, 4096}};
 
-BENCHMARK(BM_stdio_RandomRead)
+BENCHMARK(BM_stdio_ConsecutiveRead)
     ->ArgsProduct(params_grid)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
 
-BENCHMARK(BM_compio_RandomRead)
+BENCHMARK(BM_compio_ConsecutiveRead)
     ->ArgsProduct(params_grid)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
