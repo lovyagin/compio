@@ -130,7 +130,19 @@ int compio_close_file(compio_file* file) {
 }
 
 int compio_close_archive(compio_archive* archive) {
-    // destroy and flush header before closing the file
+    // 1) flush index nodes to file
+    delete archive->index;
+
+    // 2) clear block_reader cache to flush all blocks
+    archive->block_reader.clear_cache();
+
+    // 3) save blocks manager to the end of the file
+    if (archive && archive->file && archive->allocator && archive->header) {
+        archive->allocator->blocks_manager_.save_to_file(archive);
+    }
+    delete archive->allocator;
+    
+    // 4) flush header (important: do this after flushing allocator, because it saves offset and size in header)
     //
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer 
@@ -139,21 +151,7 @@ int compio_close_archive(compio_archive* archive) {
     // thus, calling operator=({}) will destroy and flush our header
     archive->header = {};
     
-    // do the same with btree node cache
-    delete archive->index;
-
-    // Save allocator state
-    if (archive && archive->file && archive->allocator && archive->header) {
-        archive->allocator->blocks_manager_.save_to_file(archive);
-    }
-
-    // destroy allocator before closing file, so it can save it's state in it (todo)
-    delete archive->allocator;
-
-    // clear block_reader cache to flush all blocks into file
-    archive->block_reader.clear_cache();
-
-    // and finally we close the file
+    // 5) and finally we close the file
     if (fclose(archive->file))
         return -1;
 

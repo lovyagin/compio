@@ -12,7 +12,7 @@ using namespace compio;
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
-header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable() {}
+header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable(), allocator_state_offset(0), allocator_state_size(0) {}
 
 void header::read_from(FILE* file, uint64_t addr) {
     DEBUG_PRINT("[R][header]addr=%llu\n", addr);
