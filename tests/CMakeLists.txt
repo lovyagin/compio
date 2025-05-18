@@ -5,6 +5,7 @@ find_package(GTest REQUIRED)
 add_executable(compio_gtest
     test_runner.cpp
     unit/test_allocator.cpp
+    unit/test_library.cpp
 )
 
 target_compile_features(compio_gtest PRIVATE cxx_std_17)

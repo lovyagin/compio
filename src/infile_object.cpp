@@ -1,5 +1,7 @@
 #include "infile_object.hpp"
 
+#include "debug_print.hpp"
+
 #include <stdexcept>
 
 static inline bool is_big_endian() {
@@ -45,10 +47,9 @@ uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* st
     }
 
     if (ret != nmemb) {
-        fprintf(stderr,
-                "warning: failed to fwrite bytes to file "
-                "(expected: %llu bytes, actual: %llu bytes)\n",
-                size * nmemb, ret * size);
+        WARNING_PRINT("warning: failed to fwrite bytes to file "
+                      "(expected: %llu bytes, actual: %llu bytes)\n",
+                      size * nmemb, ret * size);
     }
     return ret;
 }
@@ -83,10 +84,9 @@ uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream) {
     }
 
     if (ret != nmemb) {
-        fprintf(stderr,
-                "warning: failed to fread bytes from file "
-                "(expected: %llu bytes, actual: %llu bytes)\n",
-                size * nmemb, ret * size);
+        WARNING_PRINT("warning: failed to fread bytes from file "
+                      "(expected: %llu bytes, actual: %llu bytes)\n",
+                      size * nmemb, ret * size);
     }
     return ret;
 }

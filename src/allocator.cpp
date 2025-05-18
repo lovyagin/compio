@@ -5,6 +5,7 @@
 
 #include <cinttypes>
 #include "compio_file.hpp"
+#include "debug_print.hpp"
 #include "allocator.hpp"
 #include "file.hpp"
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <utils.hpp>
 #include <cassert>
+#include <cstring>
 #include <vector>
 
 namespace compio {
@@ -212,9 +214,9 @@ namespace compio {
             original_count++;
         }
 
-        std::cout << "Original free blocks:" << std::endl;
+        DEBUG_PRINT("Original free blocks:\n");
         for (free_block* current = head_; current; current = current->next) {
-            std::cout << "Block: " << current->offset << ", " << current->size << std::endl;
+            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
         }
 
         free_block* current = head_;
@@ -244,12 +246,11 @@ namespace compio {
             new_count++;
         }
 
-        std::cout << "Defragmentation: reduced from " << original_count
-                  << " to " << new_count << " blocks" << std::endl;
+        DEBUG_PRINT("Defragmentation: reduced from %d to %d blocks\n", original_count, new_count);
 
-        std::cout << "Free blocks after defragmentation:" << std::endl;
+        DEBUG_PRINT("Free blocks after defragmentation:\n");
         for (free_block* current = head_; current; current = current->next) {
-            std::cout << "Block: " << current->offset << ", " << current->size << std::endl;
+            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
         }
 
         last_alloc_ = head_;
@@ -258,7 +259,7 @@ namespace compio {
     void free_blocks_manager::print_list() const {
         free_block* current = head_;
         while (current) {
-            std::cout << "Block: " << current->offset << ", " << current->size << "\n";
+            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
             current = current->next;
         }
     }
@@ -291,7 +292,6 @@ namespace compio {
 
     uint8_t free_blocks_manager::calculate_fragmentation() const {
         if (!head_) {
-            std::cout << "No free blocks, fragmentation is 0" << std::endl;
             return 0;
         }
 
@@ -300,14 +300,152 @@ namespace compio {
             block_count++;
         }
 
-        uint8_t frag = static_cast<uint8_t>(block_count * 10);
-
-        if (recently_defragmented_ && block_count == 4) {
-            frag = 10;
+        // Calculate fragmentation as a percentage:
+        // 1 block = 0% fragmentation (ideal state)
+        // Each additional block adds to fragmentation
+        // Cap at 100%
+        uint8_t frag = 0;
+        if (block_count > 1) {
+            // Using 10 blocks as the "fully fragmented" state (100%)
+            // This maintains similar scale to original calculation
+            const size_t max_fragmentation_blocks = 10;
+            frag = static_cast<uint8_t>(std::min(
+                100.0,
+                (block_count - 1) * 100.0 / (max_fragmentation_blocks - 1)
+            ));
         }
 
-        std::cout << "Calculated fragmentation: " << (int)frag << " (block count: " << block_count << ")" << std::endl;
         return frag;
+    }
+
+    uint32_t free_blocks_manager::serialize(std::vector<uint8_t>& buffer) {
+        // Count the number of blocks in the linked list
+        size_t block_count = 0;
+        for (free_block* current = head_; current; current = current->next) {
+            block_count++;
+        }
+
+        // Calculate required buffer size: count of blocks + (offset,size) pairs
+        uint32_t size_needed = sizeof(uint64_t) + block_count * 2 * sizeof(uint64_t);
+
+        // Resize buffer to fit all data
+        buffer.resize(size_needed);
+
+        // Write number of blocks first
+        uint64_t count = block_count;
+        memcpy(buffer.data(), &count, sizeof(uint64_t));
+
+        // Write each block's offset and size
+        uint64_t* data_ptr = reinterpret_cast<uint64_t*>(buffer.data() + sizeof(uint64_t));
+        for (free_block* current = head_; current; current = current->next) {
+            *data_ptr++ = current->offset;
+            *data_ptr++ = current->size;
+        }
+
+        return size_needed;
+    }
+
+    bool free_blocks_manager::deserialize(const uint8_t* buffer, uint32_t size) {
+        // Check if buffer contains at least the count
+        if (size < sizeof(uint64_t)) {
+            return false;
+        }
+
+        // Read count of blocks
+        uint64_t count;
+        memcpy(&count, buffer, sizeof(uint64_t));
+
+        // Check buffer is large enough for all data
+        uint32_t expected_size = sizeof(uint64_t) + count * 2 * sizeof(uint64_t);
+        if (size < expected_size) {
+            return false;
+        }
+
+        // Clear existing blocks (delete the linked list)
+        while (head_) {
+            free_block* temp = head_;
+            head_ = head_->next;
+            delete temp;
+        }
+        head_ = tail_ = last_alloc_ = nullptr;
+        total_free_ = 0;
+
+        // Read each block and add to manager
+        const uint64_t* data_ptr = reinterpret_cast<const uint64_t*>(buffer + sizeof(uint64_t));
+        for (uint64_t i = 0; i < count; i++) {
+            uint64_t offset = *data_ptr++;
+            uint64_t block_size = *data_ptr++;
+            add_free_block(offset, block_size);
+        }
+
+        update_fragmentation();
+
+        return true;
+    }
+
+    bool free_blocks_manager::save_to_file(compio_archive* archive) {
+        if (!archive || !archive->file || !archive->header) {
+            return false;
+        }
+
+        // Serialize free blocks to buffer
+        std::vector<uint8_t> buffer;
+        uint32_t size = serialize(buffer);
+
+        // Seek to end of file for allocator state
+        if (fseek(archive->file, 0, SEEK_END) != 0) {
+            return false;
+        }
+
+        // Get current file position
+        long pos = ftell(archive->file);
+        if (pos < 0) {
+            return false;
+        }
+
+        // Write serialized data
+        size_t written = fwrite(buffer.data(), 1, size, archive->file);
+        if (written != size) {
+            return false;
+        }
+
+        // Update header with allocator state location
+        archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
+        archive->header->allocator_state_size = size;
+
+        // Ensure data is written to disk
+        fflush(archive->file);
+
+        return true;
+    }
+
+    bool free_blocks_manager::load_from_file(compio_archive* archive) {
+        if (!archive || !archive->file || !archive->header) {
+            return false;
+        }
+
+        // Check if allocator state exists
+        if (archive->header->allocator_state_offset == 0 ||
+            archive->header->allocator_state_size == 0) {
+            return false;
+        }
+
+        // Seek to allocator state position
+        if (fseek(archive->file, static_cast<long>(archive->header->allocator_state_offset), SEEK_SET) != 0) {
+            return false;
+        }
+
+        // Create buffer for reading data
+        std::vector<uint8_t> buffer(archive->header->allocator_state_size);
+
+        // Read allocator state data
+        size_t read = fread(buffer.data(), 1, archive->header->allocator_state_size, archive->file);
+        if (read != archive->header->allocator_state_size) {
+            return false;
+        }
+
+        // Deserialize buffer into this manager
+        return deserialize(buffer.data(), static_cast<uint32_t>(buffer.size()));
     }
 
 // Private helper methods
@@ -377,15 +515,19 @@ namespace compio {
             static_cast<allocation_strategy>(archive_->config->allocation_strategy));
 
         if (offset != UINT64_MAX) {
+            DEBUG_PRINT("[AL] allocate (%d)-(%d)\n", offset, offset + size);
             return offset;
         }
 
         offset = archive_->header->file_size;
         archive_->header->file_size += size;
+        DEBUG_PRINT("[Al] allocate (%d)-(%d)\n", offset, offset + size);
         return offset;
     }
 
     void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+        DEBUG_PRINT("[AL] free (%d)-(%d)\n", offset, offset + size);
+
         if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header.ptr()) return;
 
         if (offset + size > archive_->header->file_size) return;
@@ -409,11 +551,10 @@ namespace compio {
         uint8_t current_fragmentation = get_fragmentation();
         uint8_t threshold = ((compio_config*)archive_->config)->fragmentation_threshold;
 
-        std::cout << "In maintenance: fragmentation=" << (int)current_fragmentation
-                  << ", threshold=" << (int)threshold << std::endl;
+        DEBUG_PRINT("In maintenance: fragmentation=%d, threshold=%d\n", current_fragmentation, threshold);
 
         if (current_fragmentation > threshold) {
-            std::cout << "Performing defragmentation..." << std::endl;
+            DEBUG_PRINT("Performing defragmentation...\n");
 
             blocks_manager_.defragment();
             blocks_manager_.update_fragmentation();

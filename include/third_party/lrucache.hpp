@@ -64,6 +64,11 @@ public:
         }
     }
 
+    void clear() {
+        _cache_items_map.clear();
+        _cache_items_list.clear();
+    }
+
     size_t size() const { return _cache_items_map.size(); }
 
 private:

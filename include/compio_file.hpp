@@ -5,6 +5,7 @@
 #include "compio.h"
 #include "file.hpp"
 #include "infile_object.hpp"
+#include "storage_block_reader.hpp"
 
 // forward declaration
 namespace compio {
@@ -20,6 +21,7 @@ struct compio_archive {
     const compio_config* config;                /**< Compio configuration */
     smart_infile_object<compio::header> header; /**< Read file header */
     compio::btree* index;
+    compio::storage_block_reader block_reader;
 
     /**
      * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear

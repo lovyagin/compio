@@ -90,6 +90,9 @@ public:
     uint64_t addr() const { return S->addr; }
 
     T* ptr() const {
+        if (S == nullptr) {
+            return nullptr;
+        }
         S->modified = true;
         return S->data;
     }
@@ -106,6 +109,10 @@ public:
     T& operator*() {
         S->modified = true;
         return *S->data;
+    }
+
+    operator bool() const {
+        return S != nullptr;
     }
 
     void remove() { S->removed = true; }

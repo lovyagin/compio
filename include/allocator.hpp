@@ -7,6 +7,7 @@
 #define COMPIO_ALLOCATOR_HPP
 
 #include <cstdint>
+#include <vector>
 #include "compio.h"
 
 namespace compio {
@@ -67,6 +68,10 @@ public:
      */
     void print_list() const;
 
+    /**
+     * @brief Get cached fragmentation level
+     * @return Cached fragmentation percentage (0-100)
+     */
     uint8_t get_cached_fragmentation() const;
 
     /**
@@ -75,8 +80,15 @@ public:
      */
     uint8_t calculate_fragmentation() const;
 
+    /**
+     * @brief Update the cached fragmentation value
+     */
     void update_fragmentation();
 
+    /**
+     * @brief Set a custom cached fragmentation value
+     * @param value New fragmentation value to set
+     */
     void set_cached_fragmentation(uint8_t value);
 
     /**
@@ -93,6 +105,35 @@ public:
      */
     uint64_t* get_file_size_ptr() const { return file_size_; }
 
+    /**
+     * @brief Serialize free blocks list to a buffer
+     * @param buffer Output buffer to store serialized data
+     * @return Size of serialized data in bytes
+     */
+    uint32_t serialize(std::vector<uint8_t>& buffer);
+
+    /**
+     * @brief Deserialize free blocks list from a buffer
+     * @param buffer Buffer containing serialized data
+     * @param size Size of serialized data in bytes
+     * @return True if deserialization succeeded
+     */
+    bool deserialize(const uint8_t* buffer, uint32_t size);
+
+    /**
+     * @brief Save free blocks table to archive file
+     * @param archive Pointer to the archive
+     * @return True if save succeeded
+     */
+    bool save_to_file(compio_archive* archive);
+
+    /**
+     * @brief Load free blocks table from archive file
+     * @param archive Pointer to the archive
+     * @return True if load succeeded
+     */
+    bool load_from_file(compio_archive* archive);
+
 private:
     free_block* head_;           /**< Head of free blocks list */
     free_block* tail_;           /**< Tail of free blocks list */
@@ -102,9 +143,32 @@ private:
     uint8_t cached_fragmentation_; /**< Cached fragmentation level */
     mutable bool recently_defragmented_ = false; /**< Flag for recent defragmentation */
 
+    /**
+     * @brief Find the first suitable block for allocation
+     * @param size Required block size
+     * @return Pointer to the first suitable block or nullptr if not found
+     */
     free_block* find_first_fit(uint64_t size) const;
+
+    /**
+     * @brief Find the smallest suitable block for allocation
+     * @param size Required block size
+     * @return Pointer to the best-fit block or nullptr if not found
+     */
     free_block* find_best_fit(uint64_t size) const;
+
+    /**
+     * @brief Find the largest suitable block for allocation
+     * @param size Required block size
+     * @return Pointer to the worst-fit block or nullptr if not found
+     */
     free_block* find_worst_fit(uint64_t size) const;
+
+    /**
+     * @brief Find the next suitable block for allocation
+     * @param size Required block size
+     * @return Pointer to the next-fit block or nullptr if not found
+     */
     free_block* find_next_fit(uint64_t size) const;
 };
 
@@ -144,12 +208,23 @@ public:
      */
     void maintenance();
 
+    friend compio_archive* ::compio_open_archive(const char*, const char*, const compio_config*);
+    friend int ::compio_close_archive(compio_archive*);
+
 private:
     compio_archive* archive_;            /**< Associated archive */
     free_blocks_manager blocks_manager_; /**< Free blocks manager */
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
 
+    /**
+     * @brief Check if defragmentation is needed
+     * @return True if fragmentation exceeds the threshold
+     */
     [[nodiscard]] bool needs_defragmentation() const;
+
+    /**
+     * @brief Perform defragmentation of the storage
+     */
     void perform_defragmentation();
 };
 
@@ -161,7 +236,17 @@ extern "C" {
 
     typedef void* compio_allocator_handle;
 
+    /**
+     * @brief Create a new block allocator
+     * @param archive Pointer to the archive
+     * @return Handle to the created allocator
+     */
     compio_allocator_handle compio_create_allocator(compio_archive* archive);
+
+    /**
+     * @brief Destroy an existing block allocator
+     * @param handle Handle to the allocator
+     */
     void compio_destroy_allocator(compio_allocator_handle handle);
 
 #ifdef __cplusplus

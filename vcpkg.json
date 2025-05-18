@@ -5,6 +5,7 @@
   "dependencies": [
     "zlib",
     "cunit",
-    "gtest"
+    "gtest",
+    "benchmark"
   ]
 }
