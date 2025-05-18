@@ -40,6 +40,12 @@ typedef struct compio_compressor {
      * If dst buffer is too small, return non-zero code and set errno = ENOBUFS.
      */
     int (*decompress)(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size);
+
+    /**
+     * @brief Get size of buffer, that needs to be provided to function compress()
+     * 
+     */
+    uint64_t (*get_bufsize)(uint64_t src_size);
 } compio_compressor;
 
 /**
@@ -51,6 +57,13 @@ typedef struct compio_compressor {
 extern "C" {
 #endif
 void compio_build_dummy_compressor(compio_compressor* result);
+
+/**
+ * @brief ZLIB compressor
+ * 
+ * @param result 
+ */
+void compio_build_zlib_compressor(compio_compressor* result);
 
 #ifdef __cplusplus
 }

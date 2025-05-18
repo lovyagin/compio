@@ -15,7 +15,7 @@ using namespace compio;
 
 void compio_build_default_config(compio_config* result) {
     result->b_tree_degree = 16;
-    compio_build_dummy_compressor(&result->compressor);
+    compio_build_zlib_compressor(&result->compressor);
     result->fill_holes_with_zeros = true;
     result->block_size = 4096;
     result->cache_size = 128;
@@ -243,7 +243,11 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
         // decompress data from block->data into big buf
         uint64_t dst_size = block->original_size;
-        config->compressor.decompress(&(*p_buf), &dst_size, block->data.data(), block->data.size());
+        if (block->is_compressed) {
+            config->compressor.decompress(&(*p_buf), &dst_size, block->data.data(), block->data.size());
+        } else {
+            std::copy_n(block->data.begin(), block->data.size(), p_buf);
+        }
         p_buf += dst_size;
 
         DEBUG_PRINT("[CW-2] deallocate {%llu} -> (%llu)-(%llu)\n", key.pos, val.addr, val.addr + STORAGE_BLOCK_METASIZE + block->size);
@@ -271,26 +275,28 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         uint64_t uncompressed_size = std::min(outer_segment_end - b_start, (uint64_t)config->block_size);
         p_buf = buf.begin() + offset;
 
-        std::vector<uint8_t> block_data(uncompressed_size);
-        uint64_t size;
+        uint64_t size = config->compressor.get_bufsize(uncompressed_size);
+        std::vector<uint8_t> block_data(size);
+        bool is_compressed = true;
 
         auto index_key = get_key(file->name, b_start);
         int ret = config->compressor.compress(block_data.data(), &size, &(*p_buf), uncompressed_size);
-        if (ret != 0) {
-            // if compressed size > uncompressed size, write uncompressed data instead
+        if (ret != 0 || size > uncompressed_size) {
+            // if failed to compress or compressed size > uncompressed size, write uncompressed data instead
+            is_compressed = false;
             size = uncompressed_size;
             std::copy(p_buf, p_buf + uncompressed_size, block_data.begin());
-        } else {
-            // remove unneccesary bytes from buffer
-            block_data.resize(size);
         }
+
+        // remove unneccesary bytes from buffer
+        block_data.resize(size);
 
         // allocate memory in file for new block
         uint64_t addr = file->archive->allocator->allocate(STORAGE_BLOCK_METASIZE + size);
 
         auto block = file->archive->block_reader.create_block(addr, std::move(block_data));
         block->original_size = uncompressed_size;
-        block->is_compressed = ret == 0;
+        block->is_compressed = is_compressed;
         block->index_key = index_key;
 
         tree_val new_value = {addr, uncompressed_size};
@@ -360,11 +366,15 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
 
             // decompress data from block data into tmp_buf
             uint64_t dst_size = block->original_size;
-            int ret = config->compressor.decompress(tmp_buf.data(), &dst_size, block->data.data(),
-                                                    block->data.size());
-            if (ret != 0) {
-                // invalid archive (wrong original size in storage block)
-                return static_cast<uint64_t>(static_cast<int64_t>(size) - remaining_size);
+            if (block->is_compressed) {
+                int ret = config->compressor.decompress(tmp_buf.data(), &dst_size, block->data.data(),
+                                                        block->data.size());
+                if (ret != 0) {
+                    // invalid archive (wrong original size in storage block)
+                    return static_cast<uint64_t>(static_cast<int64_t>(size) - remaining_size);
+                }
+            } else {
+                std::copy_n(block->data.begin(), block->data.size(), tmp_buf.data());
             }
 
             const auto bytes_to_copy = static_cast<int64_t>(end - static_cast<uint64_t>(current_offset));
