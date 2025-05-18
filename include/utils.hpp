@@ -30,7 +30,7 @@ template <> constexpr tree_key _min<tree_key>() { return {0, 0}; }
 template <class T> constexpr T _max();
 template <> constexpr tree_key _max<tree_key>() { return {(uint64_t)-1, (uint64_t)-1}; }
 
-tree_key get_key(const char* fname, uint64_t pos);
+uint64_t get_hash_tail(const char* fname);
 
 } // namespace compio
 
