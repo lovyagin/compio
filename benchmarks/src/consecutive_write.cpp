@@ -89,7 +89,7 @@ static void BM_compio_ConsecutiveWrite(benchmark::State& state) {
     remove(fn);
 }
 
-const std::vector<std::vector<int64_t>> params_grid = {{4096, 65536}, {512, 1024, 4096}};
+const std::vector<std::vector<int64_t>> params_grid = {{128, 1024}, {256, 512, 1024}};
 
 BENCHMARK(BM_stdio_ConsecutiveWrite)
     ->ArgsProduct(params_grid)
