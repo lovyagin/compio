@@ -21,6 +21,8 @@ void header::read_from(FILE* file, uint64_t addr) {
     lendian_fread_member(magic_number, file);
     lendian_fread_member(index_root, file);
     lendian_fread_member(file_size, file);
+    lendian_fread_member(allocator_state_offset, file);
+    lendian_fread_member(allocator_state_size, file);
     lendian_fread_member(ftable.n_files, file);
     for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
         lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
@@ -35,6 +37,8 @@ void header::write_to(FILE* file, uint64_t addr) const {
     lendian_fwrite_member(magic_number, file);
     lendian_fwrite_member(index_root, file);
     lendian_fwrite_member(file_size, file);
+    lendian_fwrite_member(allocator_state_offset, file);
+    lendian_fwrite_member(allocator_state_size, file);
     lendian_fwrite_member(ftable.n_files, file);
     for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
         lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
