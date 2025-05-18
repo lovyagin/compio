@@ -143,7 +143,7 @@ int compio_close_archive(compio_archive* archive) {
     delete archive->index;
 
     // Save allocator state
-    if (archive && archive->file && archive->allocator) {
+    if (archive && archive->file && archive->allocator && archive->header) {
         archive->allocator->blocks_manager_.save_to_file(archive);
     }
 

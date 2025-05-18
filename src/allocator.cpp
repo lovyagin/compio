@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <utils.hpp>
 #include <cassert>
+#include <cstring>
 #include <vector>
 
 namespace compio {
