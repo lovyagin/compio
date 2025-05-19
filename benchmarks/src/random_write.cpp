@@ -17,7 +17,7 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, file_size - block_size);
 
-    while (state.KeepRunning()) {
+    for (auto _ : state) {
         FILE* file = fopen(fn, "w+");
         if (!file) {
             state.SkipWithError("fopen failed");
@@ -44,7 +44,6 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.SetItemsProcessed(state.iterations() * n_blocks);
 
     remove(fn);
 }
@@ -61,7 +60,7 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, file_size - block_size);
 
-    while (state.KeepRunning()) {
+    for (auto _ : state) {
         compio_config config;
         compio_build_default_config(&config);
 
@@ -107,7 +106,6 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.SetItemsProcessed(state.iterations() * n_blocks);
 
     remove(fn);
 }
