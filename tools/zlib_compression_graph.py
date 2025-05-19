@@ -17,9 +17,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-bs", type=int, default=64, help="min block size")
     parser.add_argument("--max-bs", type=int, default=8192, help="max block size")
     parser.add_argument("--points", dest="points", type=int, default=50, help="number of points on graph")
-    parser.add_argument(
-        "--eval-iterations", type=int, default=3, help="number of iterations to take max for speed evaluation"
-    )
     args = parser.parse_args()
 
     if len(args.files) != len(args.titles):
@@ -29,49 +26,35 @@ def parse_args() -> argparse.Namespace:
 
 
 def main(args: argparse.Namespace) -> None:
-    fig, axes = plt.subplots(2, 1, sharex="col")
+    fig, axes = plt.subplots(1, 1, sharex="col")
     fig.set_figwidth(6)
-    fig.set_figheight(8)
+    fig.set_figheight(4)
 
-    opened_files = []
-    for filepath in args.files:
+    progress = iter(tqdm(range(len(args.files) * args.points * args.samples)))
+    block_sizes = np.linspace(args.min_bs, args.max_bs, args.points, dtype=np.int32)
+
+    for filepath, title in zip(args.files, args.titles):
         with open(filepath, "rb") as f:
             data = f.read()
         if len(data) < args.max_bs:
             raise RuntimeError(f"file {filepath} is too small ({len(data)} < {args.max_bs})")
-        opened_files.append(data)
 
-    block_sizes = np.linspace(args.min_bs, args.max_bs, args.points, dtype=np.int32)
-    parameters = list(itertools.product(range(len(args.titles)), enumerate(block_sizes), range(args.samples)))
-    random.shuffle(parameters)
+        comprates = np.zeros(args.points)
 
-    comprates = np.zeros((len(args.files), args.points))
-    speeds = np.zeros((len(args.files), args.points))
+        for j, block_size in enumerate(block_sizes):
+            for _ in range(args.samples):
+                next(progress)
+                start = random.randint(0, len(data) - block_size)
+                end = start + block_size
+                block = bytes(data[start:end])
+                comprates[j] += len(zlib.compress(block)) / block_size
 
-    for i, (j, block_size), _ in tqdm(parameters):
-        data = opened_files[i]
-        start = random.randint(0, len(data) - block_size)
-        end = start + block_size
-        block = bytes(data[start:end])
+        comprates /= args.samples
+        axes.plot(block_sizes, comprates, label=title)
 
-        start_time = time.time()
-        compressed_data = zlib.compress(block)
-        speeds[i, j] += block_size / 1000000 / (time.time() - start_time)
-        comprates[i, j] += len(compressed_data) / block_size
-
-    speeds /= args.samples
-    comprates /= args.samples
-
-    for i, title in enumerate(args.titles):
-        axes[0].plot(block_sizes, comprates[i], label=title)
-        axes[1].plot(block_sizes, speeds[i], label=title)
-
-    axes[0].set(title="ZLIB compression rate by block size", ylabel="compression rate", ylim=(0, 1.2))
-    axes[1].set(xlabel="block size", ylabel="MB/s", title="ZLIB compression speed by block size")
-    axes[0].grid(True)
-    axes[1].grid(True)
-    axes[0].legend()
-    axes[1].legend()
+    axes.set(title="ZLIB compression rate by block size", ylabel="compression rate", ylim=(0, 1.2))
+    axes.grid(True)
+    axes.legend()
     fig.savefig(args.o)
     plt.close()
 
