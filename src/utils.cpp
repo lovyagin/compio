@@ -35,24 +35,6 @@ uint8_t parse_mode(const char* mode) {
     return mode_b;
 }
 
-bool operator<(const tree_key& x, const tree_key& y) {
-    if (x.hash == y.hash)
-        return x.pos < y.pos;
-    return x.hash < y.hash;
-}
-
-bool operator==(const tree_key& x, const tree_key& y) { return x.hash == y.hash && x.pos == y.pos; }
-
-bool operator>(const tree_key& x, const tree_key& y) { return y < x; }
-
-bool operator<=(const tree_key& x, const tree_key& y) { return x < y || x == y; }
-
-bool operator>=(const tree_key& x, const tree_key& y) { return x > y || x == y; }
-
-bool operator!=(const tree_key& x, const tree_key& y) { return !(x == y); }
-
-tree_key operator+(tree_key x, uint64_t size) { return {x.hash, x.pos + size}; }
-
 uint64_t get_hash_tail(const char* fname) {
     hash_sha256 hash;
     hash.sha256_init();
