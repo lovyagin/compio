@@ -11,9 +11,9 @@ if (WIN32)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS True)
 endif()
 
-add_compile_definitions(WARNING_PRINT_ENABLED)
+# add_compile_definitions(WARNING_PRINT_ENABLED)
 # add_compile_definitions(DEBUG_PRINT_ENABLED)
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE RelWithDebInfo)
 
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 
