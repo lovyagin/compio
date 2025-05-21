@@ -32,7 +32,7 @@ public:
     node_reader(FILE* file, int tree_degree, int max_size);
     shared_node read_node(uint64_t addr);
     shared_node create_node(uint64_t addr);
-    void remove_node(shared_node node);
+    void remove_node(const shared_node& node);
 
 private:
     int tree_degree;
@@ -63,14 +63,14 @@ public:
      * @param key
      * @param value
      */
-    void insert(tree_key key, tree_val value);
+    void insert(const tree_key& key, const tree_val& value);
 
     /**
      * @brief Remove element by key from B-Tree
      *
      * @param key
      */
-    void remove(tree_key key);
+    void remove(const tree_key& key);
 
     /**
      * @brief Get list of blocks addresses in ascending by key order,
@@ -84,8 +84,7 @@ public:
      * @param key_max
      * @return std::vector<uint64_t>
      */
-    void get_range(tree_key key_min, tree_key key_max,
-                   std::vector<std::pair<tree_key, tree_val>>& result);
+    void get_range(const tree_key& key_min, const tree_key& key_max, std::vector<std::pair<tree_key, tree_val>>& result);
 
     /**
      * @brief Update element
@@ -94,7 +93,7 @@ public:
      * @param new_value
      * @return true on success
      */
-    bool update(tree_key key, tree_val new_value);
+    bool update(const tree_key& key, const tree_val& new_value);
 
     // private:
     int degree;
@@ -106,22 +105,21 @@ public:
      * @param key
      * @return uint64_t
      */
-    uint64_t search_node(tree_key key);
+    uint64_t search_node(const tree_key& key);
 
-    void insert_nonfull(shared_node node, tree_key key, tree_val value);
-    void split_child(shared_node parent, shared_node child, int index);
-    void merge_children(shared_node parent, int idx);
-    void borrow_from_prev(shared_node parent, int idx);
-    void borrow_from_next(shared_node parent, int idx);
-    std::pair<tree_key, tree_val> find_max_in_node(const shared_node node);
-    std::pair<tree_key, tree_val> find_min_in_node(const shared_node node);
-    void remove_node(shared_node node, tree_key key);
-    void get_range_in_node(const shared_node& node, tree_key key_min, tree_key key_max,
-                           std::vector<std::pair<tree_key, tree_val>>& result);
-    bool update_in_node(shared_node node, tree_key key, tree_val new_value);
+    void insert_nonfull(shared_node& node, const tree_key& key, const tree_val& value);
+    void split_child(shared_node& parent, shared_node& child, int index);
+    void merge_children(shared_node& parent, int idx);
+    void borrow_from_prev(shared_node& parent, int idx);
+    void borrow_from_next(shared_node& parent, int idx);
+    std::pair<tree_key, tree_val> find_max_in_node(const shared_node& node);
+    std::pair<tree_key, tree_val> find_min_in_node(const shared_node& node);
+    void remove_node(shared_node& node, const tree_key& key);
+    void get_range_in_node(const shared_node& node, const tree_key& key_min, const tree_key& key_max, std::vector<std::pair<tree_key, tree_val>>& result);
+    bool update_in_node(shared_node& node, const tree_key& key, const tree_val& new_value);
 
     uint64_t allocate_node() const;
-    void free_node(shared_node node);
+    void free_node(const shared_node& node);
     shared_node create_node();
     shared_node read_node(uint64_t addr);
     shared_node read_root();
