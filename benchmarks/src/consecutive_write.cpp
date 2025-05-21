@@ -1,5 +1,6 @@
 #include "compio.h"
 #include "sample_data.hpp"
+#include "util.hpp"
 
 #include <random>
 
@@ -33,6 +34,8 @@ static void BM_stdio_ConsecutiveWrite(benchmark::State& state) {
         }
 
         fclose(file);
+
+        state.counters["file_size"] = get_file_size(fn);
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
@@ -80,6 +83,8 @@ static void BM_compio_ConsecutiveWrite(benchmark::State& state) {
 
         compio_close_file(file);
         compio_close_archive(archive);
+
+        state.counters["file_size"] = get_file_size(fn);
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
