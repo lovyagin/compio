@@ -42,6 +42,7 @@ struct compio_file {
     char name[COMPIO_FNAME_MAX_SIZE]; /**< Internal filename */
     uint64_t cursor;                  /**< File cursor */
     uint64_t size;                    /**< File size */
+    uint64_t hash_tail;               /**< Last 8 bytes of hashed filename */
 };
 
 #endif // COMPIO_FILE_HEADER_

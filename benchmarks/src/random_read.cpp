@@ -47,7 +47,7 @@ static void BM_stdio_RandomRead(benchmark::State& state) {
         fclose(file);
     }
 
-    while (state.KeepRunning()) {
+    for (auto _ : state) {
         FILE* file = fopen(fn, "r");
         if (!file) {
             state.SkipWithError("fopen failed");
@@ -80,7 +80,6 @@ static void BM_stdio_RandomRead(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.SetItemsProcessed(state.iterations() * n_blocks);
 
     delete[] buffer;
     remove(fn);
@@ -139,7 +138,7 @@ static void BM_compio_RandomRead(benchmark::State& state) {
         compio_close_archive(archive);
     }
 
-    while (state.KeepRunning()) {
+    for (auto _ : state) {
         compio_config config;
         compio_build_default_config(&config);
 
@@ -185,16 +184,15 @@ static void BM_compio_RandomRead(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.SetItemsProcessed(state.iterations() * n_blocks);
 
     delete[] buffer;
     remove(fn);
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {4096, 65536},
-    {512, 1024, 4096},
-    {65536, 65536 * 16},
+    {128, 1024},
+    {256, 512, 1024},
+    {16384, 32768},
 };
 
 BENCHMARK(BM_stdio_RandomRead)

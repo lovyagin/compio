@@ -13,10 +13,12 @@
 
 using namespace compio;
 
+extern "C" {
+
 void compio_build_default_config(compio_config* result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
-    result->fill_holes_with_zeros = true;
+    result->fill_holes_with_zeros = false;
     result->block_size = 4096;
     result->cache_size = 128;
     result->block_cache_size = 16;
@@ -112,6 +114,8 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
     file->archive = archive;
     strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
 
+    file->hash_tail = get_hash_tail(name);
+
     return file;
 }
 
@@ -187,8 +191,8 @@ uint64_t compio_tell(compio_file* file) { return file->cursor; }
 static auto get_range_in_file(compio_file* file, uint64_t size) {
     // return range of blocks, that intersect [cursor, cursor + size)
     std::vector<std::pair<tree_key, tree_val>> range;
-    auto key_min = get_key(file->name, file->cursor);
-    auto key_max = get_key(file->name, file->cursor + size);
+    tree_key key_min = {file->hash_tail, file->cursor};
+    tree_key key_max = {file->hash_tail, file->cursor + size};
     file->archive->index->get_range(key_min, key_max, range);
     return range;
 }
@@ -277,7 +281,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         std::vector<uint8_t> block_data(size);
         bool is_compressed = true;
 
-        auto index_key = get_key(file->name, b_start);
+        tree_key index_key = {file->hash_tail, b_start};
         int ret = config->compressor.compress(block_data.data(), &size, &(*p_buf), uncompressed_size);
         if (ret != 0 || size > uncompressed_size) {
             // if failed to compress or compressed size > uncompressed size, write uncompressed data instead
@@ -389,4 +393,6 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     uint64_t bytes_read = static_cast<int64_t>(size) - remaining_size;
     file->cursor += bytes_read;
     return bytes_read;
+}
+
 }

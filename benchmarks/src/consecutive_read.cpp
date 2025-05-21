@@ -15,7 +15,7 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d(0, sizeof(html_data) - block_size);
 
-    char* buffer = new char[block_size];
+    std::vector<char> buffer(block_size);
 
     {
         // prepare file
@@ -38,7 +38,7 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
         fclose(file);
     }
 
-    while (state.KeepRunning()) {
+    for (auto _ : state) {
         FILE* file = fopen(fn, "r");
         if (!file) {
             state.SkipWithError("fopen failed");
@@ -47,7 +47,7 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
 
         bool failed = false;
         for (std::size_t i = 0; i < n_blocks; ++i) {
-            auto bytes = fread(buffer, 1, block_size, file);
+            auto bytes = fread(buffer.data(), 1, block_size, file);
             if (bytes != block_size) {
                 fclose(file);
                 state.SkipWithError(std::string("fread returned ") + std::to_string(bytes) +
@@ -65,7 +65,6 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.SetItemsProcessed(state.iterations() * n_blocks);
 
     remove(fn);
 }
@@ -80,7 +79,7 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d(0, sizeof(html_data) - block_size);
 
-    char* buffer = new char[block_size];
+    std::vector<char> buffer(block_size);
 
     {
         // prepare file
@@ -115,11 +114,11 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
         compio_close_archive(archive);
     }
 
-    while (state.KeepRunning()) {
+    for (auto _ : state) {
         compio_config config;
         compio_build_default_config(&config);
 
-        compio_archive* archive = compio_open_archive(fn, "w+", &config);
+        compio_archive* archive = compio_open_archive(fn, "r", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
             break;
@@ -134,7 +133,7 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
 
         bool failed = false;
         for (std::size_t i = 0; i < n_blocks; ++i) {
-            auto bytes = compio_write(html_data + d(rng), block_size, file);
+            auto bytes = compio_read(buffer.data(), block_size, file);
             if (bytes != block_size) {
                 compio_close_file(file);
                 compio_close_archive(archive);
@@ -154,12 +153,11 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.SetItemsProcessed(state.iterations() * n_blocks);
 
     remove(fn);
 }
 
-const std::vector<std::vector<int64_t>> params_grid = {{4096, 65536}, {512, 1024, 4096}};
+const std::vector<std::vector<int64_t>> params_grid = {{128, 1024}, {256, 512, 1024}};
 
 BENCHMARK(BM_stdio_ConsecutiveRead)
     ->ArgsProduct(params_grid)

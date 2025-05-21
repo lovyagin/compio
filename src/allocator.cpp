@@ -19,6 +19,8 @@
 
 namespace compio {
 
+uint8_t ZEROS[4096] = {0};
+
     free_blocks_manager::free_blocks_manager(uint64_t* file_size)
     : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
     total_free_(0), file_size_(file_size), cached_fragmentation_(0) {
@@ -540,10 +542,10 @@ namespace compio {
         blocks_manager_.update_fragmentation();
 
         if (archive_->config->fill_holes_with_zeros && archive_->file) {
-            std::vector<uint8_t> zeros(size, 0);
             fseek(archive_->file, offset, SEEK_SET);
-            fwrite(zeros.data(), 1, size, archive_->file);
-            fflush(archive_->file);
+            for (int i = 0; i < size; i += sizeof(ZEROS)) {
+                fwrite(ZEROS, 1, std::min(sizeof(ZEROS), size - i), archive_->file);
+            }
         }
     }
 

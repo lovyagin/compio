@@ -10,19 +10,41 @@ enum mode_bit { r = 0b0001, w = 0b0010, a = 0b0100, plus = 0b1000 };
 
 uint8_t parse_mode(const char* mode);
 
-tree_key operator+(tree_key x, uint64_t size);
+inline bool operator<(const tree_key& x, const tree_key& y) {
+    if (x.hash == y.hash)
+        return x.pos < y.pos;
+    return x.hash < y.hash;
+}
 
-bool operator<(const tree_key& x, const tree_key& y);
+inline bool operator==(const tree_key& x, const tree_key& y) {
+    return x.hash == y.hash && x.pos == y.pos;
+}
 
-bool operator>(const tree_key& x, const tree_key& y);
+inline bool operator>(const tree_key& x, const tree_key& y) {
+    if (x.hash == y.hash)
+        return x.pos > y.pos;
+    return x.hash > y.hash;
+}
 
-bool operator<=(const tree_key& x, const tree_key& y);
+inline bool operator<=(const tree_key& x, const tree_key& y) {
+    if (x.hash == y.hash)
+        return x.pos <= y.pos;
+    return x.hash <= y.hash;
+}
 
-bool operator>=(const tree_key& x, const tree_key& y);
+inline bool operator>=(const tree_key& x, const tree_key& y) {
+    if (x.hash == y.hash)
+        return x.pos >= y.pos;
+    return x.hash >= y.hash;
+}
 
-bool operator==(const tree_key& x, const tree_key& y);
+inline bool operator!=(const tree_key& x, const tree_key& y) {
+    return x.hash != y.hash || x.pos != y.pos;
+}
 
-bool operator!=(const tree_key& x, const tree_key& y);
+inline tree_key operator+(const tree_key& x, uint64_t size) {
+    return {x.hash, x.pos + size};
+}
 
 template <class T> constexpr T _min();
 template <> constexpr tree_key _min<tree_key>() { return {0, 0}; }
@@ -30,7 +52,7 @@ template <> constexpr tree_key _min<tree_key>() { return {0, 0}; }
 template <class T> constexpr T _max();
 template <> constexpr tree_key _max<tree_key>() { return {(uint64_t)-1, (uint64_t)-1}; }
 
-tree_key get_key(const char* fname, uint64_t pos);
+uint64_t get_hash_tail(const char* fname);
 
 } // namespace compio
 

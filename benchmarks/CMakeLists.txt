@@ -35,3 +35,13 @@ target_include_directories(fsize_benchmark PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+add_executable(fragmentation custom/fragmentation.cpp)
+
+target_link_libraries(fragmentation PRIVATE compio)
+
+target_include_directories(fragmentation PRIVATE 
+    ${CMAKE_SOURCE_DIR} 
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
