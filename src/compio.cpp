@@ -18,7 +18,7 @@ extern "C" {
 void compio_build_default_config(compio_config* result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
-    result->fill_holes_with_zeros = true;
+    result->fill_holes_with_zeros = false;
     result->block_size = 4096;
     result->cache_size = 128;
     result->block_cache_size = 16;
