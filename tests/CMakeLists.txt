@@ -13,6 +13,7 @@ target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
 target_include_directories(compio_gtest PRIVATE 
     ${CMAKE_SOURCE_DIR} 
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 enable_testing()

@@ -3,6 +3,7 @@
 
 #include "compio.h"
 #include "compio_file.hpp"
+#include "sample_data.hpp"
 
 class WriteReadNBytesTest : public ::testing::TestWithParam<uint64_t> {
 protected:
@@ -212,5 +213,96 @@ INSTANTIATE_TEST_CASE_P(
         std::pair<int, int>(16, 203),
         std::pair<int, int>(64, 203),
         std::pair<int, int>(256, 203)
+    )
+);
+
+class RandomUsageTest : public ::testing::TestWithParam<std::pair<int, int>> {};
+
+TEST_P(RandomUsageTest, RandomUsage) {
+    compio_config config;
+    compio_archive* archive;
+    compio_file* file;
+    char fn[L_tmpnam];
+
+    compio_build_default_config(&config);
+    // TODO: test (50000, 1000) fails when setting lower block_size (f.e. 128)
+    // it fails only on one compio_read operation, that happens in the first 1000 iterations, 
+    // but after than compio_read everything works fine
+
+    tmpnam(fn);
+
+    archive = compio_open_archive(fn, "w+", &config);
+    file = compio_open_file("A", archive);
+
+    auto [file_size, n_operations] = GetParam();
+
+    std::vector<unsigned char> file_data(file_size, 0);
+    std::vector<unsigned char> buffer(file_size);
+    int cursor = 0;
+    int current_fsize = 0;
+
+    std::minstd_rand0 rng(0);
+    std::uniform_int_distribution<int> d_op(0, 3);
+    std::uniform_int_distribution<int> d_pos(0, file_size - 2);
+
+    for (int i = 0; i < n_operations; ++i) {
+        // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
+        switch (d_op(rng)) {
+        case 0: {
+            cursor = d_pos(rng);
+            // fprintf(stderr, "compio_seek(%d)\n", cursor);
+            EXPECT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+            break;
+        }
+        case 1: {
+            // fprintf(stderr, "compio_tell() = %d\n", cursor);
+            EXPECT_EQ(compio_tell(file), cursor);
+            break;
+        }
+        case 2: {
+            if (cursor < current_fsize) {
+                int max_size = current_fsize - cursor;
+                std::uniform_int_distribution<int> d_size(1, max_size);
+                int size = d_size(rng);
+                // fprintf(stderr, "compio_read(%d, %d)\n", cursor, size);
+                EXPECT_EQ(compio_read(buffer.data(), size, file), size);
+                for (int i = 0; i < size; ++i) {
+                    EXPECT_EQ(buffer[i], file_data[cursor + i]);
+                }
+                cursor += size;
+                break;
+            }
+        }
+        case 3: {
+            if (cursor < file_size) {
+                std::uniform_int_distribution<int> d_size(1, std::min(static_cast<uint64_t>(file_size - cursor), sizeof(html_data)));
+                int size = d_size(rng);
+                std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
+                int start = d_start(rng);
+                // fprintf(stderr, "compio_write(%d, %d)\n", start, size);
+                EXPECT_EQ(compio_write(html_data + start, size, file), size);
+                std::copy_n(html_data + start, size, file_data.data() + cursor);
+                cursor += size;
+                current_fsize = std::max(current_fsize, cursor);
+                break;
+            }
+        }
+        }
+    }
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+
+    remove(fn);
+}
+
+INSTANTIATE_TEST_CASE_P(
+    RandomUsageTests, 
+    RandomUsageTest, 
+    ::testing::Values(
+        std::pair<int, int>(5000, 10000),
+        std::pair<int, int>(10000, 10000),
+        std::pair<int, int>(10000, 100000),
+        std::pair<int, int>(50000, 100000)
     )
 );
