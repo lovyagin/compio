@@ -92,8 +92,8 @@ void storage_block::read_from(FILE* file, uint64_t addr) {
     lendian_fread_member(original_size, file);
     lendian_fread_member(index_key.hash, file);
     lendian_fread_member(index_key.pos, file);
-    data.resize(size);
-    lendian_fread(data.data(), 1, size, file);
+    data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
+    lendian_fread(data.get(), 1, size, file);
 }
 
 void storage_block::write_to(FILE* file, uint64_t addr) const {
@@ -105,7 +105,7 @@ void storage_block::write_to(FILE* file, uint64_t addr) const {
     lendian_fwrite_member(original_size, file);
     lendian_fwrite_member(index_key.hash, file);
     lendian_fwrite_member(index_key.pos, file);
-    lendian_fwrite(data.data(), 1, size, file);
+    lendian_fwrite(data.get(), 1, size, file);
 }
 
 index_node::index_node(int tree_degree)
@@ -116,16 +116,16 @@ index_node::index_node(int tree_degree)
       values(2 * tree_degree - 1),
       children(2 * tree_degree) {}
 
-storage_block::storage_block() {}
+storage_block::storage_block() : data(nullptr) {}
 
-storage_block::storage_block(std::vector<uint8_t>&& data)
+storage_block::storage_block(std::unique_ptr<uint8_t[]>&& data, uint64_t size)
     : is_compressed(0),
-      size(data.size()),
+      size(size),
       original_size(0),
       index_key({0, 0}),
-      data(data) {}
+      data(std::move(data)) {}
 
-storage_block::storage_block(uint64_t size) : storage_block(std::vector<uint8_t>(size)) {}
+storage_block::storage_block(uint64_t size) : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
 
 files_table::files_table() : n_files(0) {}
 

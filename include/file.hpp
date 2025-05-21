@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <vector>
+#include <memory>
 
 #include "compio.h"
 #include "infile_object.hpp"
@@ -139,11 +140,11 @@ struct storage_block : public infile_object {
     uint64_t size;             /**< Size of data array */
     uint64_t original_size;    /**< Original size (size of uncompressed data) */
     tree_key index_key;        /**< Index key of this block */
-    std::vector<uint8_t> data; /**< Data block */
+    std::unique_ptr<uint8_t[]> data; /**< Data block */
 
     storage_block();
 
-    storage_block(std::vector<uint8_t>&& data);
+    storage_block(std::unique_ptr<uint8_t[]>&& data, uint64_t size);
 
     /**
      * @brief Construct storage block with data of size

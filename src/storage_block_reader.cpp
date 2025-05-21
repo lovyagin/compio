@@ -16,8 +16,8 @@ smart_infile_object<storage_block> storage_block_reader::read_block(uint64_t add
     }
 }
 
-smart_infile_object<storage_block> storage_block_reader::create_block(uint64_t addr, std::vector<uint8_t>&& data) {
-    auto result = smart_infile_object<storage_block>(file, addr, new storage_block(std::move(data)));
+smart_infile_object<storage_block> storage_block_reader::create_block(uint64_t addr, std::unique_ptr<uint8_t[]>&& data, uint64_t size) {
+    auto result = smart_infile_object<storage_block>(file, addr, new storage_block(std::move(data), size));
     cache.put(addr, result);
     return result;
 }

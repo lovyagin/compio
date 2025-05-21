@@ -7,6 +7,8 @@
 #include "infile_object.hpp"
 #include "storage_block_reader.hpp"
 
+#include <memory>
+
 // forward declaration
 namespace compio {
 class btree;
@@ -32,6 +34,8 @@ struct compio_archive {
     compio_archive(FILE* file, uint8_t mode_b, const compio_config* config);
 
     compio::block_allocator* allocator;
+
+    std::unique_ptr<uint8_t[]> tmp_buf;
 };
 
 /**
