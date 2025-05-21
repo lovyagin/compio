@@ -13,6 +13,8 @@
 
 using namespace compio;
 
+extern "C" {
+
 void compio_build_default_config(compio_config* result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
@@ -391,4 +393,6 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     uint64_t bytes_read = static_cast<int64_t>(size) - remaining_size;
     file->cursor += bytes_read;
     return bytes_read;
+}
+
 }

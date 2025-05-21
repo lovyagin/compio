@@ -21,6 +21,10 @@
 #define COMPIO_MAX_FILES 64      /**< Maximum number of files in archive */
 #define COMPIO_FNAME_MAX_SIZE 32 /**< File name maximum length */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * @brief Compressor interface
  */
@@ -53,9 +57,6 @@ typedef struct compio_compressor {
  *
  * @param result
  */
-#ifdef __cplusplus
-extern "C" {
-#endif
 void compio_build_dummy_compressor(compio_compressor* result);
 
 /**
@@ -65,9 +66,6 @@ void compio_build_dummy_compressor(compio_compressor* result);
  */
 void compio_build_zlib_compressor(compio_compressor* result);
 
-#ifdef __cplusplus
-}
-#endif
 
 typedef enum {
     COMPIO_ALLOC_FIRST_FIT,
@@ -84,16 +82,16 @@ typedef struct {
      * @brief Compressor, that will be used for this file
      */
     compio_compressor compressor;
-
+    
     int b_tree_degree; /**< Maximum number of children of B-Tree node */
     int block_size;
-
+    
     /**
      * @brief Fill deleted blocks with zeros, so that OS may optimize it (see
      * sparse files)
      */
     bool fill_holes_with_zeros;
-
+    
     int cache_size; /**< Maximum number of b-tree nodes in cache */
     int block_cache_size; /**< Maximum number of storage blocks in cache */
     compio_allocation_strategy allocation_strategy;
@@ -206,5 +204,9 @@ int compio_close_file(compio_file* file);
  * @return int
  */
 int compio_close_archive(compio_archive* archive);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // COMPIO_COMPIO_H
