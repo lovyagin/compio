@@ -84,7 +84,8 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
 }
 
 compio_file* compio_open_file(const char* name, compio_archive* archive) {
-    if (size_t name_len = strlen(name); name_len > COMPIO_FNAME_MAX_SIZE) {
+    size_t name_len = strlen(name);
+    if (name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return NULL;
     }
@@ -122,7 +123,8 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
 }
 
 int compio_remove_file(compio_archive* archive, const char* name) {
-    if (size_t name_len = strlen(name); name_len > COMPIO_FNAME_MAX_SIZE) {
+    size_t name_len = strlen(name);
+    if (name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return -2;
     }

@@ -356,7 +356,8 @@ bool btree::update_in_node(shared_node& node, const tree_key& key, const tree_va
     const auto num_keys = RO(node)->num_keys;
     const auto is_leaf = RO(node)->is_leaf;
     for (int i = 0; i < num_keys; ++i) {
-        if (auto current_key = RO(node)->keys[i]; current_key >= key) {
+        auto current_key = RO(node)->keys[i];
+        if (current_key >= key) {
             if (current_key == key) {
                 node->values[i] = new_value;
                 return true;
