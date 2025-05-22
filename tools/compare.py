@@ -2,6 +2,7 @@ import argparse
 import json
 import re
 import csv
+import itertools
 import numpy as np
 from typing import List, Tuple, Dict, Any
 
@@ -70,28 +71,36 @@ class ArgCounter:
     reversed: str = "false"
 
 
-@dataclass
-class ArgFilter:
-    filter: str
-    name: str | None = None
+# @dataclass
+# class ArgFilter:
+#     filter: str
+#     name: str | None = None
 
-    def __post_init__(self):
-        if self.name is None:
-            self.name = self.filter
+#     def __post_init__(self):
+#         if self.name is None:
+#             self.name = self.filter
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "report_file",
+        "--report-files",
         type=str,
-        help="path to gbench report file",
+        nargs="+",
+        help="paths to gbench report files",
     )
     parser.add_argument(
-        "filters",
-        nargs=2,
-        type=dataclass_arguments(ArgFilter),
-        help="benchmark filters to compare (filter, [name])",
+        "--filters",
+        default=[],
+        nargs="*",
+        type=str,
+        help="benchmark filters to compare",
+    )
+    parser.add_argument(
+        "--names",
+        nargs="+",
+        type=str,
+        help="benchmark+filter names for output",
     )
     parser.add_argument(
         "--counters",
@@ -114,7 +123,29 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="path to output file",
     )
-    return parser.parse_args()
+
+    args = parser.parse_args()
+    if len(args.report_files) == 1 and len(args.filters) > 0:
+        args.inputs = list(zip(itertools.repeat(args.report_files[0]), args.filters))
+        args.input_type = "one benchmark, many filters"
+    elif len(args.report_files) > 1 and len(args.filters) == 0:
+        args.inputs = list(zip(args.report_files, itertools.repeat("")))
+        args.input_type = "many benchmarks, no filters"
+    elif len(args.report_files) > 1 and len(args.filters) == 1:
+        args.inputs = list(zip(args.report_files, itertools.repeat(args.filters[0])))
+        args.input_type = "many benchmarks, one filter"
+    elif len(args.report_files) == len(args.filters):
+        args.inputs = list(zip(args.report_files, args.filters))
+        args.input_type = "many benchmarks, many filters"
+    else:
+        raise ValueError(f"invalid number of report_files and filters")
+
+    if len(args.inputs) != len(args.names):
+        raise ValueError(f"invalid number of names")
+    else:
+        args.inputs = list(zip(*zip(*args.inputs), args.names))
+
+    return args
 
 
 def format_table_row(values: List[str]) -> str:
@@ -130,69 +161,67 @@ def highlight_value(value: str) -> str:
 
 
 def main(args: argparse.Namespace) -> None:
-    with open(args.report_file, "r", encoding="utf-8") as f:
-        report = json.load(f)
-
-    context = report["context"]
-    benchmarks = report["benchmarks"]
-
     result = "# Benchmark report\n\n"
-    for key in args.context_keys:
-        result += f"+ {key}: {context[key]}\n"
-    result += "\n"
-
-    filters = [re.compile(f.filter) for f in args.filters]
-
-    corr_benchmarks = [defaultdict(list) for _ in args.filters]
     keys = []
+    all_benchmarks = []
+    context_printed = False
 
-    for benchmark in benchmarks:
-        if "repetition_index" not in benchmark:
-            # aggregate value
-            continue
-        for i, f in enumerate(filters):
-            if f.search(benchmark["name"]) is not None:
-                key = f.sub("", benchmark["name"])
-                corr_benchmarks[i][key].append(benchmark)
+    for report_file, filter_, name in args.inputs:
+        with open(report_file, "r", encoding="utf-8") as f:
+            report = json.load(f)
+
+        if len(args.context_keys) > 0:
+            if "one benchmark" not in args.input_type or not context_printed:
+                if "one_benchmark" in args.input_type:
+                    result += f"### {name}:\n\n"
+                for key in args.context_keys:
+                    result += f"+ {key}: {report["context"][key]}\n"
+                result += "\n"
+                context_printed = True
+
+        filter_re = re.compile(filter_)
+        benchmarks_by_key = defaultdict(list)
+
+        for benchmark in report["benchmarks"]:
+            if "repetition_index" not in benchmark:
+                # aggregate value
+                continue
+            if filter_re.search(benchmark["name"]) is not None:
+                key = filter_re.sub("", benchmark["name"])
+                benchmarks_by_key[key].append(benchmark)
                 if key not in keys:
                     keys.append(key)
-                break
 
-    keys_presented_in_both = set.union(
-        *[set(corr_benchmarks[i].keys()) for i in range(len(args.filters))]
-    )
-    keys = [k for k in keys if k in keys_presented_in_both]
+        all_benchmarks.append(benchmarks_by_key)
+
+    N = len(args.inputs)
+    mutual_keys = set.intersection(*[set(all_benchmarks[i].keys()) for i in range(N)])
+    keys = [k for k in keys if k in mutual_keys]
 
     rows = []
 
     # table header
     rows.append(
         ["benchmark_name"]
-        + [f"{c.name} [{f.name}]" for c in args.counters for f in args.filters]
+        + [f"{c.name} [{name}]" for c in args.counters for _, _, name in args.inputs]
     )
 
     # separator
-    rows.append(["-"] * (len(args.counters) * len(args.filters) + 1))
+    rows.append(["-"] * (len(args.counters) * N + 1))
 
     # rows
     for key in keys:
         row = [key]
         for counter in args.counters:
             row_segment = []
-            for i in range(len(args.filters)):
-                values = np.array([b[counter.name] for b in corr_benchmarks[i][key]])
+            for i in range(N):
+                values = np.array([b[counter.name] for b in all_benchmarks[i][key]])
+                mean_val, mean_unit = format_(values.mean(), counter.format_type)
+                formatted_value = f"{mean_val} {mean_unit}"
                 if counter.show_std == "true":
-                    mean_val, mean_unit = format_(values.mean(), counter.format_type)
                     std_val, std_unit = format_(values.std(), counter.format_type)
-                    row_segment.append(
-                        (
-                            f"{mean_val} {mean_unit} ± {std_val} {std_unit}",
-                            values.mean(),
-                        )
-                    )
-                else:
-                    mean_val, mean_unit = format_(values.mean(), counter.format_type)
-                    row_segment.append((f"{mean_val} {mean_unit}", values.mean()))
+                    formatted_value += f" ± {std_val} {std_unit}"
+                row_segment.append((formatted_value, values.mean()))
 
             # find best score and highlight
             max_column_idx = sorted(
@@ -202,6 +231,7 @@ def main(args: argparse.Namespace) -> None:
             )[0][0]
             row_segment = [x[0] for x in row_segment]
             row_segment[max_column_idx] = highlight_value(row_segment[max_column_idx])
+
             row.extend(row_segment)
         rows.append(row)
 
