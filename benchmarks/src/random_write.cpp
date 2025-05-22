@@ -42,11 +42,10 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
         }
 
         fclose(file);
-        
-        state.counters["file_size"] = get_file_size(fn);
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
+    state.counters["file_size"] = get_file_size(fn);
 
     remove(fn);
 }
@@ -106,11 +105,10 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
 
         compio_close_file(file);
         compio_close_archive(archive);
-        
-        state.counters["file_size"] = get_file_size(fn);
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
+    state.counters["file_size"] = get_file_size(fn);
 
     remove(fn);
 }
