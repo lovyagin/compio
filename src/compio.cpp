@@ -193,7 +193,14 @@ uint64_t compio_tell(compio_file* file) { return file->cursor; }
 static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file* file, uint64_t size) {
     // return range of blocks, that intersect [cursor, cursor + size)
     std::vector<std::pair<tree_key, tree_val>> range;
-    range.reserve((std::min(file->cursor + size, file->size) - file->cursor) / file->archive->config->block_size);
+
+    // reserve number of blocks, that should be in the tree
+    int64_t n_blocks = std::min<int64_t>(file->cursor + size, file->size);
+    n_blocks -= static_cast<int64_t>(file->cursor);
+    n_blocks = std::max<int64_t>(0l, n_blocks);
+    n_blocks /= file->archive->config->block_size;
+    range.reserve(n_blocks);
+    
     tree_key key_min = {file->hash_tail, file->cursor};
     tree_key key_max = {file->hash_tail, file->cursor + size};
     file->archive->index->get_range(key_min, key_max, range);
