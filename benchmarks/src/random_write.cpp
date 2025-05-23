@@ -2,6 +2,10 @@
 #include "sample_data.hpp"
 #include "util.hpp"
 
+#ifdef BM_FILE_OPERATIONS_COUNTER
+#include "infile_object.hpp"
+#endif
+
 #include <random>
 
 #include <benchmark/benchmark.h>
@@ -47,6 +51,13 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
     state.counters["file_size"] = get_file_size(fn);
 
+#ifdef BM_FILE_OPERATIONS_COUNTER
+    state.counters["read_bytes_per_op"] =
+        benchmark::Counter(0, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["written_bytes_per_op"] =
+        benchmark::Counter(block_size, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+#endif
+
     remove(fn);
 }
 
@@ -61,6 +72,13 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, file_size - block_size);
+
+#ifdef BM_FILE_OPERATIONS_COUNTER
+    state.counters["read_bytes_per_op"] =
+        benchmark::Counter(0, benchmark::Counter::kAvgIterations, benchmark::Counter::kIs1024);
+    state.counters["written_bytes_per_op"] =
+        benchmark::Counter(0, benchmark::Counter::kAvgIterations, benchmark::Counter::kIs1024);
+#endif
 
     for (auto _ : state) {
         compio_config config;
@@ -78,6 +96,11 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
             state.SkipWithError("compio_open_file failed");
             break;
         }
+
+#ifdef BM_FILE_OPERATIONS_COUNTER
+        int n_read_bytes_start = get_n_read_bytes();
+        int n_written_bytes_start = get_n_written_bytes();
+#endif
 
         bool failed = false;
         for (std::size_t i = 0; i < n_blocks; ++i) {
@@ -102,6 +125,15 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
         if (failed) {
             break;
         }
+
+        compio_flush(archive);
+
+#ifdef BM_FILE_OPERATIONS_COUNTER
+        state.counters["read_bytes_per_op"] +=
+            static_cast<double>(get_n_read_bytes() - n_read_bytes_start) / n_blocks;
+        state.counters["written_bytes_per_op"] +=
+            static_cast<double>(get_n_written_bytes() - n_written_bytes_start) / n_blocks;
+#endif
 
         compio_close_file(file);
         compio_close_archive(archive);
