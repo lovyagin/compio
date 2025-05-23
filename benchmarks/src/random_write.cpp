@@ -15,15 +15,14 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
     const size_t block_size = state.range(1);
     const size_t file_size = state.range(2);
 
-    char fn[L_tmpnam];
-    tmpnam(fn);
+    std::string fn = get_temporary_filename();
 
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, file_size - block_size);
 
     for (auto _ : state) {
-        FILE* file = fopen(fn, "w+");
+        FILE* file = fopen(fn.c_str(), "w+");
         if (!file) {
             state.SkipWithError("fopen failed");
             break;
@@ -49,7 +48,7 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.counters["file_size"] = get_file_size(fn);
+    state.counters["file_size"] = get_file_size(fn.c_str());
 
 #ifdef BM_FILE_OPERATIONS_COUNTER
     state.counters["read_bytes_per_op"] =
@@ -58,7 +57,7 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
         benchmark::Counter(block_size, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 #endif
 
-    remove(fn);
+    remove(fn.c_str());
 }
 
 static void BM_compio_RandomWrite(benchmark::State& state) {
@@ -66,8 +65,7 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
     const size_t block_size = state.range(1);
     const size_t file_size = state.range(2);
 
-    char fn[L_tmpnam];
-    tmpnam(fn);
+    std::string fn = get_temporary_filename();
 
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
@@ -84,7 +82,7 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
         compio_config config;
         compio_build_default_config(&config);
 
-        compio_archive* archive = compio_open_archive(fn, "w+", &config);
+        compio_archive* archive = compio_open_archive(fn.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
             break;
@@ -140,9 +138,9 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.counters["file_size"] = get_file_size(fn);
+    state.counters["file_size"] = get_file_size(fn.c_str());
 
-    remove(fn);
+    remove(fn.c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
