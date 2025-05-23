@@ -13,6 +13,7 @@ endif()
 
 # add_compile_definitions(WARNING_PRINT_ENABLED)
 # add_compile_definitions(DEBUG_PRINT_ENABLED)
+add_compile_definitions(BM_FILE_OPERATIONS_COUNTER)
 set(CMAKE_BUILD_TYPE RelWithDebInfo)
 
 set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
