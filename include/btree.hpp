@@ -33,6 +33,7 @@ public:
     shared_node read_node(uint64_t addr);
     shared_node create_node(uint64_t addr);
     void remove_node(const shared_node& node);
+    void clear_cache();
 
 private:
     int tree_degree;
@@ -127,7 +128,6 @@ public:
     // for debug
     void print_btree();
 
-private:
     node_reader reader;
 };
 

@@ -48,6 +48,8 @@ void node_reader::remove_node(const shared_node& node) {
     cache.remove(node.addr());
 }
 
+void node_reader::clear_cache() { cache.clear(); }
+
 uint64_t btree::allocate_node() const {
     return archive->allocator->allocate(INDEX_NODE_SIZE(degree));
 }

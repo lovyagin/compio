@@ -181,6 +181,13 @@ int compio_seek(compio_file* file, int64_t offset, uint8_t origin);
 uint64_t compio_tell(compio_file* file);
 
 /**
+ * @brief Flush all cached data to filesystem
+ *
+ * @param archive opened archive
+ */
+void compio_flush(compio_archive* archive);
+
+/**
  * @brief Remove file from archive
  *
  * @param archive opened archive

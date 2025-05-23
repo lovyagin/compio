@@ -138,19 +138,16 @@ int compio_close_file(compio_file* file) {
 }
 
 int compio_close_archive(compio_archive* archive) {
-    // 1) flush index nodes to file
-    delete archive->index;
+    // 1) flush cached data to file
+    compio_flush(archive);
 
-    // 2) clear block_reader cache to flush all blocks
-    archive->block_reader.clear_cache();
-
-    // 3) save blocks manager to the end of the file
+    // 2) save blocks manager to the end of the file
     if (archive && archive->file && archive->allocator && archive->header) {
         archive->allocator->blocks_manager_.save_to_file(archive);
     }
     delete archive->allocator;
     
-    // 4) flush header (important: do this after flushing allocator, because it saves offset and size in header)
+    // 3) flush header (important: do this after flushing allocator, because it saves offset and size in header)
     //
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer 
@@ -159,7 +156,7 @@ int compio_close_archive(compio_archive* archive) {
     // thus, calling operator=({}) will destroy and flush our header
     archive->header = {};
     
-    // 5) and finally we close the file
+    // 4) and finally we close the file
     if (fclose(archive->file))
         return -1;
 
@@ -401,6 +398,11 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     uint64_t bytes_read = static_cast<int64_t>(size) - remaining_size;
     file->cursor += bytes_read;
     return bytes_read;
+}
+
+void compio_flush(compio_archive* archive) {
+    archive->block_reader.clear_cache();
+    archive->index->reader.clear_cache();
 }
 
 }
