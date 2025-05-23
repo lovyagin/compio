@@ -6,9 +6,9 @@
 #include <string>
 #include <sys/stat.h>
 
-inline unsigned long get_file_size(std::string fn) {
+inline unsigned long get_file_size(const char* fn) {
     struct stat st;
-    if (stat(fn.c_str(), &st) != 0) {
+    if (stat(fn, &st) != 0) {
         return 0;
     }
     return st.st_size;
