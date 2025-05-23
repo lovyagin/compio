@@ -71,16 +71,6 @@ class ArgCounter:
     reversed: str = "false"
 
 
-# @dataclass
-# class ArgFilter:
-#     filter: str
-#     name: str | None = None
-
-#     def __post_init__(self):
-#         if self.name is None:
-#             self.name = self.filter
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -138,10 +128,10 @@ def parse_args() -> argparse.Namespace:
         args.inputs = list(zip(args.report_files, args.filters))
         args.input_type = "many benchmarks, many filters"
     else:
-        raise ValueError(f"invalid number of report_files and filters")
+        raise ValueError("invalid number of report_files and filters")
 
     if len(args.inputs) != len(args.names):
-        raise ValueError(f"invalid number of names")
+        raise ValueError("invalid number of names")
     else:
         args.inputs = list(zip(*zip(*args.inputs), args.names))
 
@@ -175,7 +165,7 @@ def main(args: argparse.Namespace) -> None:
                 if "one_benchmark" in args.input_type:
                     result += f"### {name}:\n\n"
                 for key in args.context_keys:
-                    result += f"+ {key}: {report["context"][key]}\n"
+                    result += f"+ {key}: {report['context'][key]}\n"
                 result += "\n"
                 context_printed = True
 
