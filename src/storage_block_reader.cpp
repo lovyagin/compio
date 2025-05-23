@@ -24,7 +24,7 @@ smart_infile_object<storage_block> storage_block_reader::create_block(uint64_t a
 
 void storage_block_reader::remove_block(smart_infile_object<storage_block> block) {
     if (!cache.exists(block.addr())) {
-        WARNING_PRINT("warning: trying to remove non-existing storage block\n");
+        // WARNING_PRINT("warning: trying to remove non-existing storage block\n");
         return;
     }
     cache.remove(block.addr());
