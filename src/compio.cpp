@@ -325,70 +325,64 @@ end:
 }
 
 uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
-    auto file_table_item = readonly(file->archive->header, header)->ftable.find(file->name);
-    uint64_t fsize = file_table_item->size;
-
-    // if cursor is after end of file, we can't read anything
-    size = std::min(size, fsize - file->cursor);
+    const auto archive = file->archive;
+    const auto config = archive->config;
+    
+    auto file_table_item = archive->header->ftable.find(file->name);
+    const uint64_t fsize = file_table_item->size;
+    const uint64_t block_size = config->block_size;
+    const uint64_t cursor = file->cursor;
+    
+    size = std::max<uint64_t>(0, std::min<int64_t>(size, fsize - cursor));
     if (size == 0) {
         return 0;
     }
 
+    const uint64_t start_block_idx = cursor / block_size;
+    const uint64_t end_block_idx = (cursor + size - 1) / block_size;
+
+    const uint64_t read_start = cursor;
+    const uint64_t read_end = read_start + size;
+    uint64_t read_bytes = 0;
+
     const auto& range = get_range_in_file(file, size);
-    if (range.empty()) {
-        return 0;
-    }
+    uint64_t range_idx = 0;
 
-    const auto config = file->archive->config;
-    auto* p_buf = static_cast<uint8_t*>(ptr);
+    auto dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
+    uint8_t* p_ptr = reinterpret_cast<uint8_t*>(ptr);
 
-    // number of bytes to skip in the beginning
-    int64_t current_offset = static_cast<int64_t>(file->cursor) - static_cast<int64_t>(range[0].first.pos);
-    // number of bytes we've left to read
-    auto remaining_size = static_cast<int64_t>(size);
+    for (uint64_t i = start_block_idx; i <= end_block_idx; ++i, ++range_idx) {
+        const uint64_t block_start = i * block_size;
+        const uint64_t block_end = block_start + block_size;
 
-    for (const auto& [key, val] : range) {
-        // index of last byte we need to read, in uncompressed block
-        uint64_t end = std::min(current_offset + remaining_size, (int64_t)(val.size));
-        // number of bytes copied into ptr on this iteration
-        uint64_t bytes_copied = 0;
-        if (end > current_offset) {
-            // read block from file
-            const auto block = file->archive->block_reader.read_block(val.addr);
+        const auto& [key, val] = range[range_idx];
+        const auto block = archive->block_reader.read_block(val.addr);
 
-            if (block->original_size > config->block_size) {
-                WARNING_PRINT("block->original_size > config->block_size (%d > %d), invalid archive\n", block->original_size, config->block_cache_size);
+        uint64_t dst_size = block->original_size;
+        if (block->is_compressed) {
+            int ret = config->compressor.decompress(dec_buffer.get(), &dst_size, block->data.get(), block->size);
+            if (ret != 0) {
+                // invalid archive (compressed data is too big after decompression)
+                // TODO: set appropriate errno
+                WARNING_PRINT("compressed data is too big after decompression (%d is not enough)\n", dst_size);
                 goto end;
             }
-
-            // decompress data from block data into tmp_buf
-            uint64_t dst_size = block->original_size;
-            if (block->is_compressed) {
-                int ret = config->compressor.decompress(file->archive->tmp_buf.get(), &dst_size, block->data.get(), block->size);
-                if (ret != 0) {
-                    // invalid archive (wrong original size in storage block)
-                    WARNING_PRINT("invalid archive (wrong original size in storage block), ret=%d\n", ret);
-                    goto end;
-                }
-            } else {
-                std::copy_n(block->data.get(), block->size, file->archive->tmp_buf.get());
-            }
-
-            const auto bytes_to_copy = static_cast<int64_t>(end - static_cast<uint64_t>(current_offset));
-            p_buf = std::copy_n(file->archive->tmp_buf.get() + current_offset, bytes_to_copy, p_buf);
-            remaining_size -= bytes_to_copy;
+        } else {
+            std::copy_n(block->data.get(), block->size, dec_buffer.get());
         }
 
-        current_offset -= val.size;
-        if (current_offset < 0)
-            current_offset = 0;
-        remaining_size -= bytes_copied;
+        int64_t copy_size = std::min<int64_t>(read_end, block_end) - std::max<int64_t>(read_start, block_start);
+        if (copy_size > 0) {
+            uint64_t dec_offset = std::max<int64_t>(0, static_cast<int64_t>(cursor) - block_start);
+            uint64_t ptr_offset = std::max<int64_t>(0, static_cast<int64_t>(block_start) - cursor);
+            std::copy_n(dec_buffer.get() + dec_offset, copy_size, p_ptr + ptr_offset);
+            read_bytes += copy_size;
+        }
     }
 
 end:
-    uint64_t bytes_read = static_cast<int64_t>(size) - remaining_size;
-    file->cursor += bytes_read;
-    return bytes_read;
+    file->cursor += read_bytes;
+    return read_bytes;
 }
 
 void compio_flush(compio_archive* archive) {
