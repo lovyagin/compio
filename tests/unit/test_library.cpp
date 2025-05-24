@@ -312,3 +312,97 @@ INSTANTIATE_TEST_CASE_P(
         std::tuple<int, int, int>(50000, 1000, 5)
     )
 );
+
+enum OperationType {
+    WRITE, READ
+};
+
+struct Operation {
+    OperationType type;
+    int pos, size;
+};
+
+struct UsageParams {
+    int file_size;
+    std::vector<Operation> operations;
+};
+
+class CustomUsageTest : public ::testing::TestWithParam<UsageParams> {};
+
+TEST_P(CustomUsageTest, CustomUsage) {
+    compio_config config;
+    compio_archive* archive;
+    compio_file* file;
+    char fn[L_tmpnam];
+
+    compio_build_default_config(&config);
+    config.block_size = 16;
+    tmpnam(fn);
+
+    std::minstd_rand rng(0);
+    
+    auto params = GetParam();
+
+    std::vector<unsigned char> file_data(params.file_size, 0);
+    std::vector<unsigned char> buffer(params.file_size);
+    int cursor = 0;
+
+    archive = compio_open_archive(fn, "w+", &config);
+    file = compio_open_file("A", archive);
+    
+    for (const auto& operation : params.operations) {
+        // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
+        cursor = operation.pos;
+        // fprintf(stderr, "compio_seek(%d)\n", cursor);
+        EXPECT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+        
+        switch (operation.type) {
+        case OperationType::READ: {
+            // fprintf(stderr, "compio_read(%d, %d)\n", cursor, size);
+            EXPECT_EQ(compio_read(buffer.data(), operation.size, file), operation.size);
+            for (int i = 0; i < operation.size; ++i) {
+                EXPECT_EQ(buffer[i], file_data[cursor + i]);
+            }
+            cursor += operation.size;
+            break;
+        }
+        case OperationType::WRITE: {
+            std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - operation.size);
+            int start = d_start(rng);
+            // fprintf(stderr, "compio_write(%d, %d)\n", start, size);
+            EXPECT_EQ(compio_write(html_data + start, operation.size, file), operation.size);
+            std::copy_n(html_data + start, operation.size, file_data.data() + cursor);
+            cursor += operation.size;
+            break;
+        }
+        }
+    }
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+
+    remove(fn);
+}
+
+INSTANTIATE_TEST_CASE_P(
+    CustomUsageTests, 
+    CustomUsageTest, 
+    ::testing::Values(
+        UsageParams{30, {
+            {OperationType::WRITE, 8, 16},
+            {OperationType::READ, 0, 24},
+
+            {OperationType::WRITE, 18, 2},
+            {OperationType::READ, 0, 24},
+            
+            {OperationType::WRITE, 3, 14},
+            {OperationType::READ, 0, 24},
+            
+            {OperationType::WRITE, 4, 2},
+            {OperationType::READ, 0, 24},
+            
+            {OperationType::WRITE, 10, 16},
+            {OperationType::READ, 0, 26},
+        }}
+    )
+);
