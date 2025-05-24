@@ -45,3 +45,13 @@ target_include_directories(fragmentation PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+add_executable(random_usage custom/random_usage.cpp)
+
+target_link_libraries(random_usage PRIVATE compio)
+
+target_include_directories(random_usage PRIVATE 
+    ${CMAKE_SOURCE_DIR} 
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
