@@ -213,9 +213,8 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
     const auto archive = file->archive;
     const auto config = archive->config;
-    const auto header = archive->header;
 
-    auto file_table_item = file->archive->header->ftable.find(file->name);
+    auto file_table_item = archive->header->ftable.find(file->name);
     const uint64_t fsize = file_table_item->size;
     const uint64_t block_size = config->block_size;
     
