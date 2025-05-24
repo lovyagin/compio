@@ -68,7 +68,7 @@ shared_node btree::read_root() { return read_node(readonly(archive->header, head
 btree::btree(compio_archive* archive)
     : archive(archive),
       degree(archive->config->b_tree_degree),
-      reader(archive->file, degree, archive->config->cache_size) {
+      reader(archive->file, degree, archive->config->cache_size__nodes) {
     if (readonly(archive->header, header)->index_root != 0)
         return;
 

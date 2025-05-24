@@ -20,8 +20,8 @@ void compio_build_default_config(compio_config* result) {
     compio_build_zlib_compressor(&result->compressor);
     result->fill_holes_with_zeros = false;
     result->block_size = 4096;
-    result->cache_size = 128;
-    result->block_cache_size = 16;
+    result->cache_size__nodes = 128;
+    result->cache_size__blocks = 16;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
 }
@@ -30,7 +30,7 @@ compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* 
     : file(file),
       config(config),
       mode_b(mode_b), 
-      block_reader(file, config->block_cache_size) {
+      block_reader(file, config->cache_size__blocks) {
     fseek(file, 0, SEEK_END);
     long fsize = ftell(file);
     if (fsize == 0)
