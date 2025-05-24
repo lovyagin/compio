@@ -329,7 +329,7 @@ void btree::get_range_in_node(const shared_node& node, const tree_key& key_min,
     tree_key end = RO(node)->keys[0];
 
     for (int i = 0; i <= num_keys; ++i) {
-        if (!is_leaf && (key_min <= end) && (key_max > start)) {
+        if (!is_leaf && (key_min < end) && (key_max > start)) {
             auto child = read_node(RO(node)->children[i]);
             get_range_in_node(child, key_min, key_max, result);
         }
@@ -339,7 +339,7 @@ void btree::get_range_in_node(const shared_node& node, const tree_key& key_min,
             end.pos = start.pos + RO(node)->values[i].size;
             end.hash = start.hash;
 
-            if ((key_min <= end) && (key_max > start)) {
+            if ((key_min < end) && (key_max > start)) {
                 result.emplace_back(start, RO(node)->values[i]);
             }
             start = end;
