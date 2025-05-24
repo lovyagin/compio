@@ -160,6 +160,7 @@ int compio_close_archive(compio_archive* archive) {
     if (fclose(archive->file))
         return -1;
 
+    delete archive->index;
     delete archive;
     return 0;
 }
