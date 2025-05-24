@@ -162,8 +162,7 @@ def main(args: argparse.Namespace) -> None:
 
         if len(args.context_keys) > 0:
             if "one benchmark" not in args.input_type or not context_printed:
-                if "one_benchmark" in args.input_type:
-                    result += f"### {name}:\n\n"
+                result += f"### {name}:\n\n"
                 for key in args.context_keys:
                     result += f"+ {key}: {report['context'][key]}\n"
                 result += "\n"
