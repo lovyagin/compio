@@ -4,15 +4,14 @@ import re
 import csv
 import itertools
 import numpy as np
+from scipy.stats import mannwhitneyu
 from typing import List, Tuple, Dict, Any
 
 from dataclasses import dataclass
 from collections import defaultdict
 
 
-def format_units(
-    value: float, step: float, names: List[str], precision: int = 1
-) -> Tuple[float, str]:
+def format_units(value: float, step: float, names: List[str], precision: int = 1) -> Tuple[float, str]:
     for i, x in enumerate(names):
         if value < step or i == len(names) - 1:
             return f"{{:.{precision}f}}".format(value), x
@@ -147,7 +146,20 @@ def format_table_rows(rows: List[List[str]]) -> str:
 
 
 def highlight_value(value: str) -> str:
-    return f"**{value}**"
+    # return f"**{value}**"
+    return f'<span style="color: #0400ff">**{value}**</span>'
+
+
+def get_highlighted_indices(values: np.ndarray, reversed: bool = False, alpha: float = 1) -> List[int]:
+    if reversed:
+        values *= -1
+    means, stds = np.mean(values, axis=1), np.std(values, axis=1)
+    best_i = np.argmax(means)
+    indices = []
+    for i in range(len(means)):
+        if means[i] + stds[i] * alpha >= means[best_i] - stds[best_i] * alpha:
+            indices.append(i)
+    return indices
 
 
 def main(args: argparse.Namespace) -> None:
@@ -190,10 +202,7 @@ def main(args: argparse.Namespace) -> None:
     rows = []
 
     # table header
-    rows.append(
-        ["benchmark_name"]
-        + [f"{c.name} [{name}]" for c in args.counters for _, _, name in args.inputs]
-    )
+    rows.append(["benchmark_name"] + [f"{c.name} [{name}]" for c in args.counters for _, _, name in args.inputs])
 
     # separator
     rows.append(["-"] * (len(args.counters) * N + 1))
@@ -203,6 +212,7 @@ def main(args: argparse.Namespace) -> None:
         row = [key]
         for counter in args.counters:
             row_segment = []
+            all_values = []
             for i in range(N):
                 values = np.array([b[counter.name] for b in all_benchmarks[i][key]])
                 mean_val, mean_unit = format_(values.mean(), counter.format_type)
@@ -210,16 +220,12 @@ def main(args: argparse.Namespace) -> None:
                 if counter.show_std == "true":
                     std_val, std_unit = format_(values.std(), counter.format_type)
                     formatted_value += f" ± {std_val} {std_unit}"
-                row_segment.append((formatted_value, values.mean()))
+                row_segment.append(formatted_value)
+                all_values.append(values)
 
-            # find best score and highlight
-            max_column_idx = sorted(
-                enumerate(row_segment),
-                key=lambda x: x[1][1],
-                reverse=counter.reversed == "true",
-            )[0][0]
-            row_segment = [x[0] for x in row_segment]
-            row_segment[max_column_idx] = highlight_value(row_segment[max_column_idx])
+            indices = get_highlighted_indices(np.array(all_values), reversed=counter.reversed == "false")
+            for idx in indices:
+                row_segment[idx] = highlight_value(row_segment[idx])
 
             row.extend(row_segment)
         rows.append(row)
