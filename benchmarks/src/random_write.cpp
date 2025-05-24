@@ -48,7 +48,8 @@ static void BM_stdio_RandomWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.counters["file_size"] = get_file_size(fn.c_str());
+    state.counters["file_size"] = benchmark::Counter(
+        get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
 #ifdef BM_FILE_OPERATIONS_COUNTER
     state.counters["read_bytes_per_op"] =
@@ -138,7 +139,8 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
-    state.counters["file_size"] = get_file_size(fn.c_str());
+    state.counters["file_size"] = benchmark::Counter(
+        get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
     remove(fn.c_str());
 }
