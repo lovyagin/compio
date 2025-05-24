@@ -45,7 +45,6 @@ void create_fragmentation(compio_archive* archive, size_t block_count, size_t mi
         compio_file* file = compio_open_file(name.c_str(), archive);
         files.push_back(file);
 
-        // Write initial data
         size_t size = size_dist(rng);
         std::vector<char> data(size, 'A' + (i % 26));
         compio_write(data.data(), size, file);
@@ -58,7 +57,6 @@ void create_fragmentation(compio_archive* archive, size_t block_count, size_t mi
         compio_remove_file(archive, filenames[i].c_str());
     }
 
-    // Close remaining files
     for (size_t i = 1; i < block_count; i += 2) {
         compio_close_file(files[i]);
     }
@@ -111,11 +109,9 @@ static void BM_AllocationStrategy(benchmark::State& state) {
         compio_close_archive(archive);
     }
 
-    // Clean up
     remove(filename);
 }
 
-// Register benchmarks for each allocation strategy
 BENCHMARK(BM_AllocationStrategy)
     ->Args({COMPIO_ALLOCATION_FIRST_FIT, 100})
     ->Args({COMPIO_ALLOCATION_BEST_FIT, 100})
@@ -128,7 +124,6 @@ BENCHMARK(BM_AllocationStrategy)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
 
-// You can also create separate benchmarks for different allocation patterns
 static void BM_FragmentedAllocation(benchmark::State& state) {
     const int strategy = state.range(0);
 
