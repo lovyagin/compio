@@ -41,6 +41,8 @@ static void BM_AllocationSpeed(benchmark::State& state) {
         compio_close_archive(archive);
         remove(filename.c_str());
     }
+
+    state.SetBytesProcessed(state.iterations() * block_count * block_size);
 }
 
 // Simple benchmark for fragmented allocation performance
@@ -103,6 +105,9 @@ static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
         compio_close_archive(archive);
         remove(filename.c_str());
     }
+
+    size_t total_bytes = operation_count * 1024 + (operation_count / 2) * 512;
+    state.SetBytesProcessed(state.iterations() * total_bytes);
 }
 
 BENCHMARK(BM_AllocationSpeed)
