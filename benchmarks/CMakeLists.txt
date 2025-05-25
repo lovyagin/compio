@@ -12,6 +12,7 @@ add_executable(compio_benchmarks
     src/random_write.cpp
     src/consecutive_read.cpp
     src/random_read.cpp
+    src/benchmark_util.cpp
 )
 
 target_link_libraries(compio_benchmarks PRIVATE 

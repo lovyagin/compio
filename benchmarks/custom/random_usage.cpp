@@ -1,6 +1,6 @@
 #include "compio.h"
 #include "sample_data.hpp"
-#include "util.hpp"
+#include "benchmark_util.hpp"
 
 int main() {
     compio_config config;

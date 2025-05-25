@@ -1,6 +1,6 @@
 #include "compio.h"
 #include "sample_data.hpp"
-#include "util.hpp"
+#include "benchmark_util.hpp"
 
 #ifdef BM_FILE_OPERATIONS_COUNTER
 #include "infile_object.hpp"
@@ -9,6 +9,8 @@
 #include <random>
 
 #include <benchmark/benchmark.h>
+
+extern compio_config config;
 
 static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
     const size_t n_blocks = state.range(0);
@@ -96,9 +98,6 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
 
     {
         // prepare file
-        compio_config config;
-        compio_build_default_config(&config);
-
         compio_archive* archive = compio_open_archive(fn.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
@@ -138,9 +137,6 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
 #endif
 
     for (auto _ : state) {
-        compio_config config;
-        compio_build_default_config(&config);
-
         compio_archive* archive = compio_open_archive(fn.c_str(), "r", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");

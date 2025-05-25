@@ -6,6 +6,8 @@
 #include <string>
 #include <sys/stat.h>
 
+#include "compio.h"
+
 inline unsigned long get_file_size(const char* fn) {
     struct stat st;
     if (stat(fn, &st) != 0) {
@@ -27,5 +29,9 @@ inline std::string get_temporary_filename() {
 
     return result;
 }
+
+void build_config_from_file(std::string fn, compio_config* config);
+
+void build_benchmarks_compio_config(compio_config* config);
 
 #endif // BENCHMARK_UTIL_HPP_
