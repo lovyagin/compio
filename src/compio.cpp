@@ -229,7 +229,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     const uint64_t start_block_idx = std::min(file->cursor / block_size, n_existing_blocks);
     const uint64_t end_block_idx = (file->cursor + size - 1) / block_size;
 
-    const auto& range = get_range_in_file(file, size);
+    auto range = get_range_in_file(file, size);
     uint64_t range_idx = 0;
 
     const uint8_t* p_ptr = reinterpret_cast<const uint8_t*>(ptr);
@@ -266,7 +266,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
                 dec_buffer = cache_elem.first;
                 c_size = cache_elem.second;
             } else {
-                if (false && config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
+                if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
                     // can reuse already allocated buffer
                     dec_buffer = archive->dec_cache.pop_back().first;
                 } else {
@@ -295,7 +295,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             archive->block_reader.remove_block(val.addr);
             archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + c_size);
         } else {
-            if (false && config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
+            if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
                 dec_buffer = archive->dec_cache.pop_back().first;
             } else {
                 dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
@@ -375,7 +375,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     const uint64_t read_end = read_start + size;
     uint64_t read_bytes = 0;
 
-    const auto& range = get_range_in_file(file, size);
+    auto range = get_range_in_file(file, size);
     uint64_t range_idx = 0;
 
     uint8_t* p_ptr = reinterpret_cast<uint8_t*>(ptr);
@@ -384,13 +384,18 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
         const uint64_t block_start = i * block_size;
         const uint64_t block_end = block_start + block_size;
 
+        if (range_idx >= range.size()) {
+            WARNING_PRINT("went out of range in compio_read (%d >= %d)\n", range_idx, range.size());
+            goto end;
+        }
+
         const auto& [key, val] = range[range_idx];
 
         std::shared_ptr<uint8_t[]> dec_buffer;
         if (archive->dec_cache.exists(val.addr)) {
             dec_buffer = archive->dec_cache.get(val.addr).first;
         } else {
-            if (false && config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
+            if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
                 dec_buffer = archive->dec_cache.pop_back().first;
             } else {
                 dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
