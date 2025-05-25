@@ -55,6 +55,8 @@ benchmark_context build_config_from_file(std::string fn, compio_config* config) 
             config->cache_size__nodes = std::atoi(value.c_str());
         } else if (key == "cache_size__blocks") {
             config->cache_size__blocks = std::atoi(value.c_str());
+        } else if (key == "cache_size__compression") {
+            config->cache_size__compression = std::atoi(value.c_str());
         } else if (key == "b_tree_degree") {
             config->b_tree_degree = std::atoi(value.c_str());
         } else if (key == "block_size") {
