@@ -26,6 +26,8 @@ void storage_block_reader::remove_block(uint64_t addr) {
     if (!cache.exists(addr)) {
         return;
     }
+    auto block = cache.get(addr);
+    block.remove();
     cache.remove(addr);
 }
 

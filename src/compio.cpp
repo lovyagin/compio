@@ -289,7 +289,6 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
                 }
 
                 c_size = block->size;
-                block.remove();
             }
 
             archive->block_reader.remove_block(val.addr);
