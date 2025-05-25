@@ -147,13 +147,13 @@ def format_table_rows(rows: List[List[str]]) -> str:
 
 def highlight_value(value: str) -> str:
     # return f"**{value}**"
-    return f'<span style="color: #0400ff">**{value}**</span>'
+    return f'<span style="color: #87d1ff">**{value}**</span>'
 
 
 def get_highlighted_indices(values: np.ndarray, reversed: bool = False, alpha: float = 1) -> List[int]:
     if reversed:
         values *= -1
-    means, stds = np.mean(values, axis=1), np.std(values, axis=1)
+    means, stds = np.mean(values, axis=1), np.std(values, axis=1, ddof=1)
     best_i = np.argmax(means)
     indices = []
     for i in range(len(means)):
@@ -218,7 +218,7 @@ def main(args: argparse.Namespace) -> None:
                 mean_val, mean_unit = format_(values.mean(), counter.format_type)
                 formatted_value = f"{mean_val} {mean_unit}"
                 if counter.show_std == "true":
-                    std_val, std_unit = format_(values.std(), counter.format_type)
+                    std_val, std_unit = format_(values.std(ddof=1), counter.format_type)
                     formatted_value += f" ± {std_val} {std_unit}"
                 row_segment.append(formatted_value)
                 all_values.append(values)
