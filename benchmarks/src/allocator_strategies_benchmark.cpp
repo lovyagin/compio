@@ -2,8 +2,10 @@
 #define COMPIO_SUCCESS 0
 #endif
 
-#include <benchmark/benchmark.h>
 #include "compio.h"
+#include <benchmark/benchmark.h>
+
+#include <chrono>
 #include <random>
 
 // Simple benchmark to test allocation strategy performance
@@ -499,18 +501,107 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
     state.counters["FragmentationRatio"] = (final_file_size - total_allocated) / (double)final_file_size * 100.0;
 }
 
-BENCHMARK(BM_LargeAllocationAfterFragmentation)
+static void BM_AlternatingSmallLargeAllocations(benchmark::State& state) {
+    const int strategy = state.range(0);
+    std::string filename = "benchmark_alternating_" + std::to_string(strategy) + ".tmp";
+
+    // Performance metrics
+    double allocation_time = 0;
+    size_t successful_allocations = 0;
+    size_t allocation_attempts = 0;
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        remove(filename.c_str());
+        compio_config config = {};
+        compio_build_default_config(&config);
+        config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
+
+        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        if (!archive) {
+            state.SkipWithError("Failed to open archive");
+            continue;
+        }
+        state.ResumeTiming();
+
+        // PHASE 1: Create alternating small files (128 bytes) and larger files (2048 bytes)
+        // This pattern benefits Next Fit which avoids rescanning the entire free list
+        for (size_t i = 0; i < 100; i++) {
+            size_t size = (i % 2 == 0) ? 128 : 2048;
+            std::string name = "file_" + std::to_string(i);
+
+            allocation_attempts++;
+            auto start = std::chrono::high_resolution_clock::now();
+            compio_file* file = compio_open_file(name.c_str(), archive);
+            auto end = std::chrono::high_resolution_clock::now();
+
+            if (file) {
+                allocation_time += std::chrono::duration<double>(end - start).count();
+                std::vector<uint8_t> data(size, 'A');
+                if (compio_write(data.data(), data.size(), file) == data.size()) {
+                    successful_allocations++;
+                }
+                compio_close_file(file);
+            }
+        }
+
+        // PHASE 2: Delete some files (create empty spaces)
+        for (size_t i = 0; i < 100; i += 3) {
+            std::string name = "file_" + std::to_string(i);
+            compio_remove_file(archive, name.c_str());
+        }
+
+        // PHASE 3: Try increasingly large allocations
+        // This pattern benefits Worst Fit which preserves larger blocks
+        for (size_t size = 512; size <= 4096; size *= 2) {
+            for (size_t i = 0; i < 5; i++) {
+                std::string name = "large_" + std::to_string(size) + "_" + std::to_string(i);
+
+                allocation_attempts++;
+                auto start = std::chrono::high_resolution_clock::now();
+                compio_file* file = compio_open_file(name.c_str(), archive);
+                auto end = std::chrono::high_resolution_clock::now();
+
+                if (file) {
+                    allocation_time += std::chrono::duration<double>(end - start).count();
+                    std::vector<uint8_t> data(size, 'B');
+                    if (compio_write(data.data(), data.size(), file) == data.size()) {
+                        successful_allocations++;
+                    }
+                    compio_close_file(file);
+                }
+            }
+        }
+
+        compio_close_archive(archive);
+        remove(filename.c_str());
+    }
+
+    // Report metrics focused on allocation performance
+    state.counters["SuccessRate"] = 100.0 * successful_allocations / (double)allocation_attempts;
+    state.counters["AvgAllocTimeNs"] = allocation_time * 1e9 / allocation_attempts;
+    state.counters["TotalAllocations"] = allocation_attempts;
+}
+
+BENCHMARK(BM_AlternatingSmallLargeAllocations)
     ->Args({COMPIO_ALLOC_FIRST_FIT})
     ->Args({COMPIO_ALLOC_BEST_FIT})
     ->Args({COMPIO_ALLOC_WORST_FIT})
     ->Args({COMPIO_ALLOC_NEXT_FIT})
     ->Unit(benchmark::kMillisecond);
 
+BENCHMARK(BM_LargeAllocationAfterFragmentation)
+    ->ArgsProduct({
+        {COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT, COMPIO_ALLOC_NEXT_FIT},
+        {50, 100, 200}
+    })
+    ->Unit(benchmark::kMillisecond);
+
 BENCHMARK(BM_TargetedFragmentation)
-    ->Args({COMPIO_ALLOC_FIRST_FIT})
-    ->Args({COMPIO_ALLOC_BEST_FIT})
-    ->Args({COMPIO_ALLOC_WORST_FIT})
-    ->Args({COMPIO_ALLOC_NEXT_FIT})
+    ->ArgsProduct({
+        {COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT, COMPIO_ALLOC_NEXT_FIT},
+        {2, 3, 4}
+    })
     ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_ExtremeFragmentation)
