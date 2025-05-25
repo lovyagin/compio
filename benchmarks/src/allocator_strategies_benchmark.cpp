@@ -1,196 +1,120 @@
-#ifndef COMPIO_ALLOCATION_FIRST_FIT
-#define COMPIO_ALLOCATION_FIRST_FIT 0
-#define COMPIO_ALLOCATION_BEST_FIT 1
-#define COMPIO_ALLOCATION_WORST_FIT 2
-#define COMPIO_ALLOCATION_NEXT_FIT 3
-#endif
-
-#include "compio.h"
-#include "allocator.hpp"
-#include "sample_data.hpp"
-
 #include <benchmark/benchmark.h>
-#include <random>
-#include <string>
-#include <vector>
-#include <iostream>
+#include "compio.h"
 
-using namespace compio;
+// Simple benchmark to test allocation strategy performance
+static void BM_AllocationSpeed(benchmark::State& state) {
+    const int strategy = state.range(0);
+    const size_t block_count = state.range(1);
+    const size_t block_size = state.range(2);
 
-// Helper function to create an archive with a specific allocation strategy
-compio_archive* create_test_archive(const char* filename, int strategy) {
-    compio_config config;
-    compio_build_default_config(&config);
+    std::string filename = "benchmark_alloc_" + std::to_string(strategy) + ".tmp";
 
-    // Convert int to proper allocation strategy type
-    config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
-    config.cache_size = 0;  // Disable cache to focus on allocation strategy
-    config.block_cache_size = 0;
+    for (auto _ : state) {
+        // Create a fresh archive with the specified allocation strategy
+        remove(filename.c_str());
+        compio_config config = {};
+        compio_build_default_config(&config);
+        config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-    return compio_open_archive(filename, "w+", &config);
-}
-
-// Simulate fragmentation by writing and freeing blocks in a pattern
-void create_fragmentation(compio_archive* archive, size_t block_count, size_t min_size, size_t max_size) {
-    std::minstd_rand0 rng(0);
-    std::uniform_int_distribution<size_t> size_dist(min_size, max_size);
-    std::vector<compio_file*> files;
-    std::vector<std::string> filenames;
-
-    // Create multiple files to track them
-    for (size_t i = 0; i < block_count; i++) {
-        std::string name = "file_" + std::to_string(i);
-        filenames.push_back(name);
-        compio_file* file = compio_open_file(name.c_str(), archive);
-
-        if (!file) {
-            std::cerr << "Failed to open file: " << name << std::endl;
+        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        if (!archive) {
+            state.SkipWithError("Failed to create archive");
             continue;
         }
 
-        files.push_back(file);
-
-        size_t size = size_dist(rng);
-        std::vector<char> data(size, 'A' + (i % 26));
-        compio_write(data.data(), size, file);
-    }
-
-    // Delete half of the files to create free blocks - with null checks
-    for (size_t i = 0; i < block_count && i < files.size(); i += 2) {
-        if (files[i]) {
-            compio_close_file(files[i]);
-            compio_remove_file(archive, filenames[i].c_str());
+        // Allocate blocks of specified size
+        std::vector<compio_file*> files;
+        for (size_t i = 0; i < block_count; i++) {
+            std::string name = "file_" + std::to_string(i);
+            compio_file* file = compio_open_file(name.c_str(), archive);
+            if (file) {
+                std::vector<uint8_t> data(block_size, 'A');
+                compio_write(data.data(), data.size(), file);
+                files.push_back(file);
+            }
         }
-    }
 
-    // Close remaining files - with null checks
-    for (size_t i = 1; i < block_count && i < files.size(); i += 2) {
-        if (files[i]) {
-            compio_close_file(files[i]);
+        // Cleanup
+        for (auto file : files) {
+            compio_close_file(file);
         }
+        compio_close_archive(archive);
+        remove(filename.c_str());
     }
 }
 
-static void BM_AllocationStrategy(benchmark::State& state) {
+// Simple benchmark for fragmented allocation performance
+static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
     const int strategy = state.range(0);
-    const size_t block_count = state.range(1);
-    const size_t min_size = 1024;
-    const size_t max_size = 8192;
+    const size_t operation_count = state.range(1);
 
-    std::minstd_rand0 rng(0);
-    std::uniform_int_distribution<size_t> size_dist(min_size, max_size);
-
-    char filename[L_tmpnam];
-    tmpnam(filename);
-
-    // Prepare archive with fragmentation
-    {
-        compio_archive* archive = create_test_archive(filename, strategy);
-        if (!archive) {
-            state.SkipWithError("Failed to create archive");
-            return;
-        }
-        create_fragmentation(archive, block_count, min_size, max_size);
-        compio_close_archive(archive);
-    }
+    std::string filename = "benchmark_frag_" + std::to_string(strategy) + ".tmp";
 
     for (auto _ : state) {
-        compio_archive* archive = compio_open_archive(filename, "r+", nullptr);
-        if (!archive) {
-            state.SkipWithError("Failed to open archive");
-            break;
-        }
+        // Setup
+        remove(filename.c_str());
+        compio_config config = {};
+        compio_build_default_config(&config);
+        config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_file* file = compio_open_file("benchmark_file", archive);
-        if (!file) {
-            compio_close_archive(archive);
-            state.SkipWithError("Failed to open file");
-            break;
-        }
-
-        // Perform write operations that will trigger allocations
-        for (size_t i = 0; i < 100; i++) {
-            size_t size = size_dist(rng);
-            std::vector<char> data(size, 'X');
-            compio_seek(file, i * max_size * 2, COMP_SEEK_SET);
-            compio_write(data.data(), size, file);
-        }
-
-        compio_close_file(file);
-        compio_close_archive(archive);
-    }
-
-    remove(filename);
-}
-
-BENCHMARK(BM_AllocationStrategy)
-    ->Args({COMPIO_ALLOCATION_FIRST_FIT, 100})
-    ->Args({COMPIO_ALLOCATION_BEST_FIT, 100})
-    ->Args({COMPIO_ALLOCATION_WORST_FIT, 100})
-    ->Args({COMPIO_ALLOCATION_NEXT_FIT, 100})
-    ->Args({COMPIO_ALLOCATION_FIRST_FIT, 500})
-    ->Args({COMPIO_ALLOCATION_BEST_FIT, 500})
-    ->Args({COMPIO_ALLOCATION_WORST_FIT, 500})
-    ->Args({COMPIO_ALLOCATION_NEXT_FIT, 500})
-    ->Unit(benchmark::kMillisecond)
-    ->UseRealTime();
-
-static void BM_FragmentedAllocation(benchmark::State& state) {
-    const int strategy = state.range(0);
-
-    const size_t min_size = 64;
-    const size_t max_size = 256;
-    std::minstd_rand0 rng(0);
-    std::uniform_int_distribution<size_t> size_dist(min_size, max_size);
-
-    char filename[L_tmpnam];
-    tmpnam(filename);
-
-    // Create highly fragmented archive
-    {
-        compio_archive* archive = create_test_archive(filename, strategy);
+        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to create archive");
-            return;
+            continue;
         }
-        // Create many small allocations with gaps
-        create_fragmentation(archive, 1000, min_size, max_size);
+
+        // Create files
+        std::vector<compio_file*> files;
+        for (size_t i = 0; i < operation_count; i++) {
+            std::string name = "file_" + std::to_string(i);
+            compio_file* file = compio_open_file(name.c_str(), archive);
+            if (file) {
+                std::vector<uint8_t> data(1024, 'A');
+                compio_write(data.data(), data.size(), file);
+                files.push_back(file);
+            }
+        }
+
+        // Delete every other file to create fragmentation
+        for (size_t i = 0; i < files.size(); i += 2) {
+            if (i < files.size()) {
+                std::string name = "file_" + std::to_string(i);
+                compio_close_file(files[i]);
+                compio_remove_file(archive, name.c_str());
+                files[i] = nullptr;
+            }
+        }
+
+        // Create new files that should fit into gaps
+        for (size_t i = 0; i < operation_count/2; i++) {
+            std::string name = "new_file_" + std::to_string(i);
+            compio_file* file = compio_open_file(name.c_str(), archive);
+            if (file) {
+                std::vector<uint8_t> data(512, 'B');
+                compio_write(data.data(), data.size(), file);
+                files.push_back(file);
+            }
+        }
+
+        // Cleanup
+        for (auto file : files) {
+            if (file) compio_close_file(file);
+        }
         compio_close_archive(archive);
+        remove(filename.c_str());
     }
-
-    // Benchmark allocation of large blocks in fragmented space
-    for (auto _ : state) {
-        compio_archive* archive = compio_open_archive(filename, "r+", nullptr);
-        if (!archive) {
-            state.SkipWithError("Failed to open archive");
-            break;
-        }
-
-        compio_file* file = compio_open_file("large_file", archive);
-        if (!file) {
-            compio_close_archive(archive);
-            state.SkipWithError("Failed to open file");
-            break;
-        }
-
-        // Try to allocate larger blocks that will require finding appropriate free space
-        std::vector<char> data(4096, 'L');
-        for (int i = 0; i < 20; i++) {
-            compio_seek(file, i * 8192, COMP_SEEK_SET);
-            compio_write(data.data(), data.size(), file);
-        }
-
-        compio_close_file(file);
-        compio_close_archive(archive);
-    }
-
-    remove(filename);
 }
 
-BENCHMARK(BM_FragmentedAllocation)
-    ->Args({COMPIO_ALLOCATION_FIRST_FIT})
-    ->Args({COMPIO_ALLOCATION_BEST_FIT})
-    ->Args({COMPIO_ALLOCATION_WORST_FIT})
-    ->Args({COMPIO_ALLOCATION_NEXT_FIT})
-    ->Unit(benchmark::kMillisecond)
-    ->UseRealTime();
+BENCHMARK(BM_AllocationSpeed)
+    ->Args({COMPIO_ALLOC_FIRST_FIT, 100, 1024})
+    ->Args({COMPIO_ALLOC_BEST_FIT, 100, 1024})
+    ->Args({COMPIO_ALLOC_WORST_FIT, 100, 1024})
+    ->Args({COMPIO_ALLOC_NEXT_FIT, 100, 1024})
+    ->Unit(benchmark::kMillisecond);
+
+BENCHMARK(BM_FragmentedAllocationSpeed)
+    ->Args({COMPIO_ALLOC_FIRST_FIT, 100})
+    ->Args({COMPIO_ALLOC_BEST_FIT, 100})
+    ->Args({COMPIO_ALLOC_WORST_FIT, 100})
+    ->Args({COMPIO_ALLOC_NEXT_FIT, 100})
+    ->Unit(benchmark::kMillisecond);
