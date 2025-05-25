@@ -30,8 +30,8 @@ inline std::string get_temporary_filename() {
     return result;
 }
 
-void build_config_from_file(std::string fn, compio_config* config);
+using benchmark_context = std::vector<std::pair<std::string, std::string>>;
 
-void build_benchmarks_compio_config(compio_config* config);
+benchmark_context build_config_from_file(std::string fn, compio_config* config);
 
 #endif // BENCHMARK_UTIL_HPP_

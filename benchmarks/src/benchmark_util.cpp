@@ -10,12 +10,19 @@ std::string lower(std::string& s) {
     return s;
 }
 
-void build_config_from_file(std::string fn, compio_config* config) {
+std::string upper(std::string& s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::toupper(c); });
+    return s;
+}
+
+benchmark_context build_config_from_file(std::string fn, compio_config* config) {
     std::ifstream file(fn);
 
     if (!file.is_open()) {
         throw std::runtime_error("failed to load config from file");
     }
+
+    benchmark_context bc;
 
     std::string line;
     while (std::getline(file, line)) {
@@ -28,6 +35,13 @@ void build_config_from_file(std::string fn, compio_config* config) {
         std::string value = line.substr(pos + 1);
         lower(key);
         lower(value);
+
+        std::pair<std::string, std::string> context_elem;
+        context_elem.first = key;
+        context_elem.second = value;
+        upper(context_elem.first);
+        upper(context_elem.second);
+        bc.push_back(context_elem);
 
         if (key == "compression") {
             if (value == "zlib") {
@@ -77,4 +91,6 @@ void build_config_from_file(std::string fn, compio_config* config) {
     }
 
     file.close();
+
+    return bc;
 }

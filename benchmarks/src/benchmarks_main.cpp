@@ -22,7 +22,10 @@ void build_config(int argc, char** argv) {
     compio_build_default_config(&config);
     std::string config_fn = get_config_fn(argc, argv);
     if (config_fn.size() > 0) {
-        build_config_from_file(config_fn, &config);
+        auto bc = build_config_from_file(config_fn, &config);
+        for (const auto& [key, val] : bc) {
+            benchmark::AddCustomContext(key, val);
+        }
     }
 }
 
