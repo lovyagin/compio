@@ -149,30 +149,50 @@ uint8_t ZEROS[4096] = {0};
         }
 
         case allocation_strategy::NEXT_FIT: {
-            if (!last_alloc_) last_alloc_ = head_;
+            if (!last_alloc_ || !head_) {
+                last_alloc_ = head_;
+            }
 
+            // Safety check
+            if (!last_alloc_) {
+                return UINT64_MAX;
+            }
+
+            // First try from last_alloc_ to end
             free_block* current = last_alloc_;
+            free_block* start_point = last_alloc_;
+            bool wrapped = false;
+
+            // Continue search until we've checked all blocks
             while (current) {
                 if (current->size >= size) {
                     target = current;
                     break;
                 }
                 current = current->next;
-            }
 
-            if (!target && last_alloc_ != head_) {
-                current = head_;
-                while (current && current != last_alloc_) {
-                    if (current->size >= size) {
-                        target = current;
-                        break;
-                    }
-                    current = current->next;
+                // If we reach the end, wrap around to head
+                if (!current && !wrapped) {
+                    current = head_;
+                    wrapped = true;
+                }
+
+                // Stop if we've gone full circle
+                if (wrapped && current == start_point) {
+                    break;
                 }
             }
 
+            // Update last_alloc_ safely for next allocation
             if (target) {
-                last_alloc_ = target->next ? target->next : head_;
+                // If we're going to completely consume this block
+                if (target->size == size) {
+                    // Save next pointer before target gets deleted
+                    last_alloc_ = target->next ? target->next : head_;
+                } else {
+                    // We'll still have the block, just smaller
+                    last_alloc_ = target;
+                }
             }
 
             break;

@@ -17,7 +17,6 @@
 
 using namespace compio;
 
-
 // Helper function to create an archive with a specific allocation strategy
 compio_archive* create_test_archive(const char* filename, int strategy) {
     compio_config config;
@@ -43,6 +42,12 @@ void create_fragmentation(compio_archive* archive, size_t block_count, size_t mi
         std::string name = "file_" + std::to_string(i);
         filenames.push_back(name);
         compio_file* file = compio_open_file(name.c_str(), archive);
+
+        if (!file) {
+            std::cerr << "Failed to open file: " << name << std::endl;
+            continue;
+        }
+
         files.push_back(file);
 
         size_t size = size_dist(rng);
@@ -50,15 +55,19 @@ void create_fragmentation(compio_archive* archive, size_t block_count, size_t mi
         compio_write(data.data(), size, file);
     }
 
-    // Delete half of the files to create free blocks
-    for (size_t i = 0; i < block_count; i += 2) {
-        compio_close_file(files[i]);
-        // Fixed parameter order - archive first, then filename
-        compio_remove_file(archive, filenames[i].c_str());
+    // Delete half of the files to create free blocks - with null checks
+    for (size_t i = 0; i < block_count && i < files.size(); i += 2) {
+        if (files[i]) {
+            compio_close_file(files[i]);
+            compio_remove_file(archive, filenames[i].c_str());
+        }
     }
 
-    for (size_t i = 1; i < block_count; i += 2) {
-        compio_close_file(files[i]);
+    // Close remaining files - with null checks
+    for (size_t i = 1; i < block_count && i < files.size(); i += 2) {
+        if (files[i]) {
+            compio_close_file(files[i]);
+        }
     }
 }
 
@@ -68,27 +77,29 @@ static void BM_AllocationStrategy(benchmark::State& state) {
     const size_t min_size = 1024;
     const size_t max_size = 8192;
 
+    std::minstd_rand0 rng(0);
+    std::uniform_int_distribution<size_t> size_dist(min_size, max_size);
+
     char filename[L_tmpnam];
     tmpnam(filename);
 
     // Prepare archive with fragmentation
     {
         compio_archive* archive = create_test_archive(filename, strategy);
+        if (!archive) {
+            state.SkipWithError("Failed to create archive");
+            return;
+        }
         create_fragmentation(archive, block_count, min_size, max_size);
         compio_close_archive(archive);
     }
 
-    // Benchmark allocation operations
     for (auto _ : state) {
         compio_archive* archive = compio_open_archive(filename, "r+", nullptr);
         if (!archive) {
             state.SkipWithError("Failed to open archive");
             break;
         }
-
-        // Allocate blocks of varying sizes
-        std::minstd_rand0 rng(1);
-        std::uniform_int_distribution<size_t> size_dist(min_size, max_size);
 
         compio_file* file = compio_open_file("benchmark_file", archive);
         if (!file) {
@@ -127,21 +138,40 @@ BENCHMARK(BM_AllocationStrategy)
 static void BM_FragmentedAllocation(benchmark::State& state) {
     const int strategy = state.range(0);
 
+    const size_t min_size = 64;
+    const size_t max_size = 256;
+    std::minstd_rand0 rng(0);
+    std::uniform_int_distribution<size_t> size_dist(min_size, max_size);
+
     char filename[L_tmpnam];
     tmpnam(filename);
 
     // Create highly fragmented archive
     {
         compio_archive* archive = create_test_archive(filename, strategy);
+        if (!archive) {
+            state.SkipWithError("Failed to create archive");
+            return;
+        }
         // Create many small allocations with gaps
-        create_fragmentation(archive, 1000, 64, 256);
+        create_fragmentation(archive, 1000, min_size, max_size);
         compio_close_archive(archive);
     }
 
     // Benchmark allocation of large blocks in fragmented space
     for (auto _ : state) {
         compio_archive* archive = compio_open_archive(filename, "r+", nullptr);
+        if (!archive) {
+            state.SkipWithError("Failed to open archive");
+            break;
+        }
+
         compio_file* file = compio_open_file("large_file", archive);
+        if (!file) {
+            compio_close_archive(archive);
+            state.SkipWithError("Failed to open file");
+            break;
+        }
 
         // Try to allocate larger blocks that will require finding appropriate free space
         std::vector<char> data(4096, 'L');
