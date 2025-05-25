@@ -337,6 +337,182 @@ static void BM_ExtremeFragmentation(benchmark::State& state) {
     }
 }
 
+static void BM_TargetedFragmentation(benchmark::State& state) {
+    const int strategy = state.range(0);
+    std::string filename = "benchmark_targeted_" + std::to_string(strategy) + ".tmp";
+
+    // Metrics to track
+    size_t final_size = 0;
+    size_t total_allocated = 0;
+    size_t allocation_attempts = 0;
+    size_t success_count = 0;
+
+    for (auto _ : state) {
+        remove(filename.c_str());
+        compio_config config = {};
+        compio_build_default_config(&config);
+        config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
+
+        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        if (!archive) {
+            state.SkipWithError("Failed to open archive");
+            continue;
+        }
+
+        // PHASE 1: Create initial pattern of varying sizes
+        std::vector<std::string> filenames;
+        for (size_t i = 0; i < 100; i++) {
+            size_t size = (i % 5 + 1) * 512; // 512, 1024, 1536, 2048, 2560
+            std::string name = "file_" + std::to_string(i);
+            filenames.push_back(name);
+
+            compio_file* file = compio_open_file(name.c_str(), archive);
+            if (file) {
+                std::vector<uint8_t> data(size, 'A');
+                if (compio_write(data.data(), data.size(), file) == data.size()) {
+                    total_allocated += size;
+                }
+                compio_close_file(file);
+            }
+        }
+
+        // PHASE 2: Create specific fragmentation pattern
+        // Delete files in a pattern that creates varied gap sizes
+        for (size_t i = 0; i < filenames.size(); i++) {
+            if ((i % 2 == 0) || (i % 7 == 0)) {
+                compio_remove_file(archive, filenames[i].c_str());
+            }
+        }
+
+        // PHASE 3: Try to allocate files that challenge each strategy differently
+        // A mix of sizes that would work better with different strategies
+        std::vector<size_t> test_sizes = {256, 768, 1280, 2048, 2816};
+
+        for (size_t size : test_sizes) {
+            for (size_t i = 0; i < 10; i++) {
+                std::string name = "new_" + std::to_string(size) + "_" + std::to_string(i);
+                allocation_attempts++;
+
+                compio_file* file = compio_open_file(name.c_str(), archive);
+                if (file) {
+                    std::vector<uint8_t> data(size, 'B');
+                    if (compio_write(data.data(), data.size(), file) == data.size()) {
+                        success_count++;
+                        total_allocated += size;
+                    }
+                    compio_close_file(file);
+                }
+            }
+        }
+
+        compio_close_archive(archive);
+
+        // Get final size
+        FILE* f = fopen(filename.c_str(), "rb");
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            final_size = ftell(f);
+            fclose(f);
+        }
+        remove(filename.c_str());
+    }
+
+    // Report metrics that highlight differences
+    state.counters["FileSize"] = final_size;
+    state.counters["SuccessRate"] = 100.0 * success_count / (double)allocation_attempts;
+    state.counters["SpaceEfficiency"] = 100.0 * total_allocated / (double)final_size;
+    state.counters["AvgAllocationSize"] = total_allocated / (double)success_count;
+}
+
+static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
+    const int strategy = state.range(0);
+    std::string filename = "benchmark_large_alloc_" + std::to_string(strategy) + ".tmp";
+
+    // Metrics
+    size_t successful_large_allocations = 0;
+    size_t final_file_size = 0;
+    size_t total_allocated = 0;
+
+    for (auto _ : state) {
+        remove(filename.c_str());
+        compio_config config = {};
+        compio_build_default_config(&config);
+        config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
+
+        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        if (!archive) {
+            state.SkipWithError("Failed to open archive");
+            continue;
+        }
+
+        // PHASE 1: Create 100 small files (512 bytes each)
+        for (size_t i = 0; i < 100; i++) {
+            std::string name = "small_" + std::to_string(i);
+            compio_file* file = compio_open_file(name.c_str(), archive);
+            if (file) {
+                std::vector<uint8_t> data(512, 'A');
+                compio_write(data.data(), data.size(), file);
+                compio_close_file(file);
+                total_allocated += 512;
+            }
+        }
+
+        // PHASE 2: Delete every third file to create fragmentation
+        for (size_t i = 0; i < 100; i += 3) {
+            std::string name = "small_" + std::to_string(i);
+            compio_remove_file(archive, name.c_str());
+        }
+
+        // PHASE 3: Try to allocate files of increasing size
+        // This specifically tests how well each strategy handles larger allocations
+        // after fragmentation - Worst Fit should excel here
+        for (size_t size = 512; size <= 4096; size += 512) {
+            for (size_t i = 0; i < 3; i++) {
+                std::string name = "large_" + std::to_string(size) + "_" + std::to_string(i);
+                compio_file* file = compio_open_file(name.c_str(), archive);
+                if (file) {
+                    std::vector<uint8_t> data(size, 'B');
+                    if (compio_write(data.data(), data.size(), file) == size) {
+                        successful_large_allocations++;
+                        total_allocated += size;
+                    }
+                    compio_close_file(file);
+                }
+            }
+        }
+
+        // Get final size
+        compio_close_archive(archive);
+        FILE* f = fopen(filename.c_str(), "rb");
+        if (f) {
+            fseek(f, 0, SEEK_END);
+            final_file_size = ftell(f);
+            fclose(f);
+        }
+        remove(filename.c_str());
+    }
+
+    // The key metrics for comparing strategies
+    state.counters["LargeAllocSuccess"] = successful_large_allocations;
+    state.counters["SpaceEfficiency"] = 100.0 * total_allocated / (double)final_file_size;
+    state.counters["FileSize"] = final_file_size;
+    state.counters["FragmentationRatio"] = (final_file_size - total_allocated) / (double)final_file_size * 100.0;
+}
+
+BENCHMARK(BM_LargeAllocationAfterFragmentation)
+    ->Args({COMPIO_ALLOC_FIRST_FIT})
+    ->Args({COMPIO_ALLOC_BEST_FIT})
+    ->Args({COMPIO_ALLOC_WORST_FIT})
+    ->Args({COMPIO_ALLOC_NEXT_FIT})
+    ->Unit(benchmark::kMillisecond);
+
+BENCHMARK(BM_TargetedFragmentation)
+    ->Args({COMPIO_ALLOC_FIRST_FIT})
+    ->Args({COMPIO_ALLOC_BEST_FIT})
+    ->Args({COMPIO_ALLOC_WORST_FIT})
+    ->Args({COMPIO_ALLOC_NEXT_FIT})
+    ->Unit(benchmark::kMillisecond);
+
 BENCHMARK(BM_ExtremeFragmentation)
     ->Args({COMPIO_ALLOC_FIRST_FIT})
     ->Args({COMPIO_ALLOC_BEST_FIT})
