@@ -210,6 +210,8 @@ static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file*
 }
 
 uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
+    DEBUG_PRINT("\ncompio_write(cursor=%d, size=%d)\n", file->cursor, size);
+
     if (size == 0) {
         return 0;
     }
@@ -231,6 +233,11 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
     auto range = get_range_in_file(file, size);
     uint64_t range_idx = 0;
+
+    DEBUG_PRINT("[CW]b-tree range:\n");
+    for (const auto& [key, val] : range) {
+        DEBUG_PRINT("\t(key.pos=%d) --- (val.addr=%d, val.size=%d)\n", key.pos, val.addr, val.size);
+    }
 
     const uint8_t* p_ptr = reinterpret_cast<const uint8_t*>(ptr);
 
@@ -260,17 +267,21 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             }
 
             uint64_t c_size;
+            DEBUG_PRINT("[CW]want block on val.addr=%d\n", val.addr);
 
             if (archive->dec_cache.exists(val.addr)) {
                 auto cache_elem = archive->dec_cache.pop(val.addr);
                 dec_buffer = cache_elem.first;
                 c_size = cache_elem.second;
+                DEBUG_PRINT("[CW]compression_cache hit for val.addr=%d\n", val.addr);
             } else {
                 if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
                     // can reuse already allocated buffer
                     dec_buffer = archive->dec_cache.pop_back().first;
+                    DEBUG_PRINT("[CW]compression_cache fault, reusing cache tail buffer\n");
                 } else {
                     dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
+                    DEBUG_PRINT("[CW]compression_cache fault, allocating buffer\n");
                 }
 
                 auto block = archive->block_reader.read_block(val.addr);
@@ -291,9 +302,11 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
                 c_size = block->size;
             }
 
+            DEBUG_PRINT("[CW]removing and deallocating block val.addr=%d\n", val.addr);
             archive->block_reader.remove_block(val.addr);
             archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + c_size);
         } else {
+            DEBUG_PRINT("[CW]zero-initializing new block\n");
             if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
                 dec_buffer = archive->dec_cache.pop_back().first;
             } else {
@@ -309,6 +322,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
             uint64_t ptr_offset = std::max<int64_t>(0, static_cast<int64_t>(block_start) - file->cursor);
             std::copy_n(p_ptr + ptr_offset, copy_size, dec_buffer.get() + dec_offset);
             written_bytes += copy_size;
+            DEBUG_PRINT("[CW]copied ptr data to dec_buffer\n");
         }
 
         // compress dec_buffer into c_buffer
@@ -328,6 +342,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
         // create new block
         uint64_t addr = archive->allocator->allocate(STORAGE_BLOCK_METASIZE + c_buffer_size);
+        DEBUG_PRINT("[CW]creating block on addr=%d\n", addr);
         tree_key new_key = {file->hash_tail, block_start};
         tree_val new_val = {addr, block_size};
 
