@@ -85,6 +85,7 @@ typedef struct {
 
     int cache_size__nodes; /**< Maximum number of b-tree nodes in cache */
     int cache_size__blocks; /**< Maximum number of storage blocks in cache */
+    int cache_size__compression; /**< Maximum number of uncompressed data blocks in cache */
 
     compio_allocation_strategy allocation_strategy; /**< Allocation strategy (see enum compio_allocation_strategy) */
     bool fill_holes_with_zeros; /**< Fill deleted blocks with zeros, so that OS may optimize it (see sparse files) */

@@ -35,8 +35,8 @@ struct compio_archive {
 
     compio::block_allocator* allocator;
 
-    std::unique_ptr<uint8_t[]> dec_buffer;
     std::unique_ptr<uint8_t[]> c_buffer;
+    cache::lru_cache<uint64_t, std::pair<std::shared_ptr<uint8_t[]>, uint64_t>> dec_cache;
 };
 
 /**

@@ -11,7 +11,7 @@ struct storage_block_reader {
     storage_block_reader(FILE* file, int max_size);
     smart_infile_object<storage_block> read_block(uint64_t addr);
     smart_infile_object<storage_block> create_block(uint64_t addr, std::unique_ptr<uint8_t[]>&& data, uint64_t size);
-    void remove_block(smart_infile_object<storage_block> block);
+    void remove_block(uint64_t addr);
     void clear_cache();
     
 private:
