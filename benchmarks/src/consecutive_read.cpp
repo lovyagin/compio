@@ -194,7 +194,7 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
     remove(fn.c_str());
 }
 
-const std::vector<std::vector<int64_t>> params_grid = {{128}, {1024, 4096}};
+const std::vector<std::vector<int64_t>> params_grid = {{1024}, {1024, 4096}};
 
 BENCHMARK(BM_stdio_ConsecutiveRead)
     ->ArgsProduct(params_grid)
