@@ -10,10 +10,14 @@ int main() {
     std::string fn = get_temporary_filename();
 
     compio_build_default_config(&config);
+    config.cache_size__blocks = 32;
+    config.cache_size__compression = 32;
 
-    std::size_t file_size = 1 << 14;
-    std::size_t n_operations = 1 << 8;
+    std::size_t file_size = 1 << 18;
+    std::size_t n_operations = 1 << 12;
     std::size_t n_repetitions = 1;
+
+    std::vector<unsigned char> buffer(file_size);
 
     std::minstd_rand rng;
     std::uniform_int_distribution<int> d_op(0, 3);
@@ -22,7 +26,6 @@ int main() {
     for (int k = 0; k < n_repetitions; ++k) {
         rng.seed(k);
 
-        std::vector<unsigned char> buffer(file_size);
         int cursor = 0;
         int current_fsize = 0;
 
@@ -30,6 +33,10 @@ int main() {
         file = compio_open_file("A", archive);
 
         for (int i = 0; i < n_operations; ++i) {
+            std::size_t max_size = std::min<uint64_t>(file_size - cursor, sizeof(html_data));
+            std::uniform_int_distribution<int> d_size(1, max_size);
+            int size = d_size(rng);
+
             switch (d_op(rng)) {
             case 0: {
                 cursor = d_pos(rng);
@@ -42,10 +49,6 @@ int main() {
             }
             case 2: {
                 if (cursor < current_fsize) {
-                    std::size_t max_size = current_fsize - cursor;
-                    std::uniform_int_distribution<int> d_size(1, max_size);
-                    int size = d_size(rng);
-
                     compio_read(buffer.data(), size, file); 
                     cursor += size;
                     break;
@@ -53,10 +56,6 @@ int main() {
             }
             case 3: {
                 if (cursor < file_size) {
-                    std::size_t max_size = std::min<uint64_t>(file_size - cursor, sizeof(html_data));
-                    std::uniform_int_distribution<int> d_size(1, max_size);
-                    int size = d_size(rng);
-
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
                     

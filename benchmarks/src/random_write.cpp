@@ -145,9 +145,9 @@ static void BM_compio_RandomWrite(benchmark::State& state) {
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {1024},
-    {1024, 4096},
-    {16384, 32768},
+    {1 << 13},
+    {1 << 10, 1 << 12},
+    {1 << 21, 1 << 22},
 };
 
 BENCHMARK(BM_stdio_RandomWrite)
