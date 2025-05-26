@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 
-def format_units(value: float, step: float, names: List[str], precision: int = 1) -> Tuple[float, str]:
+def format_units(
+    value: float, step: float, names: List[str], precision: int = 1
+) -> Tuple[float, str]:
     for i, x in enumerate(names):
         if value < step or i == len(names) - 1:
             return f"{{:.{precision}f}}".format(value), x
@@ -21,12 +23,18 @@ def format_units(value: float, step: float, names: List[str], precision: int = 1
 def format_(value: float, type_: str) -> Tuple[float, str]:
     if type_ == "ms":
         return format_units(value, 1000, ["ms", "s"])
+    elif type_ == "ns":
+        return format_units(value, 1000, ["ns", "μs", "ms", "s"])
     elif type_ == "size":
         return format_units(value, 1000, ["B", "KB", "MB", "GB", "TB"])
     elif type_ == "speed":
         return format_units(value, 1000, ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"])
     elif type_ == "plain":
-        return format_units(value, 1, [""])
+        return str(value), ""
+    elif type_ == "percent":
+        return f"{value:.2%}", ""
+    elif type_ == "plain_percent":
+        return f"{value:.2f}%", ""
     else:
         raise ValueError(f"unknown format type: {type_}")
 
@@ -65,7 +73,7 @@ def dataclass_arguments(cls: Any) -> Any:
 @dataclass
 class ArgCounter:
     name: str
-    format_type: str
+    format_type: str = "plain"
     show_std: str = "false"
     reversed: str = "false"
 
@@ -104,6 +112,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         nargs="*",
         help="context keys to print in the header",
+    )
+    parser.add_argument(
+        "--replace-match-with",
+        type=str,
+        default="",
+        help="string to replace regex filter match in benchmark names with",
     )
     parser.add_argument(
         "-o",
@@ -147,13 +161,17 @@ def format_table_rows(rows: List[List[str]]) -> str:
 
 def highlight_value(value: str) -> str:
     # return f"**{value}**"
-    return f'<span style="color: #87d1ff">**{value}**</span>'
+    return f'<span style="color: #87d1ff">**{value.strip()}**</span>'
 
 
-def get_highlighted_indices(values: np.ndarray, reversed: bool = False, alpha: float = 1) -> List[int]:
+def get_highlighted_indices(
+    values: np.ndarray, reversed: bool = False, alpha: float = 1
+) -> List[int]:
     if reversed:
         values *= -1
-    means, stds = np.mean(values, axis=1), np.std(values, axis=1, ddof=1)
+    means, stds = np.mean(values, axis=1), np.std(
+        values, axis=1, ddof=1 if len(values[0]) > 1 else 0
+    )
     best_i = np.argmax(means)
     indices = []
     for i in range(len(means)):
@@ -189,7 +207,7 @@ def main(args: argparse.Namespace) -> None:
                 # aggregate value
                 continue
             if filter_re.search(benchmark["name"]) is not None:
-                key = filter_re.sub("", benchmark["name"])
+                key = filter_re.sub(args.replace_match_with, benchmark["name"])
                 benchmarks_by_key[key].append(benchmark)
                 if key not in keys:
                     keys.append(key)
@@ -203,7 +221,10 @@ def main(args: argparse.Namespace) -> None:
     rows = []
 
     # table header
-    rows.append(["benchmark_name"] + [f"{c.name} [{name}]" for c in args.counters for _, _, name in args.inputs])
+    rows.append(
+        ["benchmark_name"]
+        + [f"{c.name} [{name}]" for c in args.counters for _, _, name in args.inputs]
+    )
 
     # separator
     rows.append(["-"] * (len(args.counters) * N + 1))
@@ -214,17 +235,25 @@ def main(args: argparse.Namespace) -> None:
         for counter in args.counters:
             row_segment = []
             all_values = []
+            if counter.name not in all_benchmarks[0][key][0]:
+                row.extend([" " for _ in range(N)])
+                continue
             for i in range(N):
                 values = np.array([b[counter.name] for b in all_benchmarks[i][key]])
                 mean_val, mean_unit = format_(values.mean(), counter.format_type)
                 formatted_value = f"{mean_val} {mean_unit}"
                 if counter.show_std == "true":
-                    std_val, std_unit = format_(values.std(ddof=1), counter.format_type)
+                    std_val, std_unit = format_(
+                        values.std(ddof=1 if len(values) > 1 else 0),
+                        counter.format_type,
+                    )
                     formatted_value += f" ± {std_val} {std_unit}"
                 row_segment.append(formatted_value)
                 all_values.append(values)
 
-            indices = get_highlighted_indices(np.array(all_values), reversed=counter.reversed == "false")
+            indices = get_highlighted_indices(
+                np.array(all_values), reversed=counter.reversed == "false"
+            )
             for idx in indices:
                 row_segment[idx] = highlight_value(row_segment[idx])
 
