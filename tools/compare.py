@@ -4,7 +4,6 @@ import re
 import csv
 import itertools
 import numpy as np
-from scipy.stats import mannwhitneyu
 from typing import List, Tuple, Dict, Any
 
 from dataclasses import dataclass
@@ -161,7 +160,7 @@ def format_table_rows(rows: List[List[str]]) -> str:
 
 def highlight_value(value: str) -> str:
     # return f"**{value}**"
-    return f'<span style="color: #87d1ff">**{value.strip()}**</span>'
+    return f'<span style="color: #40c242">**{value.strip()}**</span>'
 
 
 def get_highlighted_indices(
