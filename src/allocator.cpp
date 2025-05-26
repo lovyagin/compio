@@ -149,30 +149,50 @@ uint8_t ZEROS[4096] = {0};
         }
 
         case allocation_strategy::NEXT_FIT: {
-            if (!last_alloc_) last_alloc_ = head_;
+            if (!last_alloc_ || !head_) {
+                last_alloc_ = head_;
+            }
 
+            // Safety check
+            if (!last_alloc_) {
+                return UINT64_MAX;
+            }
+
+            // First try from last_alloc_ to end
             free_block* current = last_alloc_;
+            free_block* start_point = last_alloc_;
+            bool wrapped = false;
+
+            // Continue search until we've checked all blocks
             while (current) {
                 if (current->size >= size) {
                     target = current;
                     break;
                 }
                 current = current->next;
-            }
 
-            if (!target && last_alloc_ != head_) {
-                current = head_;
-                while (current && current != last_alloc_) {
-                    if (current->size >= size) {
-                        target = current;
-                        break;
-                    }
-                    current = current->next;
+                // If we reach the end, wrap around to head
+                if (!current && !wrapped) {
+                    current = head_;
+                    wrapped = true;
+                }
+
+                // Stop if we've gone full circle
+                if (wrapped && current == start_point) {
+                    break;
                 }
             }
 
+            // Update last_alloc_ safely for next allocation
             if (target) {
-                last_alloc_ = target->next ? target->next : head_;
+                // If we're going to completely consume this block
+                if (target->size == size) {
+                    // Save next pointer before target gets deleted
+                    last_alloc_ = target->next ? target->next : head_;
+                } else {
+                    // We'll still have the block, just smaller
+                    last_alloc_ = target;
+                }
             }
 
             break;
@@ -580,48 +600,71 @@ uint8_t ZEROS[4096] = {0};
     }
 
     void block_allocator::perform_defragmentation() {
+        // Get all used blocks from the index
         std::vector<std::pair<tree_key, tree_val>> used_blocks;
         constexpr tree_key key_min{};
         tree_key key_max{};
         key_max.hash = UINT64_MAX;
         key_max.pos = UINT64_MAX;
+
+        // Call get_range without checking return value since it returns void
         archive_->index->get_range(key_min, key_max, used_blocks);
 
+        // Sort blocks by address for sequential processing
         std::sort(used_blocks.begin(), used_blocks.end(),
             [](const auto& a, const auto& b) { return a.second.addr < b.second.addr; });
 
         uint64_t new_offset = sizeof(header);
         std::vector<std::pair<tree_key, tree_val>> relocations;
 
+        // Process each used block
         for (const auto& [key, val] : used_blocks) {
+            // Skip blocks that are already in the right place
             if (val.addr == new_offset) {
-                new_offset += val.size;
+                new_offset += STORAGE_BLOCK_METASIZE + val.size;
                 continue;
             }
 
-            std::vector<uint8_t> buffer(val.size);
-            fseek(archive_->file, val.addr, SEEK_SET);
-            fread(buffer.data(), 1, val.size, archive_->file);
+            // Create storage block and read from file
+            storage_block block;
+            block.read_from(archive_->file, val.addr);
 
-            fseek(archive_->file, new_offset, SEEK_SET);
-            fwrite(buffer.data(), 1, val.size, archive_->file);
+            // Save the block to the new location
+            block.write_to(archive_->file, new_offset);
 
-            relocations.emplace_back(key, tree_val{new_offset, val.size});
-            new_offset += val.size;
+            // Track this relocation
+            tree_val new_val = val;
+            new_val.addr = new_offset;
+            relocations.push_back({key, new_val});
+
+            // Update offset for next block
+            uint64_t total_block_size = STORAGE_BLOCK_METASIZE + block.size;
+            new_offset += total_block_size;
         }
 
-        for (const auto& [key, new_val] : relocations) {
-            if (!archive_->index->update(key, new_val)) {
-                fprintf(stderr, "Failed to update B-tree for key (%" PRIu64 ", %" PRIu64 ")\n",
-                        key.hash, key.pos);
-            }
+        // Update the index with relocated blocks
+        for (const auto& [key, val] : relocations) {
+            archive_->index->update(key, val);
         }
 
-        *blocks_manager_.get_file_size_ptr() = new_offset;
-        blocks_manager_.add_free_block(new_offset, UINT64_MAX - new_offset);
+        // Reset free blocks list - now we have a single free block at the end of file
+        blocks_manager_ = free_blocks_manager(archive_->header->file_size ? &archive_->header->file_size : nullptr);
 
-//        flush_header(archive_);
-        last_fragmentation_ = blocks_manager_.calculate_fragmentation();
+        // Add the gap at the end as a free block
+        if (new_offset < archive_->header->file_size) {
+            blocks_manager_.add_free_block(new_offset, archive_->header->file_size - new_offset);
+        } else {
+            // If no gap, update the file size
+            archive_->header->file_size = new_offset;
+        }
+
+        // Flush changes to disk
+        fflush(archive_->file);
+
+        // Update fragmentation metrics
+        blocks_manager_.update_fragmentation();
+        blocks_manager_.save_to_file(archive_);
+
         printf("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
     }
 

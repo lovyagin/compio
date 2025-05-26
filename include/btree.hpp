@@ -10,7 +10,6 @@
 #ifndef BTREE_H
 #define BTREE_H
 
-#include <cstdbool>
 #include <cstddef>
 #include <map>
 #include <memory>

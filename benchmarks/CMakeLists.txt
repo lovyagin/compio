@@ -12,6 +12,7 @@ add_executable(compio_benchmarks
     src/random_write.cpp
     src/consecutive_read.cpp
     src/random_read.cpp
+    src/allocator_strategies_benchmark.cpp
 )
 
 target_link_libraries(compio_benchmarks PRIVATE 
@@ -34,6 +35,7 @@ target_include_directories(fsize_benchmark PRIVATE
     ${CMAKE_SOURCE_DIR} 
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include
 )
 
 add_executable(fragmentation custom/fragmentation.cpp)

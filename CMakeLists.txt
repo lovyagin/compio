@@ -45,7 +45,7 @@ target_link_libraries(compio PRIVATE ZLIB::ZLIB)
 
 find_package(unofficial-cunit CONFIG REQUIRED)
 target_link_libraries(compio PRIVATE unofficial::cunit::cunit)
-    
+
 # find_package(CUnit REQUIRED)
 # target_link_libraries(compio PRIVATE CUnit)
 
