@@ -163,7 +163,8 @@ def get_highlighted_indices(values: np.ndarray, reversed: bool = False, alpha: f
 
 
 def main(args: argparse.Namespace) -> None:
-    result = "# Benchmark report\n\n"
+    # result = "# Benchmark report\n\n"
+    result = ""
     keys = []
     all_benchmarks = []
     context_printed = False
