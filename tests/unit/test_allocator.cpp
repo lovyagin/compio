@@ -2,9 +2,9 @@
 #include <gmock/gmock.h>
 #include <vector>
 #include <algorithm>
-#include "allocator.hpp"
-#include "compio_file.hpp"
-#include "utils.hpp"
+#include "../include/allocator.hpp"
+#include "../include/compio_file.hpp"
+#include "../include/utils.hpp"
 #include "random"
 
 using namespace compio;

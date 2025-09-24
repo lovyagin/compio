@@ -18,8 +18,9 @@
 #include <vector>
 
 namespace compio {
+    struct free_block;
 
-uint8_t ZEROS[4096] = {0};
+    uint8_t ZEROS[4096] = {0};
 
     free_blocks_manager::free_blocks_manager(uint64_t* file_size)
     : head_(nullptr), tail_(nullptr), last_alloc_(nullptr),
@@ -149,52 +150,29 @@ uint8_t ZEROS[4096] = {0};
         }
 
         case allocation_strategy::NEXT_FIT: {
-            if (!last_alloc_ || !head_) {
+            if (!last_alloc_) {
                 last_alloc_ = head_;
             }
 
-            // Safety check
-            if (!last_alloc_) {
-                return UINT64_MAX;
-            }
-
-            // First try from last_alloc_ to end
             free_block* current = last_alloc_;
-            free_block* start_point = last_alloc_;
-            bool wrapped = false;
+            int checked_count = 0;
 
-            // Continue search until we've checked all blocks
-            while (current) {
+            while (checked_count < total_free_) {
                 if (current->size >= size) {
                     target = current;
                     break;
                 }
                 current = current->next;
-
-                // If we reach the end, wrap around to head
-                if (!current && !wrapped) {
+                if (!current) {
                     current = head_;
-                    wrapped = true;
                 }
-
-                // Stop if we've gone full circle
-                if (wrapped && current == start_point) {
-                    break;
-                }
+                checked_count++;
             }
 
-            // Update last_alloc_ safely for next allocation
+            // Update last_alloc_ to the position after the target
             if (target) {
-                // If we're going to completely consume this block
-                if (target->size == size) {
-                    // Save next pointer before target gets deleted
-                    last_alloc_ = target->next ? target->next : head_;
-                } else {
-                    // We'll still have the block, just smaller
-                    last_alloc_ = target;
-                }
+                last_alloc_ = target->next ? target->next : head_;
             }
-
             break;
         }
     }
@@ -299,16 +277,21 @@ uint8_t ZEROS[4096] = {0};
     }
 
     bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
-        if (file_size_ && offset >= *file_size_) {
+        if (file_size_ && (offset + size) >= *file_size_) {
             return true;
         }
 
+        // Now, iterate through the list of explicitly marked free blocks.
+        // Check if the requested region (offset, size) is completely contained
+        // within any of the free blocks.
         for (free_block* current = head_; current; current = current->next) {
-            if (current->offset <= offset && offset + size <= current->offset + current->size) {
+            if (current->offset <= offset && (offset + size) <= (current->offset + current->size)) {
                 return true;
             }
         }
 
+        // If the region is not beyond the file size and not in any free block,
+        // it must be a used region.
         return false;
     }
 
