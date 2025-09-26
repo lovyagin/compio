@@ -1,16 +1,22 @@
 #include "compio.h"
 #include "sample_data.hpp"
+#include "benchmark_util.hpp"
+
+#ifdef BM_FILE_OPERATIONS_COUNTER
+#include "infile_object.hpp"
+#endif
 
 #include <random>
 
 #include <benchmark/benchmark.h>
 
+extern compio_config config;
+
 static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
     const size_t n_blocks = state.range(0);
     const size_t block_size = state.range(1);
 
-    char fn[L_tmpnam];
-    tmpnam(fn);
+    std::string fn = get_temporary_filename();
 
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d(0, sizeof(html_data) - block_size);
@@ -19,7 +25,7 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
 
     {
         // prepare file
-        FILE* file = fopen(fn, "w+");
+        FILE* file = fopen(fn.c_str(), "w+");
         if (!file) {
             state.SkipWithError("fopen failed");
             return;
@@ -38,8 +44,11 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
         fclose(file);
     }
 
+    state.counters["file_size"] = benchmark::Counter(
+        get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+
     for (auto _ : state) {
-        FILE* file = fopen(fn, "r");
+        FILE* file = fopen(fn.c_str(), "r");
         if (!file) {
             state.SkipWithError("fopen failed");
             break;
@@ -66,15 +75,21 @@ static void BM_stdio_ConsecutiveRead(benchmark::State& state) {
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
 
-    remove(fn);
+#ifdef BM_FILE_OPERATIONS_COUNTER
+    state.counters["read_bytes_per_op"] =
+        benchmark::Counter(block_size, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["written_bytes_per_op"] =
+        benchmark::Counter(0, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+#endif
+
+    remove(fn.c_str());
 }
 
 static void BM_compio_ConsecutiveRead(benchmark::State& state) {
     const size_t n_blocks = state.range(0);
     const size_t block_size = state.range(1);
 
-    char fn[L_tmpnam];
-    tmpnam(fn);
+    std::string fn = get_temporary_filename();
 
     std::minstd_rand0 rng(0);
     std::uniform_int_distribution<std::size_t> d(0, sizeof(html_data) - block_size);
@@ -83,10 +98,7 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
 
     {
         // prepare file
-        compio_config config;
-        compio_build_default_config(&config);
-
-        compio_archive* archive = compio_open_archive(fn, "w+", &config);
+        compio_archive* archive = compio_open_archive(fn.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
             return;
@@ -114,11 +126,18 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
         compio_close_archive(archive);
     }
 
-    for (auto _ : state) {
-        compio_config config;
-        compio_build_default_config(&config);
+    state.counters["file_size"] = benchmark::Counter(
+        get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
-        compio_archive* archive = compio_open_archive(fn, "r", &config);
+#ifdef BM_FILE_OPERATIONS_COUNTER
+    state.counters["read_bytes_per_op"] =
+        benchmark::Counter(0, benchmark::Counter::kAvgIterations, benchmark::Counter::kIs1024);
+    state.counters["written_bytes_per_op"] =
+        benchmark::Counter(0, benchmark::Counter::kAvgIterations, benchmark::Counter::kIs1024);
+#endif
+
+    for (auto _ : state) {
+        compio_archive* archive = compio_open_archive(fn.c_str(), "r", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
             break;
@@ -130,6 +149,11 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
             state.SkipWithError("compio_open_file failed");
             break;
         }
+
+#ifdef BM_FILE_OPERATIONS_COUNTER
+        int n_read_bytes_start = get_n_read_bytes();
+        int n_written_bytes_start = get_n_written_bytes();
+#endif
 
         bool failed = false;
         for (std::size_t i = 0; i < n_blocks; ++i) {
@@ -148,16 +172,28 @@ static void BM_compio_ConsecutiveRead(benchmark::State& state) {
             break;
         }
 
+        compio_flush(archive);
+
+#ifdef BM_FILE_OPERATIONS_COUNTER
+        state.counters["read_bytes_per_op"] +=
+            static_cast<double>(get_n_read_bytes() - n_read_bytes_start) / n_blocks;
+        state.counters["written_bytes_per_op"] +=
+            static_cast<double>(get_n_written_bytes() - n_written_bytes_start) / n_blocks;
+#endif
+
         compio_close_file(file);
         compio_close_archive(archive);
     }
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
 
-    remove(fn);
+    remove(fn.c_str());
 }
 
-const std::vector<std::vector<int64_t>> params_grid = {{128, 1024}, {256, 512, 1024}};
+const std::vector<std::vector<int64_t>> params_grid = {
+    {1 << 13},
+    {1 << 10, 1 << 12},
+};
 
 BENCHMARK(BM_stdio_ConsecutiveRead)
     ->ArgsProduct(params_grid)

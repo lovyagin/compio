@@ -21,14 +21,14 @@ int main() {
     // config.block_size = 1024;
 
     // Set B-Tree nodes cache size (default: 128)
-    // config.cache_size = 64
+    // config.cache_size__nodes = 64
     // , or disable it
-    // config.cache_size = 0
+    // config.cache_size__nodes = 0
 
     // Set block cache size (default: 16)
-    // config.block_cache_size = 128;
+    // config.cache_size__blocks = 128;
     // , or disable it
-    // config.block_cache_size = 0;
+    // config.cache_size__blocks = 0;
 
     // Set allocation strategy (default: FIRST_FIT)
     // config.allocation_strategy = COMPIO_ALLOC_BEST_FIT
