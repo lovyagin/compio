@@ -12,6 +12,7 @@ add_executable(compio_benchmarks
     src/random_write.cpp
     src/consecutive_read.cpp
     src/random_read.cpp
+    src/benchmark_util.cpp
     src/allocator_strategies_benchmark.cpp
 )
 
@@ -43,6 +44,16 @@ add_executable(fragmentation custom/fragmentation.cpp)
 target_link_libraries(fragmentation PRIVATE compio)
 
 target_include_directories(fragmentation PRIVATE 
+    ${CMAKE_SOURCE_DIR} 
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_executable(random_usage custom/random_usage.cpp)
+
+target_link_libraries(random_usage PRIVATE compio)
+
+target_include_directories(random_usage PRIVATE 
     ${CMAKE_SOURCE_DIR} 
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include

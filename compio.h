@@ -78,24 +78,18 @@ typedef enum {
  * @brief Configuration
  */
 typedef struct {
-    /**
-     * @brief Compressor, that will be used for this file
-     */
-    compio_compressor compressor;
-    
-    int b_tree_degree; /**< Maximum number of children of B-Tree node */
-    int block_size;
-    
-    /**
-     * @brief Fill deleted blocks with zeros, so that OS may optimize it (see
-     * sparse files)
-     */
-    bool fill_holes_with_zeros;
-    
-    int cache_size; /**< Maximum number of b-tree nodes in cache */
-    int block_cache_size; /**< Maximum number of storage blocks in cache */
-    compio_allocation_strategy allocation_strategy;
-    uint8_t fragmentation_threshold;
+    compio_compressor compressor; /**< Compressor for blocks */
+
+    int b_tree_degree; /**< B-Tree branching parameter */
+    int block_size; /**< Block size to split data into */
+
+    int cache_size__nodes; /**< Maximum number of b-tree nodes in cache */
+    int cache_size__blocks; /**< Maximum number of storage blocks in cache */
+    int cache_size__compression; /**< Maximum number of uncompressed data blocks in cache */
+
+    compio_allocation_strategy allocation_strategy; /**< Allocation strategy (see enum compio_allocation_strategy) */
+    bool fill_holes_with_zeros; /**< Fill deleted blocks with zeros, so that OS may optimize it (see sparse files) */
+    uint8_t fragmentation_threshold; /**< Fragmentation threshold parameter for allocator (integer in range 1-100) */
 } compio_config;
 
 /**
@@ -179,6 +173,13 @@ int compio_seek(compio_file* file, int64_t offset, uint8_t origin);
  * @return long
  */
 uint64_t compio_tell(compio_file* file);
+
+/**
+ * @brief Flush all cached data to filesystem
+ *
+ * @param archive opened archive
+ */
+void compio_flush(compio_archive* archive);
 
 /**
  * @brief Remove file from archive

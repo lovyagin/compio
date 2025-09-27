@@ -83,8 +83,8 @@ int main(int argc, char** argv) {
     {
         compio_config config;
         compio_build_default_config(&config);
-        config.cache_size = 0;
-        config.block_cache_size = 0;
+        config.cache_size__nodes = 0;
+        config.cache_size__blocks = 0;
 
         compio_archive* archive = compio_open_archive(fn, "w+", &config);
         compio_file* file = compio_open_file("A", archive);

@@ -69,6 +69,34 @@ public:
         _cache_items_list.clear();
     }
 
+    bool is_full() {
+        return _cache_items_map.size() >= _max_size;
+    }
+
+    value_t pop_back() {
+        if (_cache_items_map.size() == 0) {
+            throw std::range_error("Trying to pop back from empty cache");
+        }
+        auto last = _cache_items_list.end();
+        last--;
+        value_t result = last->second;
+        _cache_items_map.erase(last->first);
+        _cache_items_list.pop_back();
+        return result;
+    }
+
+    value_t pop(const key_t& key) {
+        auto it = _cache_items_map.find(key);
+        if (it == _cache_items_map.end()) {
+            throw std::range_error("There is no such key in cache");
+        } else {
+            value_t result = (*it->second).second;
+            _cache_items_list.erase(it->second);
+            _cache_items_map.erase(it);
+            return result;
+        }
+    }
+
     size_t size() const { return _cache_items_map.size(); }
 
 private:
