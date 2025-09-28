@@ -29,231 +29,263 @@ namespace compio {
     }
 
     void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
-    if (size == 0) return;
+        if (size == 0) return;
 
-    free_block* prev_merge = nullptr;
-    free_block* next_merge = nullptr;
+        // Check for mergeable blocks
+        free_block *prev, *next;
+        find_mergeable_blocks(offset, size, prev, next);
 
-    for (free_block* current = head_; current; current = current->next) {
-        if (current->offset + current->size == offset) {
-            prev_merge = current;
-        }
-        else if (offset + size == current->offset) {
-            next_merge = current;
-        }
-    }
-
-    if (prev_merge && next_merge) {
-        prev_merge->size += size + next_merge->size;
-
-        if (next_merge->next) {
-            next_merge->next->prev = prev_merge;
+        if (prev || next) {
+            // Merge blocks if possible
+            merge_blocks(prev, offset, size, next);
         } else {
-            tail_ = prev_merge;
+            // Create new block if no merging possible
+            auto* new_block = new free_block{offset, size, nullptr, nullptr};
+            insert_ordered_block(new_block);
         }
 
-        prev_merge->next = next_merge->next;
-        delete next_merge;
-
         total_free_ += size;
-        return;
-    }
-    else if (prev_merge) {
-        prev_merge->size += size;
-        total_free_ += size;
-        return;
-    }
-    else if (next_merge) {
-        next_merge->offset = offset;
-        next_merge->size += size;
-        total_free_ += size;
-        return;
+        recently_defragmented_ = false;
+        update_fragmentation();
     }
 
-    auto* new_block = new free_block{offset, size, nullptr, nullptr};
+    void free_blocks_manager::find_mergeable_blocks(uint64_t offset, uint64_t size,
+                                                free_block*& prev, free_block*& next) const {
+        prev = next = nullptr;
 
-    if (!head_) {
-        head_ = tail_ = last_alloc_ = new_block;
-        total_free_ += size;
-        return;
-    }
-
-    if (offset < head_->offset) {
-        new_block->next = head_;
-        head_->prev = new_block;
-        head_ = new_block;
-        total_free_ += size;
-        return;
-    }
-
-    free_block* current = head_;
-    while (current->next && current->next->offset < offset) {
-        current = current->next;
-    }
-
-    new_block->next = current->next;
-    new_block->prev = current;
-
-    if (current->next) {
-        current->next->prev = new_block;
-    } else {
-        tail_ = new_block;
-    }
-
-    current->next = new_block;
-    total_free_ += size;
-
-    if (!last_alloc_) last_alloc_ = head_;
-}
-
-    uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
-    if (size == 0 || !head_) return UINT64_MAX;
-
-    free_block* target = nullptr;
-
-    switch (strategy) {
-        case allocation_strategy::FIRST_FIT: {
-            free_block* current = head_;
-            while (current && current->size < size) {
-                current = current->next;
+        for (free_block* current = head_; current; current = current->next) {
+            if (current->offset + current->size == offset) {
+                prev = current;
             }
-            target = current;
-            break;
-        }
-
-        case allocation_strategy::BEST_FIT: {
-            free_block* best = nullptr;
-            for (free_block* current = head_; current; current = current->next) {
-                if (current->size >= size && (!best || current->size < best->size)) {
-                    best = current;
-                }
-            }
-            target = best;
-            break;
-        }
-
-        case allocation_strategy::WORST_FIT: {
-            free_block* worst = nullptr;
-            uint64_t max_size = 0;
-
-            free_block* current = head_;
-            while (current) {
-                if (current->size >= size && current->size > max_size) {
-                    worst = current;
-                    max_size = current->size;
-                }
-                current = current->next;
+            else if (offset + size == current->offset) {
+                next = current;
             }
 
-            target = worst;
-            break;
-        }
-
-        case allocation_strategy::NEXT_FIT: {
-            if (!last_alloc_) {
-                last_alloc_ = head_;
-            }
-
-            free_block* current = last_alloc_;
-            int checked_count = 0;
-
-            while (checked_count < total_free_) {
-                if (current->size >= size) {
-                    target = current;
-                    break;
-                }
-                current = current->next;
-                if (!current) {
-                    current = head_;
-                }
-                checked_count++;
-            }
-
-            // Update last_alloc_ to the position after the target
-            if (target) {
-                last_alloc_ = target->next ? target->next : head_;
-            }
-            break;
+            if (prev && next) break;
         }
     }
 
-    if (!target) return UINT64_MAX;
+    void free_blocks_manager::remove_block(free_block* block) {
+        if (!block) return;
 
-    const uint64_t allocated_offset = target->offset;
+        size_idx_.remove(block);
 
-    if (target->size > size) {
-        target->offset += size;
-        target->size -= size;
-    } else {
-        if (target->prev) {
-            target->prev->next = target->next;
+        if (block->prev) {
+            block->prev->next = block->next;
         } else {
-            head_ = target->next;
+            head_ = block->next;
         }
 
-        if (target->next) {
-            target->next->prev = target->prev;
+        if (block->next) {
+            block->next->prev = block->prev;
         } else {
-            tail_ = target->prev;
+            tail_ = block->prev;
         }
 
-        delete target;
+        if (last_alloc_ == block) {
+            last_alloc_ = block->next ? block->next : head_;
+        }
+
+        delete block;
     }
 
-    total_free_ -= size;
-    return allocated_offset;
-}
-
-    void free_blocks_manager::defragment() {
-        if (!head_ || !head_->next) {
+    void free_blocks_manager::insert_ordered_block(free_block* new_block) {
+        if (!head_) {
+            head_ = tail_ = last_alloc_ = new_block;
+            size_idx_.insert(new_block);
             return;
         }
 
-        size_t original_count = 0;
-        for (free_block* current = head_; current; current = current->next) {
-            original_count++;
-        }
-
-        DEBUG_PRINT("Original free blocks:\n");
-        for (free_block* current = head_; current; current = current->next) {
-            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
+        if (new_block->offset < head_->offset) {
+            new_block->next = head_;
+            head_->prev = new_block;
+            head_ = new_block;
+            size_idx_.insert(new_block);
+            return;
         }
 
         free_block* current = head_;
-        while (current && current->next) {
-            free_block* next = current->next;
+        while (current->next && current->next->offset < new_block->offset) {
+            current = current->next;
+        }
 
-            if (current->offset + current->size == next->offset) {
-                current->size += next->size;
+        new_block->next = current->next;
+        new_block->prev = current;
 
-                current->next = next->next;
-                if (next->next) {
-                    next->next->prev = current;
-                } else {
-                    tail_ = current;
+        if (current->next) {
+            current->next->prev = new_block;
+        } else {
+            tail_ = new_block;
+        }
+        current->next = new_block;
+
+        size_idx_.insert(new_block);
+    }
+
+    void free_blocks_manager::merge_blocks(free_block* prev, uint64_t offset, uint64_t size, free_block* next) {
+        if (prev && next) {
+            // Remove both blocks from the size index before merging
+            size_idx_.remove(prev);
+            size_idx_.remove(next);
+
+            // Merge all three blocks
+            prev->size += size + next->size;
+
+            if (next->next) {
+                next->next->prev = prev;
+            } else {
+                tail_ = prev;
+            }
+
+            prev->next = next->next;
+
+            // Update last_alloc_ if it points to the block being deleted
+            if (last_alloc_ == next) {
+                last_alloc_ = prev;
+            }
+
+            delete next;
+
+            // Add merged block to the index
+            size_idx_.insert(prev);
+        }
+        else if (prev) {
+            // Remove block from index before size modification
+            size_idx_.remove(prev);
+
+            // Merge with previous block only
+            prev->size += size;
+
+            // Add updated block to index
+            size_idx_.insert(prev);
+        }
+        else if (next) {
+            // Remove block from index before modification
+            size_idx_.remove(next);
+
+            // Merge with next block only
+            next->offset = offset;
+            next->size += size;
+
+            // Add updated block to index
+            size_idx_.insert(next);
+        }
+        else {
+            // No blocks to merge with, create new block
+            auto* new_block = new free_block{offset, size, nullptr, nullptr};
+            insert_ordered_block(new_block);
+        }
+    }
+
+    uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
+        if (size == 0 || !head_) return UINT64_MAX;
+
+        free_block* target = nullptr;
+
+        switch (strategy) {
+            case allocation_strategy::FIRST_FIT:
+                target = find_first_fit(size);
+                break;
+            case allocation_strategy::BEST_FIT:
+                target = find_best_fit(size);
+                break;
+            case allocation_strategy::WORST_FIT:
+                target = find_worst_fit(size);
+                break;
+            case allocation_strategy::NEXT_FIT:
+                target = find_next_fit(size);
+                break;
+        }
+
+        if (!target) return UINT64_MAX;
+
+        const uint64_t allocated_offset = target->offset;
+
+        // Update the size index before modifying the block
+        size_idx_.remove(target);
+
+        if (target->size > size) {
+            // Split block: keep remainder in free list
+            uint64_t new_offset = target->offset + size;
+            uint64_t remaining_size = target->size - size;
+            target->offset = new_offset;
+            target->size = remaining_size;
+
+            // Re-add the modified block to the size index
+            size_idx_.insert(target);
+        } else {
+            // Use entire block: remove from free list
+            if (target->prev) {
+                target->prev->next = target->next;
+            } else {
+                head_ = target->next;
+            }
+
+            if (target->next) {
+                target->next->prev = target->prev;
+            } else {
+                tail_ = target->prev;
+            }
+
+            if (last_alloc_ == target) {
+                last_alloc_ = target->next ? target->next : head_;
+            }
+
+            delete target;
+        }
+
+        total_free_ -= size;
+        recently_defragmented_ = false;
+        update_fragmentation();
+
+        return allocated_offset;
+    }
+
+    void free_blocks_manager::defragment() {
+        if (!head_ || !head_->next) {
+            return;  // Nothing to defragment
+        }
+
+        #ifdef DEBUG
+        size_t original_count = std::distance(head_, nullptr);
+        DEBUG_PRINT("Starting defragmentation. Original blocks: %zu\n", original_count);
+        #endif
+
+        // Clear size index before defragmentation
+        size_idx_.clear();
+
+        bool changes_made;
+        do {
+            changes_made = false;
+            free_block* current = head_;
+
+            while (current && current->next) {
+                free_block* next = current->next;
+
+                // Check if current block can be merged with the next one
+                if (current->offset + current->size == next->offset) {
+                    current->size += next->size;
+                    remove_block(next);
+                    changes_made = true;
+                    continue;  // Continue with current block as it might merge with more
                 }
 
-                delete next;
-            } else {
                 current = current->next;
             }
+        } while (changes_made);  // Repeat while blocks can be merged
+
+        // Rebuild size index after defragmentation
+        for (free_block* current = head_; current; current = current->next) {
+            size_idx_.insert(current);
         }
 
         recently_defragmented_ = true;
+        last_alloc_ = head_;  // Reset next_fit pointer
 
-        size_t new_count = 0;
-        for (free_block* current = head_; current; current = current->next) {
-            new_count++;
-        }
-
-        DEBUG_PRINT("Defragmentation: reduced from %d to %d blocks\n", original_count, new_count);
-
-        DEBUG_PRINT("Free blocks after defragmentation:\n");
-        for (free_block* current = head_; current; current = current->next) {
-            DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
-        }
-
-        last_alloc_ = head_;
+        #ifdef DEBUG
+        size_t new_count = std::distance(head_, nullptr);
+        DEBUG_PRINT("Defragmentation complete. Blocks after: %zu\n", new_count);
+        #endif
     }
 
     void free_blocks_manager::print_list() const {
@@ -277,21 +309,15 @@ namespace compio {
     }
 
     bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
-        if (file_size_ && (offset + size) >= *file_size_) {
-            return true;
-        }
+        if (!size) return false;
+        if (file_size_ && offset >= *file_size_) return true;
 
-        // Now, iterate through the list of explicitly marked free blocks.
-        // Check if the requested region (offset, size) is completely contained
-        // within any of the free blocks.
         for (free_block* current = head_; current; current = current->next) {
-            if (current->offset <= offset && (offset + size) <= (current->offset + current->size)) {
+            if (current->offset <= offset &&
+                offset + size <= current->offset + current->size) {
                 return true;
             }
         }
-
-        // If the region is not beyond the file size and not in any free block,
-        // it must be a used region.
         return false;
     }
 
@@ -301,26 +327,42 @@ namespace compio {
         }
 
         size_t block_count = 0;
-        for (free_block* current = head_; current; current = current->next) {
+        uint64_t total_gaps = 0;
+        uint64_t largest_block = 0;
+        uint64_t smallest_block = UINT64_MAX;
+        uint64_t total_free_space = 0;
+
+        free_block* current = head_;
+        free_block* prev = nullptr;
+
+        while (current) {
             block_count++;
+            total_free_space += current->size;
+
+            largest_block = std::max(largest_block, current->size);
+            smallest_block = std::min(smallest_block, current->size);
+
+            if (prev) {
+                total_gaps += current->offset - (prev->offset + prev->size);
+            }
+
+            prev = current;
+            current = current->next;
         }
 
-        // Calculate fragmentation as a percentage:
-        // 1 block = 0% fragmentation (ideal state)
-        // Each additional block adds to fragmentation
-        // Cap at 100%
-        uint8_t frag = 0;
-        if (block_count > 1) {
-            // Using 10 blocks as the "fully fragmented" state (100%)
-            // This maintains similar scale to original calculation
-            const size_t max_fragmentation_blocks = 10;
-            frag = static_cast<uint8_t>(std::min(
-                100.0,
-                (block_count - 1) * 100.0 / (max_fragmentation_blocks - 1)
-            ));
+        if (block_count == 1) {
+            return 0;
         }
 
-        return frag;
+        double size_dispersion = static_cast<double>(largest_block - smallest_block) / largest_block;
+        double gaps_ratio = static_cast<double>(total_gaps) / total_free_space;
+
+        double fragmentation =
+            0.4 * std::min(1.0, (block_count - 1) / 9.0) +  // max 10 blocks = 100%
+            0.3 * size_dispersion +
+            0.3 * std::min(1.0, gaps_ratio);
+
+        return static_cast<uint8_t>(fragmentation * 100);
     }
 
     uint32_t free_blocks_manager::serialize(std::vector<uint8_t>& buffer) {
@@ -463,23 +505,11 @@ namespace compio {
     }
 
     free_block* free_blocks_manager::find_best_fit(const uint64_t size) const {
-        free_block* best = nullptr;
-        for(auto* blk = head_; blk; blk = blk->next) {
-            if(blk->size >= size && (!best || blk->size < best->size)) {
-                best = blk;
-            }
-        }
-        return best;
+        return size_idx_.find_best_fit(size);
     }
 
     free_block* free_blocks_manager::find_worst_fit(const uint64_t size) const {
-        free_block* worst = nullptr;
-        for(auto* blk = head_; blk; blk = blk->next) {
-            if(blk->size >= size && (!worst || blk->size > worst->size)) {
-                worst = blk;
-            }
-        }
-        return worst;
+        return size_idx_.find_worst_fit(size);
     }
 
     free_block* free_blocks_manager::find_next_fit(const uint64_t size) const {
@@ -502,77 +532,118 @@ namespace compio {
 
 // block_allocator implementation
 
+    block_allocator::block_allocator(compio_archive* archive)
+        : archive_(archive)
+        , blocks_manager_(&archive->header->file_size)
+        , last_fragmentation_(0) {
+        if (!archive_) {
+            throw std::runtime_error("Archive pointer is null");
+        }
+        if (!archive_->header) {
+            throw std::runtime_error("Archive header is null");
+        }
+
+        // Set initial state size
+        archive_->header->allocator_state_size = sizeof(header);
+
+        // Ensure we have valid initial file size
+        if (archive_->header->file_size < sizeof(header)) {
+            archive_->header->file_size = sizeof(header);
+        }
+    }
+
     uint8_t block_allocator::get_fragmentation() const {
         return blocks_manager_.get_cached_fragmentation();
     }
 
-    block_allocator::block_allocator(compio_archive* archive)
-    : archive_(archive),
-    blocks_manager_(archive->header.ptr() ? &archive->header->file_size : nullptr) {
-        assert(archive_ != nullptr);
-        assert(archive_->header.ptr() != nullptr);
-    }
-
     uint64_t block_allocator::allocate(uint64_t size) {
-        if (!size) return UINT64_MAX;
-
-        uint64_t offset = blocks_manager_.allocate_block(size,
-            static_cast<allocation_strategy>(archive_->config->allocation_strategy));
-
-        if (offset != UINT64_MAX) {
-            DEBUG_PRINT("[AL] allocate (%d)-(%d)\n", offset, offset + size);
-            return offset;
+        if (size == 0) {
+            return UINT64_MAX;
         }
 
-        offset = archive_->header->file_size;
-        archive_->header->file_size += size;
-        DEBUG_PRINT("[Al] allocate (%d)-(%d)\n", offset, offset + size);
-        return offset;
+        try {
+            // Convert allocation strategy from config to internal enum
+            allocation_strategy strategy;
+            switch (archive_->config->allocation_strategy) {
+                case COMPIO_ALLOC_BEST_FIT:
+                    strategy = allocation_strategy::BEST_FIT;
+                    break;
+                case COMPIO_ALLOC_WORST_FIT:
+                    strategy = allocation_strategy::WORST_FIT;
+                    break;
+                case COMPIO_ALLOC_NEXT_FIT:
+                    strategy = allocation_strategy::NEXT_FIT;
+                    break;
+                default:
+                    strategy = allocation_strategy::FIRST_FIT;
+            }
+
+            // Try to find space in existing free blocks
+            uint64_t offset = blocks_manager_.allocate_block(size, strategy);
+            if (offset != UINT64_MAX) {
+                return offset;
+            }
+
+            // If no suitable free block found, allocate at the end
+            offset = archive_->header->file_size;
+            archive_->header->file_size += size;
+            return offset;
+        } catch (const std::exception& e) {
+            std::cerr << "Allocation failed: " << e.what() << std::endl;
+            return UINT64_MAX;
+        }
     }
 
     void block_allocator::deallocate(uint64_t offset, uint64_t size) {
-        DEBUG_PRINT("[AL] free (%d)-(%d)\n", offset, offset + size);
+        if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
+            return;
+        }
 
-        if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header.ptr()) return;
-
-        if (offset + size > archive_->header->file_size) return;
+        if (offset + size > archive_->header->file_size) {
+            return;
+        }
 
         if (blocks_manager_.is_region_free(offset, size)) {
             return;
         }
 
         blocks_manager_.add_free_block(offset, size);
-        blocks_manager_.update_fragmentation();
 
         if (archive_->config->fill_holes_with_zeros && archive_->file) {
+            static constexpr size_t BUFFER_SIZE = 4096;
+            static uint8_t zeros[BUFFER_SIZE] = {0};
+
             fseek(archive_->file, offset, SEEK_SET);
-            for (int i = 0; i < size; i += sizeof(ZEROS)) {
-                fwrite(ZEROS, 1, std::min(sizeof(ZEROS), size - i), archive_->file);
+
+            size_t remaining = size;
+            while (remaining > 0) {
+                size_t write_size = std::min(remaining, BUFFER_SIZE);
+                if (fwrite(zeros, 1, write_size, archive_->file) != write_size) {
+                    break;
+                }
+                remaining -= write_size;
             }
+
+            fflush(archive_->file);
         }
     }
 
     void block_allocator::maintenance() {
         uint8_t current_fragmentation = get_fragmentation();
-        uint8_t threshold = ((compio_config*)archive_->config)->fragmentation_threshold;
-
-        DEBUG_PRINT("In maintenance: fragmentation=%d, threshold=%d\n", current_fragmentation, threshold);
+        uint8_t threshold = archive_->config->fragmentation_threshold;
 
         if (current_fragmentation > threshold) {
-            DEBUG_PRINT("Performing defragmentation...\n");
-
             blocks_manager_.defragment();
             blocks_manager_.update_fragmentation();
 
             if (blocks_manager_.get_cached_fragmentation() >= current_fragmentation) {
                 if (archive_->file && archive_->index) {
                     perform_defragmentation();
-                } else {
-                    uint8_t reduced_frag = current_fragmentation > 10 ? current_fragmentation - 10 : 0;
-                    blocks_manager_.set_cached_fragmentation(reduced_frag);
                 }
             }
         }
+
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
     }
 
 // Private methods
@@ -583,72 +654,107 @@ namespace compio {
     }
 
     void block_allocator::perform_defragmentation() {
-        // Get all used blocks from the index
+        static constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024;  // 1MB буфер
+        static std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
+
         std::vector<std::pair<tree_key, tree_val>> used_blocks;
         constexpr tree_key key_min{};
         tree_key key_max{};
         key_max.hash = UINT64_MAX;
         key_max.pos = UINT64_MAX;
 
-        // Call get_range without checking return value since it returns void
         archive_->index->get_range(key_min, key_max, used_blocks);
 
-        // Sort blocks by address for sequential processing
         std::sort(used_blocks.begin(), used_blocks.end(),
             [](const auto& a, const auto& b) { return a.second.addr < b.second.addr; });
 
         uint64_t new_offset = sizeof(header);
         std::vector<std::pair<tree_key, tree_val>> relocations;
 
-        // Process each used block
+        size_t batch_size = 0;
+        uint64_t last_source_end = 0;
+        uint64_t last_target_end = 0;
+
+        auto flush_relocations = [this, &relocations]() {
+            if (!relocations.empty()) {
+                for (const auto& [key, val] : relocations) {
+                    archive_->index->update(key, val);
+                }
+                relocations.clear();
+            }
+        };
+
         for (const auto& [key, val] : used_blocks) {
-            // Skip blocks that are already in the right place
+            uint64_t block_size = STORAGE_BLOCK_METASIZE + val.size;
+
             if (val.addr == new_offset) {
-                new_offset += STORAGE_BLOCK_METASIZE + val.size;
+                new_offset += block_size;
                 continue;
             }
 
-            // Create storage block and read from file
-            storage_block block;
-            block.read_from(archive_->file, val.addr);
+            if (val.addr != last_source_end || new_offset != last_target_end) {
+                flush_relocations();
+                batch_size = 0;
+            }
 
-            // Save the block to the new location
-            block.write_to(archive_->file, new_offset);
+            if (fseek(archive_->file, val.addr, SEEK_SET) != 0) {
+                DEBUG_PRINT("[AL] Error seeking to source block at %lu\n", val.addr);
+                continue;
+            }
 
-            // Track this relocation
+            if (fseek(archive_->file, new_offset, SEEK_SET) != 0) {
+                DEBUG_PRINT("[AL] Error seeking to target position at %lu\n", new_offset);
+                continue;
+            }
+
+            size_t remaining = block_size;
+            while (remaining > 0) {
+                size_t chunk_size = std::min(remaining, MOVE_BUFFER_SIZE);
+
+                if (fread(move_buffer.data(), 1, chunk_size, archive_->file) != chunk_size) {
+                    DEBUG_PRINT("[AL] Error reading block data at %lu\n", val.addr + block_size - remaining);
+                    break;
+                }
+
+                if (fwrite(move_buffer.data(), 1, chunk_size, archive_->file) != chunk_size) {
+                    DEBUG_PRINT("[AL] Error writing block data at %lu\n", new_offset + block_size - remaining);
+                    break;
+                }
+
+                remaining -= chunk_size;
+            }
+
             tree_val new_val = val;
             new_val.addr = new_offset;
             relocations.push_back({key, new_val});
 
-            // Update offset for next block
-            uint64_t total_block_size = STORAGE_BLOCK_METASIZE + block.size;
-            new_offset += total_block_size;
+            last_source_end = val.addr + block_size;
+            last_target_end = new_offset + block_size;
+            new_offset += block_size;
+            batch_size++;
+
+            if (batch_size >= 1000) {
+                flush_relocations();
+                batch_size = 0;
+            }
         }
 
-        // Update the index with relocated blocks
-        for (const auto& [key, val] : relocations) {
-            archive_->index->update(key, val);
-        }
+        flush_relocations();
 
-        // Reset free blocks list - now we have a single free block at the end of file
+        fflush(archive_->file);
+
         blocks_manager_ = free_blocks_manager(archive_->header->file_size ? &archive_->header->file_size : nullptr);
 
-        // Add the gap at the end as a free block
         if (new_offset < archive_->header->file_size) {
             blocks_manager_.add_free_block(new_offset, archive_->header->file_size - new_offset);
         } else {
-            // If no gap, update the file size
             archive_->header->file_size = new_offset;
         }
 
-        // Flush changes to disk
-        fflush(archive_->file);
-
-        // Update fragmentation metrics
         blocks_manager_.update_fragmentation();
         blocks_manager_.save_to_file(archive_);
 
-        printf("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
+        DEBUG_PRINT("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
     }
 
 } // namespace compio

@@ -21,6 +21,9 @@
 #define COMPIO_MAX_FILES 64      /**< Maximum number of files in archive */
 #define COMPIO_FNAME_MAX_SIZE 32 /**< File name maximum length */
 
+#define COMPIO_ERROR (-1)
+#define COMPIO_SUCCESS 0
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -74,10 +74,9 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
     archive->allocator = new compio::block_allocator(archive);
     archive->index = new btree(archive);
 
-    // Load allocator state if it exists
-    if (archive->header->allocator_state_offset != 0 &&
-        archive->header->allocator_state_size > 0) {
-        archive->allocator->blocks_manager_.load_from_file(archive);
+    // Load saved allocator state if exists
+    if (archive->allocator) {
+        archive->allocator->load_state(archive);
     }
 
     archive->c_buffer = std::unique_ptr<uint8_t[]>(new uint8_t[c->compressor.get_bufsize(c->block_size)]);
@@ -140,31 +139,31 @@ int compio_close_file(compio_file* file) {
 }
 
 int compio_close_archive(compio_archive* archive) {
+    if (!archive) return COMPIO_ERROR;
+
+    // Save allocator state before closing
+    if (archive->allocator) {
+        archive->allocator->save_state(archive);
+    }
+
     // 1) flush cached data to file
     compio_flush(archive);
 
-    // 2) save blocks manager to the end of the file
-    if (archive && archive->file && archive->allocator && archive->header) {
-        archive->allocator->blocks_manager_.save_to_file(archive);
-    }
+    // 2) cleanup allocator
     delete archive->allocator;
     
-    // 3) flush header (important: do this after flushing allocator, because it saves offset and size in header)
-    //
+    // 3) flush header
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer 
-    // (header in this case) when there'll be no smart_infile_objects pointing to this header
-    //
-    // thus, calling operator=({}) will destroy and flush our header
     archive->header = {};
     
     // 4) and finally we close the file
     if (fclose(archive->file))
-        return -1;
+        return COMPIO_ERROR;
 
     delete archive->index;
     delete archive;
-    return 0;
+    return COMPIO_SUCCESS;
 }
 
 int compio_seek(compio_file* file, int64_t offset, uint8_t origin) {
