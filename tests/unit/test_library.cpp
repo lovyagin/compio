@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <random>
 
@@ -10,12 +11,14 @@ protected:
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[L_tmpnam];
+    char fn[32];
 
     void SetUp() override {
         compio_build_default_config(&config);
 
-        tmpnam(fn);
+        strcpy(fn, "/tmp/compio_test_XXXXXX");
+        int fd = mkstemp(fn);
+        if (fd != -1) close(fd);
 
         archive = compio_open_archive(fn, "w+", &config);
         file = compio_open_file("A", archive);
@@ -33,7 +36,6 @@ protected:
 
         compio_close_file(file);
         compio_close_archive(archive);
-        
         archive = compio_open_archive(fn, "r+", &config);
         file = compio_open_file("A", archive);
     }
@@ -44,12 +46,14 @@ protected:
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[L_tmpnam];
+    char fn[32];
 
     void SetUp() override {
         compio_build_default_config(&config);
 
-        tmpnam(fn);
+        strcpy(fn, "/tmp/compio_test_XXXXXX");
+        int fd = mkstemp(fn);
+        if (fd != -1) close(fd);
 
         archive = compio_open_archive(fn, "w+", &config);
         file = compio_open_file("A", archive);
@@ -156,12 +160,14 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[L_tmpnam];
+    char fn[32];
 
     compio_build_default_config(&config);
     config.block_size = 128;
 
-    tmpnam(fn);
+    strcpy(fn, "/tmp/compio_test_XXXXXX");
+    int fd = mkstemp(fn);
+    if (fd != -1) close(fd);
 
     archive = compio_open_archive(fn, "w+", &config);
     file = compio_open_file("A", archive);
@@ -222,15 +228,17 @@ TEST_P(RandomUsageTest, RandomUsage) {
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[L_tmpnam];
+    char fn[32];
 
     compio_build_default_config(&config);
     // TODO: test (50000, 1000) fails when setting lower block_size (f.e. 128)
     // it fails only on one compio_read operation, that happens in the first 1000 iterations, 
     // but after than compio_read everything works fine
 
-    tmpnam(fn);
-    
+    strcpy(fn, "/tmp/compio_test_XXXXXX");
+    int fd = mkstemp(fn);
+    if (fd != -1) close(fd);
+
     auto [file_size, n_operations, n_repetitions] = GetParam();
     
     std::minstd_rand rng;
@@ -333,11 +341,13 @@ TEST_P(CustomUsageTest, CustomUsage) {
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[L_tmpnam];
+    char fn[32];
 
     compio_build_default_config(&config);
     config.block_size = 16;
-    tmpnam(fn);
+    strcpy(fn, "/tmp/compio_test_XXXXXX");
+    int fd = mkstemp(fn);
+    if (fd != -1) close(fd);
 
     std::minstd_rand rng(0);
     

@@ -25,13 +25,15 @@ public:
 
 class BlockAllocatorTest : public ::testing::Test {
 protected:
-    char fn[L_tmpnam];
+    char fn[32];
     FILE* file;
     MockArchive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        tmpnam(fn);
+        strcpy(fn, "/tmp/compio_alloc_XXXXXX");
+        int fd = mkstemp(fn);
+        if (fd != -1) close(fd);
 
         file = fopen(fn, "w+");
         if (!file) {
