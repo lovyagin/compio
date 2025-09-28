@@ -12,9 +12,9 @@ add_executable(compio_gtest
 target_compile_features(compio_gtest PRIVATE cxx_std_17)
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
 target_include_directories(compio_gtest PRIVATE 
-    ${CMAKE_SOURCE_DIR} 
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/..
+    ${PROJECT_SOURCE_DIR}/../include
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 enable_testing()
