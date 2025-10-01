@@ -654,7 +654,7 @@ namespace compio {
     }
 
     void block_allocator::perform_defragmentation() {
-        static constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024;  // 1MB буфер
+        static constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024;  // 1MB buffer
         static std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
 
         std::vector<std::pair<tree_key, tree_val>> used_blocks;
