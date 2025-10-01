@@ -6,6 +6,10 @@ find_package(GTest REQUIRED)
 add_executable(compio_gtest
     test_runner.cpp
     unit/test_allocator.cpp
+    unit/test_allocator_comprehensive.cpp
+    unit/test_allocator_advanced.cpp
+    unit/test_allocator_edge_cases.cpp
+    unit/test_allocator_serialization.cpp
     unit/test_library.cpp
 )
 
