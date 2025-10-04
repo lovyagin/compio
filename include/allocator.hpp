@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <map>
 #include "compio.h"
 
 namespace compio {
@@ -106,35 +107,81 @@ public:
     uint64_t* get_file_size_ptr() const { return file_size_; }
 
     /**
-     * @brief Serialize free blocks list to a buffer
-     * @param buffer Output buffer to store serialized data
-     * @return Size of serialized data in bytes
+     * @brief Serialize manager state to buffer
+     * @param buffer Vector to store serialized data
+     * @return Size of serialized data
      */
     uint32_t serialize(std::vector<uint8_t>& buffer);
 
     /**
-     * @brief Deserialize free blocks list from a buffer
-     * @param buffer Buffer containing serialized data
-     * @param size Size of serialized data in bytes
-     * @return True if deserialization succeeded
+     * @brief Deserialize manager state from buffer
+     * @param buffer Source buffer with serialized data
+     * @param size Buffer size
+     * @return True if deserialization successful
      */
     bool deserialize(const uint8_t* buffer, uint32_t size);
 
     /**
-     * @brief Save free blocks table to archive file
-     * @param archive Pointer to the archive
-     * @return True if save succeeded
+     * @brief Save manager state to archive file
+     * @param archive Target archive
+     * @return True if save successful
      */
     bool save_to_file(compio_archive* archive);
 
     /**
-     * @brief Load free blocks table from archive file
-     * @param archive Pointer to the archive
-     * @return True if load succeeded
+     * @brief Load manager state from archive file
+     * @param archive Source archive
+     * @return True if load successful
      */
     bool load_from_file(compio_archive* archive);
 
 private:
+    /**
+     * @brief Remove block from the list and deallocate memory
+     * @param block Block to remove
+     */
+    void remove_block(free_block* block);
+    /**
+     * @brief Custom index for fast block size lookups
+     */
+    struct size_index {
+        std::multimap<uint64_t, free_block*> blocks_by_size;
+
+        void insert(free_block* block) {
+            blocks_by_size.insert({block->size, block});
+        }
+
+        void remove(free_block* block) {
+            auto range = blocks_by_size.equal_range(block->size);
+            for (auto it = range.first; it != range.second; ++it) {
+                if (it->second == block) {
+                    blocks_by_size.erase(it);
+                    break;
+                }
+            }
+        }
+
+        void clear() {
+            blocks_by_size.clear();
+        }
+
+        free_block* find_best_fit(uint64_t size) const {
+            auto it = blocks_by_size.lower_bound(size);
+            return it != blocks_by_size.end() ? it->second : nullptr;
+        }
+
+        free_block* find_worst_fit(uint64_t size) const {
+            auto it = blocks_by_size.lower_bound(size);
+            if (it == blocks_by_size.end()) return nullptr;
+
+            auto last = blocks_by_size.end();
+            --last;
+            return last->second;
+        }
+    };
+
+    size_index size_idx_;
+
     free_block* head_;           /**< Head of free blocks list */
     free_block* tail_;           /**< Tail of free blocks list */
     free_block* last_alloc_;     /**< Last allocation position for NEXT_FIT */
@@ -170,6 +217,31 @@ private:
      * @return Pointer to the next-fit block or nullptr if not found
      */
     free_block* find_next_fit(uint64_t size) const;
+
+    /**
+     * @brief Find blocks that can be merged with the given region
+     * @param offset Start offset of the region
+     * @param size Size of the region
+     * @param prev Output parameter for previous mergeable block
+     * @param next Output parameter for next mergeable block
+     */
+    void find_mergeable_blocks(uint64_t offset, uint64_t size,
+                             free_block*& prev, free_block*& next) const;
+
+    /**
+     * @brief Insert new block in the ordered list
+     * @param new_block Block to insert
+     */
+    void insert_ordered_block(free_block* new_block);
+
+    /**
+     * @brief Merge three blocks (prev + new + next)
+     * @param prev Previous block
+     * @param offset New block offset
+     * @param size New block size
+     * @param next Next block
+     */
+    void merge_blocks(free_block* prev, uint64_t offset, uint64_t size, free_block* next);
 };
 
 /**
@@ -208,8 +280,23 @@ public:
      */
     void maintenance();
 
-    friend compio_archive* ::compio_open_archive(const char*, const char*, const compio_config*);
-    friend int ::compio_close_archive(compio_archive*);
+    /**
+     * @brief Save allocator state to archive
+     * @param archive Target archive
+     * @return True if save was successful
+     */
+    bool save_state(compio_archive* archive) {
+        return blocks_manager_.save_to_file(archive);
+    }
+
+    /**
+     * @brief Load allocator state from archive
+     * @param archive Source archive
+     * @return True if load was successful
+     */
+    bool load_state(compio_archive* archive) {
+        return blocks_manager_.load_from_file(archive);
+    }
 
 private:
     compio_archive* archive_;            /**< Associated archive */
@@ -254,3 +341,4 @@ extern "C" {
 #endif
 
 #endif // COMPIO_ALLOCATOR_HPP
+

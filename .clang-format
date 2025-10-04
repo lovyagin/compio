@@ -1,7 +1,8 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
-PointerAlignment: Left
+PointerAlignment: Right
 ColumnLimit: 100
 IndentAccessModifiers: false
 AccessModifierOffset: -4
 PackConstructorInitializers: CurrentLine
+SortIncludes: true
