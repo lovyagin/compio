@@ -432,25 +432,21 @@ namespace compio {
 
     bool free_blocks_manager::save_to_file(compio_archive* archive) {
         if (!archive || !archive->file || !archive->header) {
-            DEBUG_PRINT("[SAVE] Archive validation failed\n");
             return false;
         }
 
         // Serialize free blocks to buffer
         std::vector<uint8_t> buffer;
         uint32_t size = serialize(buffer);
-        DEBUG_PRINT("[SAVE] Serialized %u bytes\n", size);
 
         // Seek to end of file for allocator state, but ensure we don't overwrite header
         if (fseek(archive->file, 0, SEEK_END) != 0) {
-            DEBUG_PRINT("[SAVE] Failed to seek to end\n");
             return false;
         }
 
         // Get current file position
         long pos = ftell(archive->file);
         if (pos < 0) {
-            DEBUG_PRINT("[SAVE] Failed to get file position\n");
             return false;
         }
 
@@ -458,17 +454,13 @@ namespace compio {
         if (pos < static_cast<long>(sizeof(header))) {
             pos = sizeof(header);
             if (fseek(archive->file, pos, SEEK_SET) != 0) {
-                DEBUG_PRINT("[SAVE] Failed to seek past header\n");
                 return false;
             }
         }
 
-        DEBUG_PRINT("[SAVE] Writing at position %ld\n", pos);
-
         // Write serialized data
         size_t written = fwrite(buffer.data(), 1, size, archive->file);
         if (written != size) {
-            DEBUG_PRINT("[SAVE] Write failed: %zu/%u\n", written, size);
             return false;
         }
 
@@ -476,9 +468,6 @@ namespace compio {
         // Use ptr() to mark header as modified so it gets written to disk
         archive->header.ptr()->allocator_state_offset = static_cast<uint64_t>(pos);
         archive->header.ptr()->allocator_state_size = size;
-        DEBUG_PRINT("[SAVE] Updated header: offset=%lu, size=%u\n",
-                   archive->header->allocator_state_offset,
-                   archive->header->allocator_state_size);
 
         // Explicitly write header to disk to ensure it's saved
         archive->header->write_to(archive->file, 0);
@@ -491,24 +480,17 @@ namespace compio {
 
     bool free_blocks_manager::load_from_file(compio_archive* archive) {
         if (!archive || !archive->file || !archive->header) {
-            DEBUG_PRINT("[LOAD] Archive validation failed\n");
             return false;
         }
-
-        DEBUG_PRINT("[LOAD] Header offset=%lu, size=%lu\n",
-                   archive->header->allocator_state_offset,
-                   archive->header->allocator_state_size);
 
         // Check if allocator state exists
         if (archive->header->allocator_state_offset == 0 ||
             archive->header->allocator_state_size == 0) {
-            DEBUG_PRINT("[LOAD] No allocator state in header\n");
             return false;
         }
 
         // Seek to allocator state position
         if (fseek(archive->file, static_cast<long>(archive->header->allocator_state_offset), SEEK_SET) != 0) {
-            DEBUG_PRINT("[LOAD] Failed to seek to offset\n");
             return false;
         }
 
@@ -518,16 +500,11 @@ namespace compio {
         // Read allocator state data
         size_t read = fread(buffer.data(), 1, archive->header->allocator_state_size, archive->file);
         if (read != archive->header->allocator_state_size) {
-            DEBUG_PRINT("[LOAD] Read failed: %zu/%lu\n", read, archive->header->allocator_state_size);
             return false;
         }
 
-        DEBUG_PRINT("[LOAD] Successfully read %zu bytes\n", read);
-
         // Deserialize buffer into this manager
-        bool result = deserialize(buffer.data(), static_cast<uint32_t>(buffer.size()));
-        DEBUG_PRINT("[LOAD] Deserialize result: %s\n", result ? "SUCCESS" : "FAILED");
-        return result;
+        return deserialize(buffer.data(), static_cast<uint32_t>(buffer.size()));
     }
 
 // Private helper methods
