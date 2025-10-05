@@ -5,20 +5,19 @@
 #include "compio.h"
 #include "compio_file.hpp"
 #include "sample_data.hpp"
+#include "test_util.hpp"
 
 class WriteReadNBytesTest : public ::testing::TestWithParam<uint64_t> {
 protected:
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[32];
+    char fn[256];
 
     void SetUp() override {
         compio_build_default_config(&config);
 
-        strcpy(fn, "/tmp/compio_test_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         archive = compio_open_archive(fn, "w+", &config);
         file = compio_open_file("A", archive);
@@ -46,15 +45,13 @@ protected:
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[32];
+    char fn[256];
 
     void SetUp() override {
         compio_build_default_config(&config);
 
-        strcpy(fn, "/tmp/compio_test_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
-
+        generate_tmp_fn(fn, sizeof(fn));
+        
         archive = compio_open_archive(fn, "w+", &config);
         file = compio_open_file("A", archive);
     }
@@ -160,15 +157,13 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[32];
+    char fn[256];
 
     compio_build_default_config(&config);
     config.block_size = 128;
 
-    strcpy(fn, "/tmp/compio_test_XXXXXX");
-    int fd = mkstemp(fn);
-    if (fd != -1) close(fd);
-
+    generate_tmp_fn(fn, sizeof(fn));
+    
     archive = compio_open_archive(fn, "w+", &config);
     file = compio_open_file("A", archive);
 
@@ -228,16 +223,14 @@ TEST_P(RandomUsageTest, RandomUsage) {
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[32];
+    char fn[256];
 
     compio_build_default_config(&config);
     // TODO: test (50000, 1000) fails when setting lower block_size (f.e. 128)
     // it fails only on one compio_read operation, that happens in the first 1000 iterations, 
     // but after than compio_read everything works fine
 
-    strcpy(fn, "/tmp/compio_test_XXXXXX");
-    int fd = mkstemp(fn);
-    if (fd != -1) close(fd);
+    generate_tmp_fn(fn, sizeof(fn));
 
     auto [file_size, n_operations, n_repetitions] = GetParam();
     
@@ -341,13 +334,11 @@ TEST_P(CustomUsageTest, CustomUsage) {
     compio_config config;
     compio_archive* archive;
     compio_file* file;
-    char fn[32];
+    char fn[256];
 
     compio_build_default_config(&config);
     config.block_size = 16;
-    strcpy(fn, "/tmp/compio_test_XXXXXX");
-    int fd = mkstemp(fn);
-    if (fd != -1) close(fd);
+    generate_tmp_fn(fn, sizeof(fn));
 
     std::minstd_rand rng(0);
     

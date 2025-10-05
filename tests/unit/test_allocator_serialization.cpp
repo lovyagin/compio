@@ -2,25 +2,21 @@
 #include "compio_file.hpp"
 #include "utils.hpp"
 #include <gtest/gtest.h>
+#include "test_util.hpp"
 
 using namespace compio;
 
 // Allocator state serialization tests
 class AllocatorStateTest : public ::testing::Test {
 protected:
-    char fn1[32], fn2[32];
+    char fn1[256], fn2[256];
     FILE* file1;
     FILE* file2;
 
     void SetUp() override {
         // Create two temporary files
-        strcpy(fn1, "/tmp/compio_ser1_XXXXXX");
-        strcpy(fn2, "/tmp/compio_ser2_XXXXXX");
-
-        int fd1 = mkstemp(fn1);
-        int fd2 = mkstemp(fn2);
-        if (fd1 != -1) close(fd1);
-        if (fd2 != -1) close(fd2);
+        generate_tmp_fn(fn1, sizeof(fn1));
+        generate_tmp_fn(fn2, sizeof(fn2));
 
         file1 = fopen(fn1, "w+");
         file2 = fopen(fn2, "w+");

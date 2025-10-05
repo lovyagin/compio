@@ -5,21 +5,20 @@
 #include <gtest/gtest.h>
 #include <numeric>
 #include <random>
+#include "test_util.hpp"
 
 using namespace compio;
 
 // Tests for boundary conditions and edge cases
 class BoundaryConditionTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_boundary_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
@@ -104,15 +103,13 @@ TEST_F(BoundaryConditionTest, MinimumSizeAllocation) {
 // Tests for robustness under various conditions
 class RobustnessTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_robust_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
@@ -217,15 +214,13 @@ TEST_F(RobustnessTest, AlternatingLargeSmallAllocations) {
 // Test specific allocation patterns that might cause issues
 class AllocationPatternTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_pattern_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
@@ -302,15 +297,13 @@ TEST_F(AllocationPatternTest, FibonacciSizeSequence) {
 // Test real-world usage patterns
 class RealWorldPatternTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_realworld_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
@@ -414,15 +407,13 @@ TEST_F(RealWorldPatternTest, LogFilePattern) {
 // Test memory efficiency and fragmentation
 class EfficiencyTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_efficiency_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
@@ -506,15 +497,13 @@ TEST_F(EfficiencyTest, FragmentationMeasurement) {
 // Integration test with all features
 class IntegrationTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_integration_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
