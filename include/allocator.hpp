@@ -1,6 +1,10 @@
 /**
  * @file allocator.hpp
  * @brief Memory allocation management for compressed blocks storage
+ *
+ * This file implements a sophisticated block allocation system for managing
+ * storage space in compressed archives. It includes free block management,
+ * multiple allocation strategies, and automatic defragmentation support.
  */
 
 #ifndef COMPIO_ALLOCATOR_HPP
@@ -25,16 +29,32 @@ struct free_block {
 
 /**
  * @brief Free blocks management strategies
+ *
+ * Different strategies for finding suitable free blocks during allocation:
+ * - FIRST_FIT: Fast, finds first block that fits (good for speed)
+ * - BEST_FIT: Finds smallest block that fits (minimizes wasted space)
+ * - WORST_FIT: Finds largest block that fits (leaves larger fragments)
+ * - NEXT_FIT: Like FIRST_FIT but continues from last allocation (spreads allocations)
  */
 enum class allocation_strategy {
-    FIRST_FIT,          /**< Allocate first suitable block */
-    BEST_FIT,           /**< Allocate smallest suitable block */
-    WORST_FIT,          /**< Allocate largest suitable block */
-    NEXT_FIT            /**< Continue search from last allocation */
+    FIRST_FIT,          /**< Allocate first suitable block found */
+    BEST_FIT,           /**< Allocate smallest suitable block to minimize waste */
+    WORST_FIT,          /**< Allocate largest suitable block to avoid small fragments */
+    NEXT_FIT            /**< Continue search from last allocation point */
 };
 
 /**
  * @brief Free blocks table manager
+ *
+ * Manages a linked list of free blocks in the archive storage.
+ * Supports multiple allocation strategies (first-fit, best-fit, worst-fit, next-fit)
+ * and provides automatic block merging to reduce fragmentation.
+ *
+ * The manager maintains:
+ * - A doubly-linked list of free blocks sorted by offset
+ * - A size-based index for efficient best-fit and worst-fit searches
+ * - Fragmentation tracking and caching
+ * - Serialization/deserialization for persistent storage
  */
 class free_blocks_manager {
 public:
@@ -245,7 +265,16 @@ private:
 };
 
 /**
- * @brief Interface for block allocation operations
+ * @brief High-level interface for block allocation operations
+ *
+ * Provides a simplified interface for allocating and deallocating storage blocks
+ * in compressed archives. Automatically handles:
+ * - Block allocation using the configured strategy
+ * - Block deallocation and free space tracking
+ * - Automatic defragmentation when fragmentation exceeds threshold
+ * - State persistence (save/load allocator state)
+ *
+ * This is the main interface used by the archive system for managing storage.
  */
 class block_allocator {
 public:

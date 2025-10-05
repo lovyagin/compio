@@ -71,28 +71,31 @@ void compio_build_zlib_compressor(compio_compressor* result);
 
 
 typedef enum {
-    COMPIO_ALLOC_FIRST_FIT,
-    COMPIO_ALLOC_BEST_FIT,
-    COMPIO_ALLOC_WORST_FIT,
-    COMPIO_ALLOC_NEXT_FIT
+    COMPIO_ALLOC_FIRST_FIT,  /**< First-fit allocation strategy */
+    COMPIO_ALLOC_BEST_FIT,   /**< Best-fit allocation strategy */
+    COMPIO_ALLOC_WORST_FIT,  /**< Worst-fit allocation strategy */
+    COMPIO_ALLOC_NEXT_FIT    /**< Next-fit allocation strategy */
 } compio_allocation_strategy;
 
 /**
- * @brief Configuration
+ * @brief Configuration structure for archive creation
+ *
+ * Contains all settings for archive behavior including compression,
+ * indexing, caching, and memory allocation strategies.
  */
 typedef struct {
-    compio_compressor compressor; /**< Compressor for blocks */
+    compio_compressor compressor; /**< Compressor for data blocks */
 
-    int b_tree_degree; /**< B-Tree branching parameter */
-    int block_size; /**< Block size to split data into */
+    int b_tree_degree; /**< B-Tree branching factor (typically 3-10) */
+    int block_size; /**< Block size for splitting files (in bytes) */
 
-    int cache_size__nodes; /**< Maximum number of b-tree nodes in cache */
-    int cache_size__blocks; /**< Maximum number of storage blocks in cache */
-    int cache_size__compression; /**< Maximum number of uncompressed data blocks in cache */
+    int cache_size__nodes; /**< Maximum B-tree nodes kept in memory */
+    int cache_size__blocks; /**< Maximum storage blocks kept in memory */
+    int cache_size__compression; /**< Maximum uncompressed blocks kept in memory */
 
-    compio_allocation_strategy allocation_strategy; /**< Allocation strategy (see enum compio_allocation_strategy) */
-    bool fill_holes_with_zeros; /**< Fill deleted blocks with zeros, so that OS may optimize it (see sparse files) */
-    uint8_t fragmentation_threshold; /**< Fragmentation threshold parameter for allocator (integer in range 1-100) */
+    compio_allocation_strategy allocation_strategy; /**< Free block selection strategy */
+    bool fill_holes_with_zeros; /**< Zero-fill freed blocks for sparse file optimization */
+    uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this percentage (1-100) */
 } compio_config;
 
 /**
