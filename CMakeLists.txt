@@ -97,6 +97,15 @@ endif()
 find_package(ZLIB REQUIRED)
 target_link_libraries(compio PRIVATE ZLIB::ZLIB)
 
+find_package(lz4 CONFIG REQUIRED)
+target_link_libraries(compio PRIVATE lz4::lz4)
+
+find_package(zstd CONFIG REQUIRED)
+target_link_libraries(compio PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>)
+
+find_package(unofficial-brotli CONFIG REQUIRED)
+target_link_libraries(compio PRIVATE unofficial::brotli::brotlienc unofficial::brotli::brotlidec unofficial::brotli::brotlicommon)
+
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
 add_subdirectory(examples)

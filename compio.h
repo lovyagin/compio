@@ -69,6 +69,26 @@ void compio_build_dummy_compressor(compio_compressor* result);
  */
 void compio_build_zlib_compressor(compio_compressor* result);
 
+/**
+ * @brief LZ4 compressor - very fast compression/decompression
+ *
+ * @param result
+ */
+void compio_build_lz4_compressor(compio_compressor* result);
+
+/**
+ * @brief Zstandard (zstd) compressor - modern efficient compression
+ *
+ * @param result
+ */
+void compio_build_zstd_compressor(compio_compressor* result);
+
+/**
+ * @brief Brotli compressor - high compression ratio
+ *
+ * @param result
+ */
+void compio_build_brotli_compressor(compio_compressor* result);
 
 typedef enum {
     COMPIO_ALLOC_FIRST_FIT,  /**< First-fit allocation strategy */
