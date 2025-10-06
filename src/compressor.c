@@ -90,9 +90,14 @@ void compio_build_zlib_compressor(compio_compressor* result) {
  * @param dst_size Pointer to destination buffer size (input/output)
  * @param src Source data buffer
  * @param src_size Source data size in bytes
- * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
+ * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small, EINVAL if size too large)
  */
 int lz4_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
+    if (src_size > INT_MAX || *dst_size > INT_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+
     int compressed_size = LZ4_compress_default(
         (const char*)src,
         (char*)dst,
@@ -116,9 +121,14 @@ int lz4_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_si
  * @param dst_size Pointer to destination buffer size (input/output)
  * @param src Compressed source data buffer
  * @param src_size Compressed data size in bytes
- * @return 0 on success, -1 on error (sets errno to EIO on decompression failure)
+ * @return 0 on success, -1 on error (sets errno to EIO on decompression failure, EINVAL if size too large)
  */
 int lz4_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
+    if (src_size > INT_MAX || *dst_size > INT_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+
     int decompressed_size = LZ4_decompress_safe(
         (const char*)src,
         (char*)dst,
@@ -139,9 +149,12 @@ int lz4_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_
  * @brief Get maximum buffer size needed for LZ4 compression
  *
  * @param src_size Size of data to be compressed
- * @return Maximum possible size of compressed data
+ * @return Maximum possible size of compressed data, or 0 if size too large
  */
 uint64_t lz4_get_bufsize(uint64_t src_size) {
+    if (src_size > INT_MAX) {
+        return 0;
+    }
     return LZ4_compressBound((int)src_size);
 }
 

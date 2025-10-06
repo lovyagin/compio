@@ -5,6 +5,7 @@
 #include "compio.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 int main() {
     const char* test_data = "Hello, World! This is a test of compression algorithms.";
@@ -25,7 +26,12 @@ int main() {
 
     for (int i = 0; i < 5; i++) {
         uint64_t buf_size = compressors[i].get_bufsize(data_size);
-        char compressed[buf_size];
+        char* compressed = (char*)malloc(buf_size);
+        if (!compressed) {
+            printf("%s compressor: FAILED (malloc)\n\n", names[i]);
+            continue;
+        }
+
         uint64_t compressed_size = buf_size;
 
         if (compressors[i].compress(compressed, &compressed_size, test_data, data_size) == 0) {
@@ -34,7 +40,14 @@ int main() {
             printf("  Compression ratio: %.2f%%\n", (1.0 - (double)compressed_size / data_size) * 100);
 
             // Test decompression
-            char decompressed[data_size];
+            char* decompressed = (char*)malloc(data_size);
+            if (!decompressed) {
+                printf("  Decompression: FAILED (malloc)\n");
+                free(compressed);
+                printf("\n");
+                continue;
+            }
+
             uint64_t decompressed_size = data_size;
 
             if (compressors[i].decompress(decompressed, &decompressed_size, compressed, compressed_size) == 0) {
@@ -46,12 +59,15 @@ int main() {
             } else {
                 printf("  Decompression: FAILED\n");
             }
+
+            free(decompressed);
         } else {
             printf("%s compressor: FAILED\n", names[i]);
         }
+
+        free(compressed);
         printf("\n");
     }
 
     return 0;
 }
-
