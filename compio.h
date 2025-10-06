@@ -29,6 +29,17 @@ extern "C" {
 #endif
 
 /**
+ * @brief Compression algorithm types
+ */
+typedef enum {
+    COMPIO_COMPRESS_NONE = 0,   /**< No compression (dummy) */
+    COMPIO_COMPRESS_ZLIB = 1,   /**< ZLIB compression */
+    COMPIO_COMPRESS_LZ4 = 2,    /**< LZ4 compression */
+    COMPIO_COMPRESS_ZSTD = 3,   /**< Zstandard compression */
+    COMPIO_COMPRESS_BROTLI = 4  /**< Brotli compression */
+} compio_compression_type;
+
+/**
  * @brief Compressor interface
  */
 typedef struct compio_compressor {

@@ -12,7 +12,7 @@ using namespace compio;
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
-header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable(), allocator_state_offset(0), allocator_state_size(0) {}
+header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable(), allocator_state_offset(0), allocator_state_size(0), compression_type(COMPIO_COMPRESS_ZLIB) {}
 
 void header::read_from(FILE* file, uint64_t addr) {
     DEBUG_PRINT("[R][header]addr=%llu\n", addr);
@@ -23,6 +23,7 @@ void header::read_from(FILE* file, uint64_t addr) {
     lendian_fread_member(file_size, file);
     lendian_fread_member(allocator_state_offset, file);
     lendian_fread_member(allocator_state_size, file);
+    lendian_fread_member(compression_type, file);
     lendian_fread_member(ftable.n_files, file);
     for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
         lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
@@ -39,6 +40,7 @@ void header::write_to(FILE* file, uint64_t addr) const {
     lendian_fwrite_member(file_size, file);
     lendian_fwrite_member(allocator_state_offset, file);
     lendian_fwrite_member(allocator_state_size, file);
+    lendian_fwrite_member(compression_type, file);
     lendian_fwrite_member(ftable.n_files, file);
     for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
         lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
