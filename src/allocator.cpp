@@ -439,7 +439,7 @@ namespace compio {
         std::vector<uint8_t> buffer;
         uint32_t size = serialize(buffer);
 
-        // Seek to end of file for allocator state
+        // Seek to end of file for allocator state, but ensure we don't overwrite header
         if (fseek(archive->file, 0, SEEK_END) != 0) {
             return false;
         }
@@ -450,6 +450,14 @@ namespace compio {
             return false;
         }
 
+        // Ensure we write after the header
+        if (pos < static_cast<long>(sizeof(header))) {
+            pos = sizeof(header);
+            if (fseek(archive->file, pos, SEEK_SET) != 0) {
+                return false;
+            }
+        }
+
         // Write serialized data
         size_t written = fwrite(buffer.data(), 1, size, archive->file);
         if (written != size) {
@@ -457,8 +465,12 @@ namespace compio {
         }
 
         // Update header with allocator state location
-        archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
-        archive->header->allocator_state_size = size;
+        // Use ptr() to mark header as modified so it gets written to disk
+        archive->header.ptr()->allocator_state_offset = static_cast<uint64_t>(pos);
+        archive->header.ptr()->allocator_state_size = size;
+
+        // Explicitly write header to disk to ensure it's saved
+        archive->header->write_to(archive->file, 0);
 
         // Ensure data is written to disk
         fflush(archive->file);
@@ -543,8 +555,9 @@ namespace compio {
             throw std::runtime_error("Archive header is null");
         }
 
-        // Set initial state size
-        archive_->header->allocator_state_size = sizeof(header);
+        // Don't set initial allocator_state_size here - it should remain 0 until first save
+        // The header fields allocator_state_offset and allocator_state_size are initialized to 0
+        // and will be set properly when save_state() is called
 
         // Ensure we have valid initial file size
         if (archive_->header->file_size < sizeof(header)) {
