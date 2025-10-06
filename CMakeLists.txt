@@ -2,21 +2,37 @@ cmake_minimum_required(VERSION 3.10)
 
 project(compio LANGUAGES C CXX)
 
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-if (WIN32)
-    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS True)
+if (NOT DEFINED CMAKE_C_STANDARD)
+    set(CMAKE_C_STANDARD 11 CACHE STRING "C Standard")
 endif()
 
-# add_compile_definitions(WARNING_PRINT_ENABLED)
-# add_compile_definitions(DEBUG_PRINT_ENABLED)
-add_compile_definitions(BM_FILE_OPERATIONS_COUNTER)
-set(CMAKE_BUILD_TYPE RelWithDebInfo)
+if (NOT DEFINED CMAKE_C_STANDARD_REQUIRED)
+    set(CMAKE_C_STANDARD_REQUIRED ON CACHE STRING "C Standard required")
+endif()
 
-set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
+if (NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ Standard")
+endif()
+
+if (NOT DEFINED CMAKE_CXX_STANDARD_REQUIRED)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON CACHE STRING "C++ Standard required")
+endif()
+
+
+# # build Release by default
+if (NOT DEFINED CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
+endif()
+
+
+# use vcpkg toolchain by default
+if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+    if (EXISTS "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "CMake toolchain file")
+    endif()
+endif()
+
 
 add_library(compio SHARED
     src/allocator.cpp
@@ -41,15 +57,45 @@ install(TARGETS compio
     PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
+
+# enable DEBUG print on Debug/RelWithDebInfo builds by default
+if (NOT DEFINED DEBUG_PRINT_ENABLED)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        set(DEBUG_PRINT_ENABLED ON CACHE BOOL "Enable DEBUG prints")
+    else()
+        set(DEBUG_PRINT_ENABLED OFF CACHE BOOL "Enable DEBUG prints")
+    endif()
+endif()
+
+# enable filesystem operations counting for benchmarking on Debug/RelWithDebInfo builds by default
+if (NOT DEFINED BM_FILE_OPERATIONS_COUNTER)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+        set(BM_FILE_OPERATIONS_COUNTER ON CACHE BOOL "Enable filesystem operations counting for benchmarking")
+    else()
+        set(BM_FILE_OPERATIONS_COUNTER OFF CACHE BOOL "Enable filesystem operations counting for benchmarking")
+    endif()
+endif()
+
+# enable WARNING print by default on all build types
+if (NOT DEFINED WARNING_PRINT_ENABLED)
+    set(WARNING_PRINT_ENABLED ON CACHE BOOL "Enable WARNING prints")
+endif()
+
+if (DEBUG_PRINT_ENABLED)
+    target_compile_definitions(compio PRIVATE DEBUG_PRINT_ENABLED=1)
+endif()
+
+if (WARNING_PRINT_ENABLED)
+    target_compile_definitions(compio PRIVATE WARNING_PRINT_ENABLED=1)
+endif()
+
+if (BM_FILE_OPERATIONS_COUNTER)
+    target_compile_definitions(compio PRIVATE BM_FILE_OPERATIONS_COUNTER=1)
+endif()
+
+
 find_package(ZLIB REQUIRED)
 target_link_libraries(compio PRIVATE ZLIB::ZLIB)
-
-# find_package(CUnit REQUIRED)
-# target_link_libraries(compio PRIVATE CUnit)
-
-if (MSVC)
-    target_compile_definitions(compio PRIVATE _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING)
-endif()
 
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
