@@ -83,7 +83,15 @@ void compio_build_zlib_compressor(compio_compressor* result) {
     result->get_bufsize = zlib_get_bufsize;
 }
 
-// LZ4 compressor implementation
+/**
+ * @brief Compress data using LZ4 algorithm
+ *
+ * @param dst Destination buffer for compressed data
+ * @param dst_size Pointer to destination buffer size (input/output)
+ * @param src Source data buffer
+ * @param src_size Source data size in bytes
+ * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
+ */
 int lz4_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     int compressed_size = LZ4_compress_default(
         (const char*)src,
@@ -101,6 +109,15 @@ int lz4_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_si
     return 0;
 }
 
+/**
+ * @brief Decompress LZ4 compressed data
+ *
+ * @param dst Destination buffer for decompressed data
+ * @param dst_size Pointer to destination buffer size (input/output)
+ * @param src Compressed source data buffer
+ * @param src_size Compressed data size in bytes
+ * @return 0 on success, -1 on error (sets errno to EIO on decompression failure)
+ */
 int lz4_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     int decompressed_size = LZ4_decompress_safe(
         (const char*)src,
@@ -118,6 +135,12 @@ int lz4_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_
     return 0;
 }
 
+/**
+ * @brief Get maximum buffer size needed for LZ4 compression
+ *
+ * @param src_size Size of data to be compressed
+ * @return Maximum possible size of compressed data
+ */
 uint64_t lz4_get_bufsize(uint64_t src_size) {
     return LZ4_compressBound((int)src_size);
 }
@@ -128,7 +151,15 @@ void compio_build_lz4_compressor(compio_compressor* result) {
     result->get_bufsize = lz4_get_bufsize;
 }
 
-// Zstandard compressor implementation
+/**
+ * @brief Compress data using Zstandard algorithm
+ *
+ * @param dst Destination buffer for compressed data
+ * @param dst_size Pointer to destination buffer size (input/output)
+ * @param src Source data buffer
+ * @param src_size Source data size in bytes
+ * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
+ */
 int zstd_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     size_t compressed_size = ZSTD_compress(
         dst,
@@ -147,6 +178,15 @@ int zstd_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_s
     return 0;
 }
 
+/**
+ * @brief Decompress Zstandard compressed data
+ *
+ * @param dst Destination buffer for decompressed data
+ * @param dst_size Pointer to destination buffer size (input/output)
+ * @param src Compressed source data buffer
+ * @param src_size Compressed data size in bytes
+ * @return 0 on success, -1 on error (sets errno to EIO on decompression failure)
+ */
 int zstd_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     size_t decompressed_size = ZSTD_decompress(dst, *dst_size, src, src_size);
 
@@ -159,6 +199,12 @@ int zstd_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src
     return 0;
 }
 
+/**
+ * @brief Get maximum buffer size needed for Zstandard compression
+ *
+ * @param src_size Size of data to be compressed
+ * @return Maximum possible size of compressed data
+ */
 uint64_t zstd_get_bufsize(uint64_t src_size) {
     return ZSTD_compressBound(src_size);
 }
@@ -169,7 +215,15 @@ void compio_build_zstd_compressor(compio_compressor* result) {
     result->get_bufsize = zstd_get_bufsize;
 }
 
-// Brotli compressor implementation
+/**
+ * @brief Compress data using Brotli algorithm
+ *
+ * @param dst Destination buffer for compressed data
+ * @param dst_size Pointer to destination buffer size (input/output)
+ * @param src Source data buffer
+ * @param src_size Source data size in bytes
+ * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
+ */
 int brotli_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     size_t encoded_size = *dst_size;
 
@@ -192,6 +246,15 @@ int brotli_compress(void* dst, uint64_t* dst_size, const void* src, uint64_t src
     return 0;
 }
 
+/**
+ * @brief Decompress Brotli compressed data
+ *
+ * @param dst Destination buffer for decompressed data
+ * @param dst_size Pointer to destination buffer size (input/output)
+ * @param src Compressed source data buffer
+ * @param src_size Compressed data size in bytes
+ * @return 0 on success, -1 on error (sets errno to EIO on decompression failure)
+ */
 int brotli_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t src_size) {
     size_t decoded_size = *dst_size;
 
@@ -211,6 +274,12 @@ int brotli_decompress(void* dst, uint64_t* dst_size, const void* src, uint64_t s
     return 0;
 }
 
+/**
+ * @brief Get maximum buffer size needed for Brotli compression
+ *
+ * @param src_size Size of data to be compressed
+ * @return Maximum possible size of compressed data
+ */
 uint64_t brotli_get_bufsize(uint64_t src_size) {
     return BrotliEncoderMaxCompressedSize(src_size);
 }
