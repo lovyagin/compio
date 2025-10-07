@@ -102,6 +102,8 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
         return NULL;
     }
 
+    // if w+ passed as mode, we have to clear file contents (using w+)
+    // otherwise we open with a+ mode to read and write
     const char* archive_open_mode;
     if (mode_b & mode_bit::w)
         archive_open_mode = "w+";
@@ -117,23 +119,26 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
     long fsize = ftell(file);
     bool is_new_archive = (fsize == 0);
 
-    // Create a mutable config copy
-    compio_config config_copy = *c;
+    auto archive = new compio_archive(file, mode_b, c);
 
-    auto archive = new compio_archive(file, mode_b, &config_copy);
-
-    // For existing archives, load compression type from header and update compressor
+    // For existing archives, check if compression type matches
     if (!is_new_archive) {
         compio_compression_type saved_type = (compio_compression_type)archive->header->compression_type;
-        build_compressor_from_type(saved_type, &config_copy.compressor);
+        compio_compression_type provided_type = get_compression_type(&c->compressor);
+
+        if (saved_type != provided_type) {
+            // Compression type mismatch
+            delete archive;
+            fclose(file);
+            errno = EINVAL;
+            return NULL;
+        }
     } else {
         // For new archives, save compression type to header
         archive->header.ptr()->compression_type = get_compression_type(&c->compressor);
     }
 
-    // Store the updated config
-    archive->config = new compio_config(config_copy);
-
+    // initialize allocator before btree, because btree uses allocator for creating root node
     archive->allocator = new compio::block_allocator(archive);
     archive->index = new btree(archive);
 
@@ -141,7 +146,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
         archive->allocator->load_state(archive);
     }
 
-    archive->c_buffer = std::unique_ptr<uint8_t[]>(new uint8_t[config_copy.compressor.get_bufsize(config_copy.block_size)]);
+    archive->c_buffer = std::unique_ptr<uint8_t[]>(new uint8_t[c->compressor.get_bufsize(c->block_size)]);
 
     return archive;
 }
