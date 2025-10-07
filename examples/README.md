@@ -1,0 +1,64 @@
+# Compression Examples
+
+This directory contains examples demonstrating compression functionality.
+
+## Examples
+
+### `compressor_example.c`
+Demonstrates all available compression algorithms and their compression ratios on sample data.
+
+**Usage:**
+```bash
+./compressor_example
+```
+
+**Output:**
+Shows compression ratios for Dummy, ZLIB, LZ4, Zstandard, and Brotli algorithms.
+
+### `compression_persistence_test.c`
+Demonstrates that compression type is automatically saved and restored when reopening archives.
+
+**Usage:**
+```bash
+./compression_persistence_test
+```
+
+**Features:**
+- Creates archives with different compressors (LZ4, Zstandard, Brotli)
+- Closes and reopens each archive
+- Verifies data integrity and correct decompression
+
+This example proves that you don't need to specify the compression algorithm when opening an existing archive - it's automatically detected from the header.
+
+## Available Compression Algorithms
+
+| Algorithm | Speed | Ratio | Use Case |
+|-----------|-------|-------|----------|
+| **Dummy** | Fastest | None | Testing, uncompressed storage |
+| **LZ4** | Very Fast | Good | Real-time compression |
+| **ZLIB** | Fast | Good | General purpose (default) |
+| **Zstandard** | Fast | Excellent | Modern applications |
+| **Brotli** | Moderate | Best | Maximum compression |
+
+## Quick Start
+
+```c
+#include "compio.h"
+
+// Select compression algorithm
+compio_config config;
+compio_build_default_config(&config);
+compio_build_lz4_compressor(&config.compressor);  // or zstd, brotli, zlib, dummy
+
+// Create archive
+compio_archive* archive = compio_open_archive("file.cmp", "w+", &config);
+
+// Use archive...
+
+// Close archive (compression type is saved automatically)
+compio_close_archive(archive);
+
+// Reopen - compression type auto-detected!
+archive = compio_open_archive("file.cmp", "r+", &config);
+```
+

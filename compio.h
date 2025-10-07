@@ -29,6 +29,17 @@ extern "C" {
 #endif
 
 /**
+ * @brief Compression algorithm types
+ */
+typedef enum {
+    COMPIO_COMPRESS_NONE = 0,   /**< No compression (dummy) */
+    COMPIO_COMPRESS_ZLIB = 1,   /**< ZLIB compression */
+    COMPIO_COMPRESS_LZ4 = 2,    /**< LZ4 compression */
+    COMPIO_COMPRESS_ZSTD = 3,   /**< Zstandard compression */
+    COMPIO_COMPRESS_BROTLI = 4  /**< Brotli compression */
+} compio_compression_type;
+
+/**
  * @brief Compressor interface
  */
 typedef struct compio_compressor {
@@ -69,6 +80,26 @@ void compio_build_dummy_compressor(compio_compressor* result);
  */
 void compio_build_zlib_compressor(compio_compressor* result);
 
+/**
+ * @brief LZ4 compressor - very fast compression/decompression
+ *
+ * @param result
+ */
+void compio_build_lz4_compressor(compio_compressor* result);
+
+/**
+ * @brief Zstandard (zstd) compressor - modern efficient compression
+ *
+ * @param result
+ */
+void compio_build_zstd_compressor(compio_compressor* result);
+
+/**
+ * @brief Brotli compressor - high compression ratio
+ *
+ * @param result
+ */
+void compio_build_brotli_compressor(compio_compressor* result);
 
 typedef enum {
     COMPIO_ALLOC_FIRST_FIT,  /**< First-fit allocation strategy */

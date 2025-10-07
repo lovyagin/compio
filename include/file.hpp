@@ -66,6 +66,8 @@ struct header : public infile_object {
     files_table ftable; /**< Files table */
     uint64_t allocator_state_offset;
     uint64_t allocator_state_size;
+    uint32_t compression_type; /**< Type of compression algorithm used */
+
     /**
      * @brief Construct default header
      *
