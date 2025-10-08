@@ -103,8 +103,21 @@ target_link_libraries(compio PRIVATE lz4::lz4)
 find_package(zstd CONFIG REQUIRED)
 target_link_libraries(compio PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>)
 
-find_package(unofficial-brotli CONFIG REQUIRED)
-target_link_libraries(compio PRIVATE unofficial::brotli::brotlienc unofficial::brotli::brotlidec unofficial::brotli::brotlicommon)
+find_package(unofficial-brotli CONFIG QUIET)
+if(unofficial-brotli_FOUND)
+    target_link_libraries(compio PRIVATE 
+        unofficial::brotli::brotlienc 
+        unofficial::brotli::brotlidec 
+        unofficial::brotli::brotlicommon
+    )
+else()
+    find_package(brotli CONFIG REQUIRED)
+    target_link_libraries(compio PRIVATE 
+        brotli::brotlienc 
+        brotli::brotlidec 
+        brotli::brotlicommon
+    )
+endif()
 
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
