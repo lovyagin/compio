@@ -5,26 +5,26 @@
 #include <gtest/gtest.h>
 #include <numeric>
 #include <random>
+#include "test_util.hpp"
 
 using namespace compio;
 
 // Tests for boundary conditions and edge cases
 class BoundaryConditionTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_boundary_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -104,20 +104,19 @@ TEST_F(BoundaryConditionTest, MinimumSizeAllocation) {
 // Tests for robustness under various conditions
 class RobustnessTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_robust_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -217,20 +216,19 @@ TEST_F(RobustnessTest, AlternatingLargeSmallAllocations) {
 // Test specific allocation patterns that might cause issues
 class AllocationPatternTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_pattern_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -302,20 +300,19 @@ TEST_F(AllocationPatternTest, FibonacciSizeSequence) {
 // Test real-world usage patterns
 class RealWorldPatternTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_realworld_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -414,29 +411,30 @@ TEST_F(RealWorldPatternTest, LogFilePattern) {
 // Test memory efficiency and fragmentation
 class EfficiencyTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_efficiency_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
 
         archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive->allocator = allocator = new block_allocator(archive);
+        archive->index = new btree(archive);
     }
 
     void TearDown() override {
+        if (archive->index) delete archive->index;
         if (allocator) delete allocator;
         if (archive) delete archive;
         if (file) fclose(file);
@@ -506,29 +504,30 @@ TEST_F(EfficiencyTest, FragmentationMeasurement) {
 // Integration test with all features
 class IntegrationTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_integration_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_BEST_FIT;
         config->fragmentation_threshold = 25;
         config->fill_holes_with_zeros = true;
 
         archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive->allocator = allocator = new block_allocator(archive);
+        archive->index = new btree(archive);
     }
 
     void TearDown() override {
+        if (archive->index) delete archive->index;
         if (allocator) delete allocator;
         if (archive) delete archive;
         if (file) fclose(file);

@@ -2,25 +2,25 @@
 #include "compio_file.hpp"
 #include "utils.hpp"
 #include <gtest/gtest.h>
+#include "test_util.hpp"
 
 using namespace compio;
 
 class BasicAllocatorTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_alloc_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;

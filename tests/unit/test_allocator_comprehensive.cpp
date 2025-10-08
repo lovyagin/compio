@@ -5,34 +5,36 @@
 #include <random>
 #include <chrono>
 #include <set>
+#include "test_util.hpp"
 
 using namespace compio;
 
 class ComprehensiveAllocatorTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_alloc_comp_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
 
         archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive->allocator = allocator = new block_allocator(archive);
+        archive->index = new btree(archive);
     }
 
     void TearDown() override {
+        if (archive->index) delete archive->index;
         if (allocator) delete allocator;
         if (archive) delete archive;
         if (file) fclose(file);
@@ -45,13 +47,15 @@ protected:
         if (archive) delete archive;
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = strategy;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
 
         file = freopen(fn, "w+", file);
         archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive->allocator = allocator = new block_allocator(archive);
+        archive->index = new btree(archive);
     }
 
     // Helper to verify block allocation

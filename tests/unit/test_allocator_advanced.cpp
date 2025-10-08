@@ -4,13 +4,14 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <atomic>
+#include "test_util.hpp"
 
 using namespace compio;
 
 // Tests for serialization/deserialization functionality
 class SerializationTest : public ::testing::Test {
 protected:
-    char fn1[32], fn2[32];
+    char fn1[256], fn2[256];
     FILE* file1;
     FILE* file2;
     compio_archive* archive1;
@@ -20,13 +21,12 @@ protected:
 
     void SetUp() override {
         // Setup first archive
-        strcpy(fn1, "/tmp/compio_ser1_XXXXXX");
-        int fd1 = mkstemp(fn1);
-        if (fd1 != -1) close(fd1);
+        generate_tmp_fn(fn1, sizeof(fn1));
         file1 = fopen(fn1, "w+");
         ASSERT_TRUE(file1 != nullptr);
 
         auto* config1 = new compio_config();
+        compio_build_default_config(config1);
         config1->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config1->fragmentation_threshold = 30;
         config1->fill_holes_with_zeros = false;
@@ -35,13 +35,12 @@ protected:
         allocator1 = new block_allocator(archive1);
 
         // Setup second archive
-        strcpy(fn2, "/tmp/compio_ser2_XXXXXX");
-        int fd2 = mkstemp(fn2);
-        if (fd2 != -1) close(fd2);
+        generate_tmp_fn(fn2, sizeof(fn2));
         file2 = fopen(fn2, "w+");
         ASSERT_TRUE(file2 != nullptr);
 
         auto* config2 = new compio_config();
+        compio_build_default_config(config2);
         config2->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config2->fragmentation_threshold = 30;
         config2->fill_holes_with_zeros = false;
@@ -102,7 +101,7 @@ TEST_F(SerializationTest, SaveAndLoadState) {
 // Thread safety tests (if applicable)
 class ThreadSafetyTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
@@ -110,10 +109,8 @@ protected:
     std::atomic<int> failed_allocations{0};
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_thread_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
-
+        generate_tmp_fn(fn, sizeof(fn));
+        
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
@@ -196,15 +193,13 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
 // Memory leak detection tests
 class MemoryLeakTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file;
     compio_archive* archive;
     block_allocator* allocator;
 
     void SetUp() override {
-        strcpy(fn, "/tmp/compio_leak_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
@@ -263,7 +258,7 @@ TEST_F(MemoryLeakTest, MassiveAllocationDeallocationCycle) {
 // Fragmentation threshold tests
 class FragmentationThresholdTest : public ::testing::Test {
 protected:
-    char fn[32];
+    char fn[256];
     FILE* file = nullptr;
     compio_archive* archive = nullptr;
     block_allocator* allocator = nullptr;
@@ -283,9 +278,7 @@ protected:
             file = nullptr;
         }
 
-        strcpy(fn, "/tmp/compio_frag_XXXXXX");
-        int fd = mkstemp(fn);
-        if (fd != -1) close(fd);
+        generate_tmp_fn(fn, sizeof(fn));
 
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
