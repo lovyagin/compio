@@ -26,6 +26,7 @@ protected:
         ASSERT_TRUE(file1 != nullptr);
 
         auto* config1 = new compio_config();
+        compio_build_default_config(config1);
         config1->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config1->fragmentation_threshold = 30;
         config1->fill_holes_with_zeros = false;
@@ -39,6 +40,7 @@ protected:
         ASSERT_TRUE(file2 != nullptr);
 
         auto* config2 = new compio_config();
+        compio_build_default_config(config2);
         config2->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config2->fragmentation_threshold = 30;
         config2->fill_holes_with_zeros = false;

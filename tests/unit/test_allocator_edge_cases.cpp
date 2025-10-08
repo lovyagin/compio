@@ -24,6 +24,7 @@ protected:
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -115,6 +116,7 @@ protected:
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -226,6 +228,7 @@ protected:
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -309,6 +312,7 @@ protected:
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -419,6 +423,7 @@ protected:
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -509,6 +514,7 @@ protected:
         ASSERT_TRUE(file != nullptr);
 
         auto* config = new compio_config();
+        compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_BEST_FIT;
         config->fragmentation_threshold = 25;
         config->fill_holes_with_zeros = true;
