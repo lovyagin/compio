@@ -65,8 +65,8 @@ protected:
 };
 
 TEST_F(OpenedFileTest, OpenClose) {
-    EXPECT_NE(archive, nullptr);
-    EXPECT_NE(file, nullptr);
+    ASSERT_NE(archive, nullptr);
+    ASSERT_NE(file, nullptr);
 }
 
 TEST_F(OpenedFileTest, BasicWriteRead) {
@@ -75,21 +75,21 @@ TEST_F(OpenedFileTest, BasicWriteRead) {
 
     std::vector<unsigned char> out_data(size, '?');
 
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_write(in_data.data(), size, file), size);
-    EXPECT_EQ(compio_tell(file), size);
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_write(in_data.data(), size, file), size);
+    ASSERT_EQ(compio_tell(file), size);
     
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_CUR), 0);
-    EXPECT_EQ(compio_tell(file), size);
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_CUR), 0);
+    ASSERT_EQ(compio_tell(file), size);
     
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
-    EXPECT_EQ(compio_tell(file), size);
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
+    ASSERT_EQ(compio_tell(file), size);
 
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_read(out_data.data(), size, file), size);
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_read(out_data.data(), size, file), size);
 
     for (std::size_t i = 0; i < size; ++i) {
-        EXPECT_EQ(in_data[i], out_data[i]);
+        ASSERT_EQ(in_data[i], out_data[i]);
     }
 }
 
@@ -113,19 +113,19 @@ TEST_P(WriteReadNBytesTest, RandomWriteRead) {
     auto in_data = generate_random_buffer(size);
     std::vector<unsigned char> out_data(size, '?');
 
-    EXPECT_EQ(compio_write(in_data.data(), size, file), size);
-    EXPECT_EQ(compio_tell(file), size);
+    ASSERT_EQ(compio_write(in_data.data(), size, file), size);
+    ASSERT_EQ(compio_tell(file), size);
 
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
-    EXPECT_EQ(compio_tell(file), size);
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
+    ASSERT_EQ(compio_tell(file), size);
     
-    EXPECT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
-    EXPECT_EQ(compio_tell(file), 0);
-    EXPECT_EQ(compio_read(out_data.data(), size, file), size);
-    EXPECT_EQ(compio_tell(file), size);
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_tell(file), 0);
+    ASSERT_EQ(compio_read(out_data.data(), size, file), size);
+    ASSERT_EQ(compio_tell(file), size);
 
     for (std::size_t i = 0; i < size; ++i) {
-        EXPECT_EQ(in_data[i], out_data[i]);
+        ASSERT_EQ(in_data[i], out_data[i]);
     }
 }
 
@@ -134,14 +134,14 @@ TEST_P(WriteReadNBytesTest, RandomWriteResetRead) {
     auto in_data = generate_random_buffer(size);
     std::vector<unsigned char> out_data(size, '?');
 
-    EXPECT_EQ(compio_write(in_data.data(), size, file), size);
+    ASSERT_EQ(compio_write(in_data.data(), size, file), size);
 
     Reset();
 
-    EXPECT_EQ(compio_read(out_data.data(), size, file), size);
+    ASSERT_EQ(compio_read(out_data.data(), size, file), size);
 
     for (std::size_t i = 0; i < size; ++i) {
-        EXPECT_EQ(in_data[i], out_data[i]);
+        ASSERT_EQ(in_data[i], out_data[i]);
     }
 }
 
@@ -173,7 +173,7 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     std::vector<unsigned char> out_data(block_size, '?');
 
     for (std::size_t i = 0; i < n_blocks; ++i) {
-        EXPECT_EQ(compio_write(in_data.data(), block_size, file), block_size);
+        ASSERT_EQ(compio_write(in_data.data(), block_size, file), block_size);
         fflush(archive->file);
     }
 
@@ -184,11 +184,11 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     file = compio_open_file("A", archive);
 
     for (std::size_t i = 0; i < n_blocks; ++i) {
-        EXPECT_EQ(compio_tell(file), block_size * i) << "; iter=" << i;
-        EXPECT_EQ(compio_read(out_data.data(), block_size, file), block_size) << "; iter=" << i;
+        ASSERT_EQ(compio_tell(file), block_size * i) << "; iter=" << i;
+        ASSERT_EQ(compio_read(out_data.data(), block_size, file), block_size) << "; iter=" << i;
 
         for (std::size_t i = 0; i < block_size; ++i) {
-            EXPECT_EQ(in_data[i], out_data[i]);
+            ASSERT_EQ(in_data[i], out_data[i]);
         }
     }
 
@@ -255,12 +255,12 @@ TEST_P(RandomUsageTest, RandomUsage) {
             case 0: {
                 cursor = d_pos(rng);
                 // fprintf(stderr, "compio_seek(%d)\n", cursor);
-                EXPECT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+                ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
                 break;
             }
             case 1: {
                 // fprintf(stderr, "compio_tell() = %d\n", cursor);
-                EXPECT_EQ(compio_tell(file), cursor);
+                ASSERT_EQ(compio_tell(file), cursor);
                 break;
             }
             case 2: {
@@ -269,9 +269,9 @@ TEST_P(RandomUsageTest, RandomUsage) {
                     std::uniform_int_distribution<int> d_size(1, max_size);
                     int size = d_size(rng);
                     // fprintf(stderr, "compio_read(%d, %d)\n", cursor, size);
-                    EXPECT_EQ(compio_read(buffer.data(), size, file), size);
+                    ASSERT_EQ(compio_read(buffer.data(), size, file), size);
                     for (int i = 0; i < size; ++i) {
-                        EXPECT_EQ(buffer[i], file_data[cursor + i]);
+                        ASSERT_EQ(buffer[i], file_data[cursor + i]);
                     }
                     cursor += size;
                     break;
@@ -284,7 +284,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
                     // fprintf(stderr, "compio_write(%d, %d)\n", start, size);
-                    EXPECT_EQ(compio_write(html_data + start, size, file), size);
+                    ASSERT_EQ(compio_write(html_data + start, size, file), size);
                     std::copy_n(html_data + start, size, file_data.data() + cursor);
                     cursor += size;
                     current_fsize = std::max(current_fsize, cursor);
@@ -355,14 +355,14 @@ TEST_P(CustomUsageTest, CustomUsage) {
         // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
         cursor = operation.pos;
         // fprintf(stderr, "compio_seek(%d)\n", cursor);
-        EXPECT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+        ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
         
         switch (operation.type) {
         case OperationType::READ: {
             // fprintf(stderr, "compio_read(%d, %d)\n", cursor, size);
-            EXPECT_EQ(compio_read(buffer.data(), operation.size, file), operation.size);
+            ASSERT_EQ(compio_read(buffer.data(), operation.size, file), operation.size);
             for (int i = 0; i < operation.size; ++i) {
-                EXPECT_EQ(buffer[i], file_data[cursor + i]);
+                ASSERT_EQ(buffer[i], file_data[cursor + i]);
             }
             cursor += operation.size;
             break;
@@ -371,7 +371,7 @@ TEST_P(CustomUsageTest, CustomUsage) {
             std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - operation.size);
             int start = d_start(rng);
             // fprintf(stderr, "compio_write(%d, %d)\n", start, size);
-            EXPECT_EQ(compio_write(html_data + start, operation.size, file), operation.size);
+            ASSERT_EQ(compio_write(html_data + start, operation.size, file), operation.size);
             std::copy_n(html_data + start, operation.size, file_data.data() + cursor);
             cursor += operation.size;
             break;
