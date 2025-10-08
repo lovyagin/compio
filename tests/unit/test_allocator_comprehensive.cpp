@@ -29,10 +29,12 @@ protected:
         config->fill_holes_with_zeros = false;
 
         archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive->allocator = allocator = new block_allocator(archive);
+        archive->index = new btree(archive);
     }
 
     void TearDown() override {
+        if (archive->index) delete archive->index;
         if (allocator) delete allocator;
         if (archive) delete archive;
         if (file) fclose(file);
@@ -52,7 +54,8 @@ protected:
 
         file = freopen(fn, "w+", file);
         archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive->allocator = allocator = new block_allocator(archive);
+        archive->index = new btree(archive);
     }
 
     // Helper to verify block allocation
