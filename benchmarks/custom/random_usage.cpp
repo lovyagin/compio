@@ -1,11 +1,13 @@
-#include "compio.h"
-#include "sample_data.hpp"
 #include "benchmark_util.hpp"
+
+#include "compio.h"
+
+#include "sample_data.hpp"
 
 int main() {
     compio_config config;
-    compio_archive* archive;
-    compio_file* file;
+    compio_archive *archive;
+    compio_file *file;
 
     std::string fn = get_temporary_filename();
 
@@ -49,7 +51,7 @@ int main() {
             }
             case 2: {
                 if (cursor < current_fsize) {
-                    compio_read(buffer.data(), size, file); 
+                    compio_read(buffer.data(), size, file);
                     cursor += size;
                     break;
                 }
@@ -58,7 +60,7 @@ int main() {
                 if (cursor < file_size) {
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
-                    
+
                     compio_write(html_data + start, size, file);
                     cursor += size;
                     current_fsize = std::max(current_fsize, cursor);

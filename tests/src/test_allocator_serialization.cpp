@@ -1,7 +1,9 @@
+#include <gtest/gtest.h>
+
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
 #include "compio/utils.hpp"
-#include <gtest/gtest.h>
+
 #include "test_util.hpp"
 
 using namespace compio;
@@ -10,8 +12,8 @@ using namespace compio;
 class AllocatorStateTest : public ::testing::Test {
 protected:
     char fn1[256], fn2[256];
-    FILE* file1;
-    FILE* file2;
+    FILE *file1;
+    FILE *file2;
 
     void SetUp() override {
         // Create two temporary files
@@ -25,8 +27,10 @@ protected:
     }
 
     void TearDown() override {
-        if (file1) fclose(file1);
-        if (file2) fclose(file2);
+        if (file1)
+            fclose(file1);
+        if (file2)
+            fclose(file2);
         remove(fn1);
         remove(fn2);
     }
@@ -34,14 +38,14 @@ protected:
 
 TEST_F(AllocatorStateTest, SaveAndLoadState) {
     // Create allocator and archive
-    auto* config = new compio_config();
+    auto *config = new compio_config();
     compio_build_default_config(config);
     config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     config->fragmentation_threshold = 30;
     config->fill_holes_with_zeros = false;
 
-    auto* archive = new compio_archive(file1, mode_bit::w | mode_bit::r, config);
-    auto* allocator = new block_allocator(archive);
+    auto *archive = new compio_archive(file1, mode_bit::w | mode_bit::r, config);
+    auto *allocator = new block_allocator(archive);
 
     // Create state with free blocks
     uint64_t offset1 = allocator->allocate(100);
@@ -68,8 +72,8 @@ TEST_F(AllocatorStateTest, SaveAndLoadState) {
     ASSERT_TRUE(file1 != nullptr);
 
     // Create new archive in read mode - should load header
-    auto* new_archive = new compio_archive(file1, mode_bit::r, config);
-    auto* new_allocator = new block_allocator(new_archive);
+    auto *new_archive = new compio_archive(file1, mode_bit::r, config);
+    auto *new_allocator = new block_allocator(new_archive);
 
     // Try to load state
     bool load_success = new_allocator->load_state(new_archive);

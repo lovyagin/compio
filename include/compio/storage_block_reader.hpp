@@ -8,6 +8,7 @@
 
 #include "compio/file.hpp"
 #include "compio/infile_object.hpp"
+
 #include "third_party/lrucache.hpp"
 
 namespace compio {
@@ -24,7 +25,7 @@ struct storage_block_reader {
      * @param file File handle to read from
      * @param max_size Maximum number of blocks to cache
      */
-    storage_block_reader(FILE* file, int max_size);
+    storage_block_reader(FILE *file, int max_size);
 
     /**
      * @brief Read storage block from file
@@ -40,7 +41,8 @@ struct storage_block_reader {
      * @param size Data size
      * @return Smart pointer to created block
      */
-    smart_infile_object<storage_block> create_block(uint64_t addr, std::unique_ptr<uint8_t[]>&& data, uint64_t size);
+    smart_infile_object<storage_block>
+    create_block(uint64_t addr, std::unique_ptr<uint8_t[]> &&data, uint64_t size);
 
     /**
      * @brief Remove block from cache
@@ -52,13 +54,13 @@ struct storage_block_reader {
      * @brief Clear all cached blocks
      */
     void clear_cache();
-    
+
 private:
-    FILE* file; /**< Archive file handle */
-    cache::lru_cache<uint64_t, smart_infile_object<storage_block>> cache; /**< LRU cache for blocks */
+    FILE *file; /**< Archive file handle */
+    cache::lru_cache<uint64_t, smart_infile_object<storage_block>>
+        cache; /**< LRU cache for blocks */
 };
 
 } // namespace compio
-
 
 #endif // STORAGE_BLOCK_READER_HPP_

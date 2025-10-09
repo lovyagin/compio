@@ -5,17 +5,17 @@
 #include <stdexcept>
 #include <string>
 
-std::string lower(std::string& s) {
+std::string lower(std::string &s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
     return s;
 }
 
-std::string upper(std::string& s) {
+std::string upper(std::string &s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::toupper(c); });
     return s;
 }
 
-benchmark_context build_config_from_file(std::string fn, compio_config* config) {
+benchmark_context build_config_from_file(std::string fn, compio_config *config) {
     std::ifstream file(fn);
 
     if (!file.is_open()) {

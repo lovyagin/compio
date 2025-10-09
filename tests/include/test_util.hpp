@@ -1,12 +1,13 @@
 #ifndef TEST_UTIL_HPP_
 #define TEST_UTIL_HPP_
 
+#include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <random>
 #include <string>
-#include <chrono>
 
-inline void generate_tmp_fn(char* fn, int max_size) {
+inline void generate_tmp_fn(char *fn, int max_size) {
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path();
 
@@ -26,11 +27,11 @@ inline void generate_tmp_fn(char* fn, int max_size) {
     strcpy(fn, result.c_str());
 
     // create file (open and close)
-    FILE* file = fopen(fn, "w+");
+    FILE *file = fopen(fn, "w+");
     if (file == nullptr) {
         throw std::runtime_error("failed to create temporary file at " + result);
     }
-    
+
     fclose(file);
 }
 

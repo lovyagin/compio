@@ -1,67 +1,73 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include "compio.h"
-#include "compio/compio_file.hpp"
-#include "compio/file.hpp"
-#include "compio/utils.hpp"
-#include "compio/allocator.hpp"
-#include "compio/debug_print.hpp"
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+
+#include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/debug_print.hpp"
+#include "compio/file.hpp"
+#include "compio/utils.hpp"
 
 using namespace compio;
 
 extern "C" {
 
 // Helper function to build compressor from type
-static void build_compressor_from_type(compio_compression_type type, compio_compressor* result) {
+static void build_compressor_from_type(compio_compression_type type, compio_compressor *result) {
     switch (type) {
-        case COMPIO_COMPRESS_NONE:
-            compio_build_dummy_compressor(result);
-            break;
-        case COMPIO_COMPRESS_ZLIB:
-            compio_build_zlib_compressor(result);
-            break;
-        case COMPIO_COMPRESS_LZ4:
-            compio_build_lz4_compressor(result);
-            break;
-        case COMPIO_COMPRESS_ZSTD:
-            compio_build_zstd_compressor(result);
-            break;
-        case COMPIO_COMPRESS_BROTLI:
-            compio_build_brotli_compressor(result);
-            break;
-        default:
-            compio_build_zlib_compressor(result);
-            break;
+    case COMPIO_COMPRESS_NONE:
+        compio_build_dummy_compressor(result);
+        break;
+    case COMPIO_COMPRESS_ZLIB:
+        compio_build_zlib_compressor(result);
+        break;
+    case COMPIO_COMPRESS_LZ4:
+        compio_build_lz4_compressor(result);
+        break;
+    case COMPIO_COMPRESS_ZSTD:
+        compio_build_zstd_compressor(result);
+        break;
+    case COMPIO_COMPRESS_BROTLI:
+        compio_build_brotli_compressor(result);
+        break;
+    default:
+        compio_build_zlib_compressor(result);
+        break;
     }
 }
 
 // Helper function to get compression type from compressor
-static compio_compression_type get_compression_type(const compio_compressor* comp) {
+static compio_compression_type get_compression_type(const compio_compressor *comp) {
     compio_compressor test;
 
     compio_build_dummy_compressor(&test);
-    if (comp->compress == test.compress) return COMPIO_COMPRESS_NONE;
+    if (comp->compress == test.compress)
+        return COMPIO_COMPRESS_NONE;
 
     compio_build_zlib_compressor(&test);
-    if (comp->compress == test.compress) return COMPIO_COMPRESS_ZLIB;
+    if (comp->compress == test.compress)
+        return COMPIO_COMPRESS_ZLIB;
 
     compio_build_lz4_compressor(&test);
-    if (comp->compress == test.compress) return COMPIO_COMPRESS_LZ4;
+    if (comp->compress == test.compress)
+        return COMPIO_COMPRESS_LZ4;
 
     compio_build_zstd_compressor(&test);
-    if (comp->compress == test.compress) return COMPIO_COMPRESS_ZSTD;
+    if (comp->compress == test.compress)
+        return COMPIO_COMPRESS_ZSTD;
 
     compio_build_brotli_compressor(&test);
-    if (comp->compress == test.compress) return COMPIO_COMPRESS_BROTLI;
+    if (comp->compress == test.compress)
+        return COMPIO_COMPRESS_BROTLI;
 
     return COMPIO_COMPRESS_ZLIB;
 }
 
-void compio_build_default_config(compio_config* result) {
+void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
     result->fill_holes_with_zeros = false;
@@ -73,10 +79,10 @@ void compio_build_default_config(compio_config* result) {
     result->fragmentation_threshold = 30;
 }
 
-compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* config)
+compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
     : file(file),
       config(config),
-      mode_b(mode_b), 
+      mode_b(mode_b),
       dec_cache(config->cache_size__compression),
       block_reader(file, config->cache_size__blocks) {
     fseek(file, 0, SEEK_END);
@@ -86,7 +92,7 @@ compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* 
     else
         header = smart_infile_object<compio::header>(file, 0);
 
-    // btree constructor is called in compio_open_archive to break 
+    // btree constructor is called in compio_open_archive to break
     // the dependence cycle (archive -> index -> allocator -> archive)
     //
     // so if you use compio_archive constructor directly (without compio_open_archive),
@@ -95,7 +101,7 @@ compio_archive::compio_archive(FILE* file, uint8_t mode_b, const compio_config* 
     // index = new btree(this);
 }
 
-compio_archive* compio_open_archive(const char* fp, const char* mode, const compio_config* c) {
+compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
     uint8_t mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
@@ -104,7 +110,7 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
 
     // if w+ passed as mode, we have to clear file contents (using w+)
     // otherwise we open with a+ mode to read and write
-    const char* archive_open_mode;
+    const char *archive_open_mode;
     if (mode_b & mode_bit::w)
         archive_open_mode = "w+";
     else
@@ -123,7 +129,8 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
 
     // For existing archives, check if compression type matches
     if (!is_new_archive) {
-        compio_compression_type saved_type = (compio_compression_type)archive->header->compression_type;
+        compio_compression_type saved_type =
+            (compio_compression_type)archive->header->compression_type;
         compio_compression_type provided_type = get_compression_type(&c->compressor);
 
         if (saved_type != provided_type) {
@@ -146,12 +153,13 @@ compio_archive* compio_open_archive(const char* fp, const char* mode, const comp
         archive->allocator->load_state(archive);
     }
 
-    archive->c_buffer = std::unique_ptr<uint8_t[]>(new uint8_t[c->compressor.get_bufsize(c->block_size)]);
+    archive->c_buffer =
+        std::unique_ptr<uint8_t[]>(new uint8_t[c->compressor.get_bufsize(c->block_size)]);
 
     return archive;
 }
 
-compio_file* compio_open_file(const char* name, compio_archive* archive) {
+compio_file *compio_open_file(const char *name, compio_archive *archive) {
     size_t name_len = strlen(name);
     if (name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
@@ -190,7 +198,7 @@ compio_file* compio_open_file(const char* name, compio_archive* archive) {
     return file;
 }
 
-int compio_remove_file(compio_archive* archive, const char* name) {
+int compio_remove_file(compio_archive *archive, const char *name) {
     size_t name_len = strlen(name);
     if (name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
@@ -200,13 +208,14 @@ int compio_remove_file(compio_archive* archive, const char* name) {
     return archive->header->ftable.remove(name);
 }
 
-int compio_close_file(compio_file* file) {
+int compio_close_file(compio_file *file) {
     delete file;
     return 0;
 }
 
-int compio_close_archive(compio_archive* archive) {
-    if (!archive) return COMPIO_ERROR;
+int compio_close_archive(compio_archive *archive) {
+    if (!archive)
+        return COMPIO_ERROR;
 
     // Save allocator state before closing
     if (archive->allocator) {
@@ -218,12 +227,12 @@ int compio_close_archive(compio_archive* archive) {
 
     // 2) cleanup allocator
     delete archive->allocator;
-    
+
     // 3) flush header
     // not calling `delete header`, because it's not a pointer created with new,
-    // but a smart_infile_object, which will destroy and flush it's internal pointer 
+    // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
-    
+
     // 4) and finally we close the file
     if (fclose(archive->file))
         return COMPIO_ERROR;
@@ -233,7 +242,7 @@ int compio_close_archive(compio_archive* archive) {
     return COMPIO_SUCCESS;
 }
 
-int compio_seek(compio_file* file, int64_t offset, uint8_t origin) {
+int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     int64_t new_cursor = file->cursor;
     switch (origin) {
     case COMP_SEEK_SET:
@@ -256,9 +265,10 @@ int compio_seek(compio_file* file, int64_t offset, uint8_t origin) {
     return 0;
 }
 
-uint64_t compio_tell(compio_file* file) { return file->cursor; }
+uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
-static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file* file, uint64_t size) {
+static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file,
+                                                                    uint64_t size) {
     // return range of blocks, that intersect [cursor, cursor + size)
     std::vector<std::pair<tree_key, tree_val>> range;
 
@@ -268,14 +278,14 @@ static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file*
     n_blocks = std::max<int64_t>(0l, n_blocks);
     n_blocks /= file->archive->config->block_size;
     range.reserve(n_blocks);
-    
+
     tree_key key_min = {file->hash_tail, file->cursor};
     tree_key key_max = {file->hash_tail, file->cursor + size};
     file->archive->index->get_range(key_min, key_max, range);
     return range;
 }
 
-uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
+uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%d, size=%d)\n", file->cursor, size);
 
     if (size == 0) {
@@ -288,7 +298,7 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     auto file_table_item = archive->header->ftable.find(file->name);
     const uint64_t fsize = file_table_item->size;
     const uint64_t block_size = config->block_size;
-    
+
     const uint64_t write_start = file->cursor;
     const uint64_t write_end = write_start + size;
     uint64_t written_bytes = 0;
@@ -301,11 +311,11 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
     uint64_t range_idx = 0;
 
     DEBUG_PRINT("[CW]b-tree range:\n");
-    for (const auto& [key, val] : range) {
+    for (const auto &[key, val] : range) {
         DEBUG_PRINT("\t(key.pos=%d) --- (val.addr=%d, val.size=%d)\n", key.pos, val.addr, val.size);
     }
 
-    const uint8_t* p_ptr = reinterpret_cast<const uint8_t*>(ptr);
+    const uint8_t *p_ptr = reinterpret_cast<const uint8_t *>(ptr);
 
     for (uint64_t i = start_block_idx; i <= end_block_idx; ++i, ++range_idx) {
         const uint64_t block_start = i * block_size;
@@ -313,18 +323,19 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
         std::shared_ptr<uint8_t[]> dec_buffer;
 
-        // read block from file and decompress it into dec_buffer (or take decompressed data from cache)
+        // read block from file and decompress it into dec_buffer (or take decompressed data from
+        // cache)
         if (i < n_existing_blocks) {
             if (range_idx >= range.size()) {
                 // this should not happen
                 WARNING_PRINT("range_idx = %d >= %d = range.size()\n", range_idx, range.size());
                 goto end;
             }
-            const auto& [key, val] = range[range_idx];
+            const auto &[key, val] = range[range_idx];
             if (key.pos != i * block_size) {
                 // this should not happen
                 WARNING_PRINT("key.pos = %d != %d = i * block_size\n", key.pos, i * block_size);
-                for (const auto& [key, val] : range) {
+                for (const auto &[key, val] : range) {
                     WARNING_PRINT("%d, %d - %d, %d\n", key.hash, key.pos, val.addr, val.size);
                 }
                 WARNING_PRINT("cur=%d, size=%d\n", file->cursor, size);
@@ -354,11 +365,14 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
 
                 uint64_t dst_size = block->original_size;
                 if (block->is_compressed) {
-                    int ret = config->compressor.decompress(dec_buffer.get(), &dst_size, block->data.get(), block->size);
+                    int ret = config->compressor.decompress(dec_buffer.get(), &dst_size,
+                                                            block->data.get(), block->size);
                     if (ret != 0) {
                         // invalid archive (compressed data is too big after decompression)
                         // TODO: set appropriate errno
-                        WARNING_PRINT("compressed data is too big after decompression (%d is not enough)\n", dst_size);
+                        WARNING_PRINT(
+                            "compressed data is too big after decompression (%d is not enough)\n",
+                            dst_size);
                         goto end;
                     }
                 } else {
@@ -382,10 +396,13 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         }
 
         // copy data from ptr into dec_buffer
-        int64_t copy_size = std::min<int64_t>(write_end, block_end) - std::max<int64_t>(write_start, block_start);
+        int64_t copy_size =
+            std::min<int64_t>(write_end, block_end) - std::max<int64_t>(write_start, block_start);
         if (copy_size > 0) {
-            uint64_t dec_offset = std::max<int64_t>(0, static_cast<int64_t>(file->cursor) - block_start);
-            uint64_t ptr_offset = std::max<int64_t>(0, static_cast<int64_t>(block_start) - file->cursor);
+            uint64_t dec_offset =
+                std::max<int64_t>(0, static_cast<int64_t>(file->cursor) - block_start);
+            uint64_t ptr_offset =
+                std::max<int64_t>(0, static_cast<int64_t>(block_start) - file->cursor);
             std::copy_n(p_ptr + ptr_offset, copy_size, dec_buffer.get() + dec_offset);
             written_bytes += copy_size;
             DEBUG_PRINT("[CW]copied ptr data to dec_buffer\n");
@@ -395,7 +412,8 @@ uint64_t compio_write(const void* ptr, uint64_t size, compio_file* file) {
         bool is_compressed = true;
         uint64_t c_buffer_size = config->compressor.get_bufsize(block_size);
         auto c_buffer = std::make_unique<uint8_t[]>(c_buffer_size);
-        int ret = config->compressor.compress(c_buffer.get(), &c_buffer_size, dec_buffer.get(), block_size);
+        int ret = config->compressor.compress(c_buffer.get(), &c_buffer_size, dec_buffer.get(),
+                                              block_size);
         if (ret != 0 || c_buffer_size > block_size) {
             if (ret != 0) {
                 WARNING_PRINT("compressor->compress returned %d\n", ret);
@@ -434,15 +452,15 @@ end:
     return written_bytes;
 }
 
-uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
+uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     const auto archive = file->archive;
     const auto config = archive->config;
-    
+
     auto file_table_item = archive->header->ftable.find(file->name);
     const uint64_t fsize = file_table_item->size;
     const uint64_t block_size = config->block_size;
     const uint64_t cursor = file->cursor;
-    
+
     size = std::max<uint64_t>(0, std::min<int64_t>(size, fsize - cursor));
     if (size == 0) {
         return 0;
@@ -458,7 +476,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
     auto range = get_range_in_file(file, size);
     uint64_t range_idx = 0;
 
-    uint8_t* p_ptr = reinterpret_cast<uint8_t*>(ptr);
+    uint8_t *p_ptr = reinterpret_cast<uint8_t *>(ptr);
 
     for (uint64_t i = start_block_idx; i <= end_block_idx; ++i, ++range_idx) {
         const uint64_t block_start = i * block_size;
@@ -469,7 +487,7 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             goto end;
         }
 
-        const auto& [key, val] = range[range_idx];
+        const auto &[key, val] = range[range_idx];
 
         std::shared_ptr<uint8_t[]> dec_buffer;
         if (archive->dec_cache.exists(val.addr)) {
@@ -480,16 +498,19 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             } else {
                 dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
             }
-            
+
             const auto block = archive->block_reader.read_block(val.addr);
 
             uint64_t dst_size = block->original_size;
             if (block->is_compressed) {
-                int ret = config->compressor.decompress(dec_buffer.get(), &dst_size, block->data.get(), block->size);
+                int ret = config->compressor.decompress(dec_buffer.get(), &dst_size,
+                                                        block->data.get(), block->size);
                 if (ret != 0) {
                     // invalid archive (compressed data is too big after decompression)
                     // TODO: set appropriate errno
-                    WARNING_PRINT("compressed data is too big after decompression (%d is not enough)\n", dst_size);
+                    WARNING_PRINT(
+                        "compressed data is too big after decompression (%d is not enough)\n",
+                        dst_size);
                     goto end;
                 }
                 archive->dec_cache.put(val.addr, {dec_buffer, block->size});
@@ -498,7 +519,8 @@ uint64_t compio_read(void* ptr, uint64_t size, compio_file* file) {
             }
         }
 
-        int64_t copy_size = std::min<int64_t>(read_end, block_end) - std::max<int64_t>(read_start, block_start);
+        int64_t copy_size =
+            std::min<int64_t>(read_end, block_end) - std::max<int64_t>(read_start, block_start);
         if (copy_size > 0) {
             uint64_t dec_offset = std::max<int64_t>(0, static_cast<int64_t>(cursor) - block_start);
             uint64_t ptr_offset = std::max<int64_t>(0, static_cast<int64_t>(block_start) - cursor);
@@ -512,9 +534,8 @@ end:
     return read_bytes;
 }
 
-void compio_flush(compio_archive* archive) {
+void compio_flush(compio_archive *archive) {
     archive->block_reader.clear_cache();
     archive->index->reader.clear_cache();
 }
-
 }

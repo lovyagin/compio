@@ -1,32 +1,28 @@
 #include "compio/infile_object.hpp"
 
-#include "compio/debug_print.hpp"
-
 #include <stdexcept>
+
+#include "compio/debug_print.hpp"
 
 #ifdef BM_FILE_OPERATIONS_COUNTER
 int n_read_bytes = 0;
 int n_written_bytes = 0;
 
-int get_n_read_bytes() {
-    return n_read_bytes;
-}
+int get_n_read_bytes() { return n_read_bytes; }
 
-int get_n_written_bytes() {
-    return n_written_bytes;
-}
+int get_n_written_bytes() { return n_written_bytes; }
 #endif
 
 static inline bool is_big_endian() {
     uint32_t num = 1;
-    return *(reinterpret_cast<unsigned char*>(&num)) == 0;
+    return *(reinterpret_cast<unsigned char *>(&num)) == 0;
 }
 
-uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* stream) {
+uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
     uint64_t ret;
     if (is_big_endian() && size != sizeof(uint8_t)) {
-        unsigned char* buffer = new unsigned char[size * nmemb];
-        const unsigned char* input = static_cast<const unsigned char*>(ptr);
+        unsigned char *buffer = new unsigned char[size * nmemb];
+        const unsigned char *input = static_cast<const unsigned char *>(ptr);
         if (size == sizeof(uint16_t)) {
             for (uint32_t i = 0; i < nmemb; i++) {
                 buffer[2 * i] = input[2 * i + 1];
@@ -53,7 +49,7 @@ uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* st
         } else {
             throw std::invalid_argument("lendian_fwrite possible size values are 1, 2, 4, 8");
         }
-        ret = fwrite((void*)buffer, size, nmemb, stream);
+        ret = fwrite((void *)buffer, size, nmemb, stream);
         delete buffer;
     } else {
         ret = fwrite(ptr, size, nmemb, stream);
@@ -70,11 +66,11 @@ uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* st
     return ret;
 }
 
-uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream) {
+uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
     uint64_t ret;
     if (is_big_endian() && size != sizeof(uint8_t)) {
         ret = fread(ptr, size, nmemb, stream);
-        unsigned char* output = static_cast<unsigned char*>(ptr);
+        unsigned char *output = static_cast<unsigned char *>(ptr);
         if (size == sizeof(uint16_t)) {
             for (uint32_t i = 0; i < nmemb; i++) {
                 std::swap(output[2 * i], output[2 * i + 1]);

@@ -2,14 +2,14 @@
 #define COMPIO_SUCCESS 0
 #endif
 
-#include "compio.h"
 #include <benchmark/benchmark.h>
-
 #include <chrono>
 #include <random>
 
+#include "compio.h"
+
 // Simple benchmark to test allocation strategy performance
-static void BM_AllocationSpeed(benchmark::State& state) {
+static void BM_AllocationSpeed(benchmark::State &state) {
     const int strategy = state.range(0);
     const size_t block_count = state.range(1);
     const size_t block_size = state.range(2);
@@ -23,17 +23,17 @@ static void BM_AllocationSpeed(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to create archive");
             continue;
         }
 
         // Allocate blocks of specified size
-        std::vector<compio_file*> files;
+        std::vector<compio_file *> files;
         for (size_t i = 0; i < block_count; i++) {
             std::string name = "file_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 std::vector<uint8_t> data(block_size, 'A');
                 compio_write(data.data(), data.size(), file);
@@ -53,7 +53,7 @@ static void BM_AllocationSpeed(benchmark::State& state) {
 }
 
 // Simple benchmark for fragmented allocation performance
-static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
+static void BM_FragmentedAllocationSpeed(benchmark::State &state) {
     const int strategy = state.range(0);
     const size_t operation_count = state.range(1);
 
@@ -66,17 +66,17 @@ static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to create archive");
             continue;
         }
 
         // Create files
-        std::vector<compio_file*> files;
+        std::vector<compio_file *> files;
         for (size_t i = 0; i < operation_count; i++) {
             std::string name = "file_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 std::vector<uint8_t> data(1024, 'A');
                 compio_write(data.data(), data.size(), file);
@@ -95,9 +95,9 @@ static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
         }
 
         // Create new files that should fit into gaps
-        for (size_t i = 0; i < operation_count/2; i++) {
+        for (size_t i = 0; i < operation_count / 2; i++) {
             std::string name = "new_file_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 std::vector<uint8_t> data(512, 'B');
                 compio_write(data.data(), data.size(), file);
@@ -107,7 +107,8 @@ static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
 
         // Cleanup
         for (auto file : files) {
-            if (file) compio_close_file(file);
+            if (file)
+                compio_close_file(file);
         }
         compio_close_archive(archive);
         remove(filename.c_str());
@@ -117,7 +118,7 @@ static void BM_FragmentedAllocationSpeed(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * total_bytes);
 }
 
-static void BM_AllocationStrategyCompression(benchmark::State& state) {
+static void BM_AllocationStrategyCompression(benchmark::State &state) {
     const int strategy = state.range(0);
     const size_t compressible_blocks = state.range(1);
     const size_t random_blocks = state.range(2);
@@ -126,14 +127,15 @@ static void BM_AllocationStrategyCompression(benchmark::State& state) {
     std::string filename = "benchmark_mixed_" + std::to_string(strategy) + ".tmp";
 
     // Generate test data
-    std::vector<uint8_t> compressible_data(block_size, 'A');  // Highly compressible (same byte repeated)
-    std::vector<uint8_t> random_data(block_size);             // Random data (poorly compressible)
+    std::vector<uint8_t> compressible_data(block_size,
+                                           'A');  // Highly compressible (same byte repeated)
+    std::vector<uint8_t> random_data(block_size); // Random data (poorly compressible)
 
     // Fill random data
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> distrib(0, 255);
-    for (auto& byte : random_data) {
+    for (auto &byte : random_data) {
         byte = distrib(gen);
     }
 
@@ -146,7 +148,7 @@ static void BM_AllocationStrategyCompression(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to create archive");
             continue;
@@ -155,7 +157,7 @@ static void BM_AllocationStrategyCompression(benchmark::State& state) {
         // Phase 1: Write compressible data
         for (size_t i = 0; i < compressible_blocks; i++) {
             std::string name = "comp_file_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 compio_write(compressible_data.data(), compressible_data.size(), file);
                 compio_close_file(file);
@@ -165,7 +167,7 @@ static void BM_AllocationStrategyCompression(benchmark::State& state) {
         // Phase 2: Write random data
         for (size_t i = 0; i < random_blocks; i++) {
             std::string name = "rand_file_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 compio_write(random_data.data(), random_data.size(), file);
                 compio_close_file(file);
@@ -175,7 +177,7 @@ static void BM_AllocationStrategyCompression(benchmark::State& state) {
         compio_close_archive(archive);
 
         // Get final file size
-        FILE* f = fopen(filename.c_str(), "rb");
+        FILE *f = fopen(filename.c_str(), "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             final_file_size = ftell(f);
@@ -193,7 +195,7 @@ static void BM_AllocationStrategyCompression(benchmark::State& state) {
     state.SetBytesProcessed(state.iterations() * total_bytes);
 }
 
-static void BM_AllocationFragmentationResistance(benchmark::State& state) {
+static void BM_AllocationFragmentationResistance(benchmark::State &state) {
     const int strategy = state.range(0);
     const size_t cycle_count = state.range(1);
 
@@ -209,7 +211,7 @@ static void BM_AllocationFragmentationResistance(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
 
         // Create a pattern of mixed allocations and deallocations
         for (size_t cycle = 0; cycle < cycle_count; cycle++) {
@@ -217,7 +219,7 @@ static void BM_AllocationFragmentationResistance(benchmark::State& state) {
             for (size_t i = 0; i < 10; i++) {
                 size_t size = 128 * (i + 1); // 128, 256, 384, ...
                 std::string name = "file_" + std::to_string(cycle) + "_" + std::to_string(i);
-                compio_file* file = compio_open_file(name.c_str(), archive);
+                compio_file *file = compio_open_file(name.c_str(), archive);
                 if (file) {
                     std::vector<uint8_t> data(size, 'A');
                     compio_write(data.data(), data.size(), file);
@@ -234,7 +236,7 @@ static void BM_AllocationFragmentationResistance(benchmark::State& state) {
 
         // Get file size
         compio_close_archive(archive);
-        FILE* f = fopen(filename.c_str(), "rb");
+        FILE *f = fopen(filename.c_str(), "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             file_size = ftell(f);
@@ -246,10 +248,11 @@ static void BM_AllocationFragmentationResistance(benchmark::State& state) {
 
     // Report metrics
     state.counters["FileSize"] = file_size;
-    state.counters["FileSizePerOp"] = file_size / (double)(cycle_count * 10 / 2); // Size per remaining file
+    state.counters["FileSizePerOp"] =
+        file_size / (double)(cycle_count * 10 / 2); // Size per remaining file
 }
 
-static void BM_ExtremeFragmentation(benchmark::State& state) {
+static void BM_ExtremeFragmentation(benchmark::State &state) {
     const int strategy = state.range(0);
     // Reduced number of files to avoid potential resource issues
     const size_t initial_files = 50;
@@ -264,7 +267,7 @@ static void BM_ExtremeFragmentation(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to open archive");
             continue;
@@ -273,7 +276,7 @@ static void BM_ExtremeFragmentation(benchmark::State& state) {
         // Phase 1: Create initial files
         for (size_t i = 0; i < initial_files; i++) {
             std::string name = "initial_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (!file) {
                 state.SkipWithError("Failed to create file");
                 compio_close_archive(archive);
@@ -304,7 +307,7 @@ static void BM_ExtremeFragmentation(benchmark::State& state) {
         for (size_t size = 512; size <= 1536; size += 512) {
             for (size_t i = 0; i < 5; i++) {
                 std::string name = "new_" + std::to_string(size) + "_" + std::to_string(i);
-                compio_file* file = compio_open_file(name.c_str(), archive);
+                compio_file *file = compio_open_file(name.c_str(), archive);
                 if (file) {
                     std::vector<uint8_t> data(size, 'B');
                     compio_write(data.data(), data.size(), file);
@@ -320,7 +323,7 @@ static void BM_ExtremeFragmentation(benchmark::State& state) {
         size_t file_size = 0;
         compio_close_archive(archive);
 
-        FILE* f = fopen(filename.c_str(), "rb");
+        FILE *f = fopen(filename.c_str(), "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             file_size = ftell(f);
@@ -339,7 +342,7 @@ static void BM_ExtremeFragmentation(benchmark::State& state) {
     }
 }
 
-static void BM_TargetedFragmentation(benchmark::State& state) {
+static void BM_TargetedFragmentation(benchmark::State &state) {
     const int strategy = state.range(0);
     std::string filename = "benchmark_targeted_" + std::to_string(strategy) + ".tmp";
 
@@ -355,7 +358,7 @@ static void BM_TargetedFragmentation(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to open archive");
             continue;
@@ -368,7 +371,7 @@ static void BM_TargetedFragmentation(benchmark::State& state) {
             std::string name = "file_" + std::to_string(i);
             filenames.push_back(name);
 
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 std::vector<uint8_t> data(size, 'A');
                 if (compio_write(data.data(), data.size(), file) == data.size()) {
@@ -395,7 +398,7 @@ static void BM_TargetedFragmentation(benchmark::State& state) {
                 std::string name = "new_" + std::to_string(size) + "_" + std::to_string(i);
                 allocation_attempts++;
 
-                compio_file* file = compio_open_file(name.c_str(), archive);
+                compio_file *file = compio_open_file(name.c_str(), archive);
                 if (file) {
                     std::vector<uint8_t> data(size, 'B');
                     if (compio_write(data.data(), data.size(), file) == data.size()) {
@@ -410,7 +413,7 @@ static void BM_TargetedFragmentation(benchmark::State& state) {
         compio_close_archive(archive);
 
         // Get final size
-        FILE* f = fopen(filename.c_str(), "rb");
+        FILE *f = fopen(filename.c_str(), "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             final_size = ftell(f);
@@ -426,7 +429,7 @@ static void BM_TargetedFragmentation(benchmark::State& state) {
     state.counters["AvgAllocationSize"] = total_allocated / (double)success_count;
 }
 
-static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
+static void BM_LargeAllocationAfterFragmentation(benchmark::State &state) {
     const int strategy = state.range(0);
     std::string filename = "benchmark_large_alloc_" + std::to_string(strategy) + ".tmp";
 
@@ -441,7 +444,7 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to open archive");
             continue;
@@ -450,7 +453,7 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
         // PHASE 1: Create 100 small files (512 bytes each)
         for (size_t i = 0; i < 100; i++) {
             std::string name = "small_" + std::to_string(i);
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             if (file) {
                 std::vector<uint8_t> data(512, 'A');
                 compio_write(data.data(), data.size(), file);
@@ -471,7 +474,7 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
         for (size_t size = 512; size <= 4096; size += 512) {
             for (size_t i = 0; i < 3; i++) {
                 std::string name = "large_" + std::to_string(size) + "_" + std::to_string(i);
-                compio_file* file = compio_open_file(name.c_str(), archive);
+                compio_file *file = compio_open_file(name.c_str(), archive);
                 if (file) {
                     std::vector<uint8_t> data(size, 'B');
                     if (compio_write(data.data(), data.size(), file) == size) {
@@ -485,7 +488,7 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
 
         // Get final size
         compio_close_archive(archive);
-        FILE* f = fopen(filename.c_str(), "rb");
+        FILE *f = fopen(filename.c_str(), "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             final_file_size = ftell(f);
@@ -498,10 +501,11 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State& state) {
     state.counters["LargeAllocSuccess"] = successful_large_allocations;
     state.counters["SpaceEfficiency"] = 100.0 * total_allocated / (double)final_file_size;
     state.counters["FileSize"] = final_file_size;
-    state.counters["FragmentationRatio"] = (final_file_size - total_allocated) / (double)final_file_size * 100.0;
+    state.counters["FragmentationRatio"] =
+        (final_file_size - total_allocated) / (double)final_file_size * 100.0;
 }
 
-static void BM_AlternatingSmallLargeAllocations(benchmark::State& state) {
+static void BM_AlternatingSmallLargeAllocations(benchmark::State &state) {
     const int strategy = state.range(0);
     std::string filename = "benchmark_alternating_" + std::to_string(strategy) + ".tmp";
 
@@ -517,7 +521,7 @@ static void BM_AlternatingSmallLargeAllocations(benchmark::State& state) {
         compio_build_default_config(&config);
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
-        compio_archive* archive = compio_open_archive(filename.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("Failed to open archive");
             continue;
@@ -532,7 +536,7 @@ static void BM_AlternatingSmallLargeAllocations(benchmark::State& state) {
 
             allocation_attempts++;
             auto start = std::chrono::high_resolution_clock::now();
-            compio_file* file = compio_open_file(name.c_str(), archive);
+            compio_file *file = compio_open_file(name.c_str(), archive);
             auto end = std::chrono::high_resolution_clock::now();
 
             if (file) {
@@ -559,7 +563,7 @@ static void BM_AlternatingSmallLargeAllocations(benchmark::State& state) {
 
                 allocation_attempts++;
                 auto start = std::chrono::high_resolution_clock::now();
-                compio_file* file = compio_open_file(name.c_str(), archive);
+                compio_file *file = compio_open_file(name.c_str(), archive);
                 auto end = std::chrono::high_resolution_clock::now();
 
                 if (file) {
@@ -591,17 +595,15 @@ BENCHMARK(BM_AlternatingSmallLargeAllocations)
     ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_LargeAllocationAfterFragmentation)
-    ->ArgsProduct({
-        {COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT, COMPIO_ALLOC_NEXT_FIT},
-        {50, 100, 200}
-    })
+    ->ArgsProduct({{COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT,
+                    COMPIO_ALLOC_NEXT_FIT},
+                   {50, 100, 200}})
     ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_TargetedFragmentation)
-    ->ArgsProduct({
-        {COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT, COMPIO_ALLOC_NEXT_FIT},
-        {2, 3, 4}
-    })
+    ->ArgsProduct({{COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT,
+                    COMPIO_ALLOC_NEXT_FIT},
+                   {2, 3, 4}})
     ->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_ExtremeFragmentation)

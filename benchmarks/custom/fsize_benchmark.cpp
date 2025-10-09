@@ -1,14 +1,14 @@
-#include "compio.h"
-#include "compio/compio_file.hpp"
-
-#include "sample_data.hpp"
-
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <random>
 #include <string>
 
-std::size_t get_fsize(FILE* file) {
+#include "compio/compio_file.hpp"
+#include "compio.h"
+
+#include "sample_data.hpp"
+
+std::size_t get_fsize(FILE *file) {
     auto cursor = ftell(file);
     auto ret = fseek(file, 0, SEEK_END);
     if (ret != 0) {
@@ -22,7 +22,8 @@ std::size_t get_fsize(FILE* file) {
     return fsize;
 }
 
-void save_csv(const std::vector<std::vector<std::size_t>>& columns, const std::vector<std::string>& column_names, const char* fn) {
+void save_csv(const std::vector<std::vector<std::size_t>> &columns,
+              const std::vector<std::string> &column_names, const char *fn) {
     std::ofstream ofs(fn);
 
     if (!ofs.is_open()) {
@@ -51,9 +52,10 @@ void save_csv(const std::vector<std::vector<std::size_t>>& columns, const std::v
     ofs.close();
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     if (argc < 5) {
-        std::cerr << "usage: ./fsize_benchmark <type> <n_blocks> <block_size> <filesize> <out_file>\n";
+        std::cerr
+            << "usage: ./fsize_benchmark <type> <n_blocks> <block_size> <filesize> <out_file>\n";
         return -1;
     }
 
@@ -61,7 +63,7 @@ int main(int argc, char** argv) {
     const std::size_t n_blocks = std::atoi(argv[2]);
     const std::size_t block_size = std::atoi(argv[3]);
     std::size_t filesize = std::atoi(argv[4]);
-    const char* out_file = argv[5];
+    const char *out_file = argv[5];
 
     // argument filesize is not used in consecutive write
     if (type == 0) {
@@ -76,7 +78,7 @@ int main(int argc, char** argv) {
     tmpnam(fn);
 
     std::vector<std::vector<std::size_t>> columns(2, std::vector<std::size_t>());
-    for (auto& column : columns) {
+    for (auto &column : columns) {
         column.reserve(n_blocks);
     }
 
@@ -86,8 +88,8 @@ int main(int argc, char** argv) {
         config.cache_size__nodes = 0;
         config.cache_size__blocks = 0;
 
-        compio_archive* archive = compio_open_archive(fn, "w+", &config);
-        compio_file* file = compio_open_file("A", archive);
+        compio_archive *archive = compio_open_archive(fn, "w+", &config);
+        compio_file *file = compio_open_file("A", archive);
 
         for (std::size_t i = 0; i < n_blocks; ++i) {
             if (type == 1) {
@@ -96,12 +98,13 @@ int main(int argc, char** argv) {
 
             auto bytes_written = compio_write(html_data + d1(rng), block_size, file);
             if (bytes_written != block_size) {
-                throw std::runtime_error("compio_write returned " + std::to_string(bytes_written) + " != " + std::to_string(block_size));
+                throw std::runtime_error("compio_write returned " + std::to_string(bytes_written) +
+                                         " != " + std::to_string(block_size));
             }
-            
+
             columns[0].push_back(get_fsize(archive->file));
         }
-        
+
         compio_close_file(file);
         compio_close_archive(archive);
     }
@@ -109,7 +112,7 @@ int main(int argc, char** argv) {
     rng.seed(0);
 
     {
-        FILE* file = fopen(fn, "w+");
+        FILE *file = fopen(fn, "w+");
 
         for (std::size_t i = 0; i < n_blocks; ++i) {
             if (type == 1) {
@@ -118,9 +121,10 @@ int main(int argc, char** argv) {
 
             auto bytes_written = fwrite(html_data + d1(rng), 1, block_size, file);
             if (bytes_written != block_size) {
-                throw std::runtime_error("fwrite returned " + std::to_string(bytes_written) + " != " + std::to_string(block_size));
+                throw std::runtime_error("fwrite returned " + std::to_string(bytes_written) +
+                                         " != " + std::to_string(block_size));
             }
-                
+
             columns[1].push_back(get_fsize(file));
         }
 
@@ -130,6 +134,6 @@ int main(int argc, char** argv) {
     remove(fn);
 
     save_csv(columns, {"compio", "stdio"}, out_file);
-    
+
     return 0;
 }

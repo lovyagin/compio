@@ -9,11 +9,11 @@
 
 #include <cstdint>
 #include <cstdio>
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "compio.h"
 #include "compio/infile_object.hpp"
+#include "compio.h"
 
 namespace compio {
 
@@ -49,10 +49,10 @@ struct files_table {
 
     files_table();
 
-    const file* find(const char* name) const;
-    file* find(const char* name);
-    file* add(const char* name);
-    int remove(const char* name);
+    const file *find(const char *name) const;
+    file *find(const char *name);
+    file *add(const char *name);
+    int remove(const char *name);
 };
 
 /**
@@ -74,8 +74,8 @@ struct header : public infile_object {
      */
     header();
 
-    void read_from(FILE* file, uint64_t addr) override;
-    void write_to(FILE* file, uint64_t addr) const override;
+    void read_from(FILE *file, uint64_t addr) override;
+    void write_to(FILE *file, uint64_t addr) const override;
 };
 
 /**
@@ -84,19 +84,19 @@ struct header : public infile_object {
  * Uniquely identifies a data block by combining filename hash
  * and position in the uncompressed file.
  */
-//struct tree_key {
-//    uint64_t hash; /**< 64-bit hash of the internal filename */
-//    uint64_t pos;  /**< Starting byte offset in uncompressed file */
-//};
+// struct tree_key {
+//     uint64_t hash; /**< 64-bit hash of the internal filename */
+//     uint64_t pos;  /**< Starting byte offset in uncompressed file */
+// };
 
 /**
  * @brief Type for value in btree
  *
  */
-//typedef struct {
-//    uint64_t addr; /**< Address of storage_block in archive file */
-//    uint64_t size; /**< Original size of uncompressed block */
-//} tree_val;
+// typedef struct {
+//     uint64_t addr; /**< Address of storage_block in archive file */
+//     uint64_t size; /**< Original size of uncompressed block */
+// } tree_val;
 
 /**
  * @brief B-Tree (index) node
@@ -118,8 +118,8 @@ struct index_node : public infile_object {
      */
     index_node(int tree_degree);
 
-    void read_from(FILE* file, uint64_t addr) override;
-    void write_to(FILE* file, uint64_t addr) const override;
+    void read_from(FILE *file, uint64_t addr) override;
+    void write_to(FILE *file, uint64_t addr) const override;
 };
 
 /**
@@ -138,15 +138,15 @@ struct index_node : public infile_object {
  *
  */
 struct storage_block : public infile_object {
-    uint8_t is_compressed;     /**< Is this block compressed */
-    uint64_t size;             /**< Size of data array */
-    uint64_t original_size;    /**< Original size (size of uncompressed data) */
-    tree_key index_key;        /**< Index key of this block */
+    uint8_t is_compressed;           /**< Is this block compressed */
+    uint64_t size;                   /**< Size of data array */
+    uint64_t original_size;          /**< Original size (size of uncompressed data) */
+    tree_key index_key;              /**< Index key of this block */
     std::unique_ptr<uint8_t[]> data; /**< Data block */
 
     storage_block();
 
-    storage_block(std::unique_ptr<uint8_t[]>&& data, uint64_t size);
+    storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size);
 
     /**
      * @brief Construct storage block with data of size
@@ -155,8 +155,8 @@ struct storage_block : public infile_object {
      */
     storage_block(uint64_t size);
 
-    void read_from(FILE* file, uint64_t addr) override;
-    void write_to(FILE* file, uint64_t addr) const override;
+    void read_from(FILE *file, uint64_t addr) override;
+    void write_to(FILE *file, uint64_t addr) const override;
 };
 
 /**

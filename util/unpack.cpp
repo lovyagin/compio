@@ -1,10 +1,9 @@
-#include "compio.h"
-
-#include "compio/compio_file.hpp"
-
 #include <stdexcept>
 
-int main(int argc, char** argv) {
+#include "compio/compio_file.hpp"
+#include "compio.h"
+
+int main(int argc, char **argv) {
     if (argc != 3) {
         throw std::runtime_error("usage: ./unpack <file> <output_prefix>");
     }
@@ -14,7 +13,7 @@ int main(int argc, char** argv) {
     compio_config config;
     compio_build_default_config(&config);
 
-    compio_archive* archive = compio_open_archive(argv[1], "r", &config);
+    compio_archive *archive = compio_open_archive(argv[1], "r", &config);
     if (!archive) {
         throw std::runtime_error("failed to open archive");
     }
@@ -25,10 +24,10 @@ int main(int argc, char** argv) {
     }
 
     for (std::size_t i = 0; i < ftable->n_files; ++i) {
-        const auto& f = ftable->files[i];
+        const auto &f = ftable->files[i];
         printf("reading file %s\n", f.name);
 
-        compio_file* file = compio_open_file(f.name, archive);
+        compio_file *file = compio_open_file(f.name, archive);
         if (!file) {
             throw std::runtime_error("failed to open file " + std::string(f.name));
         }
@@ -42,7 +41,7 @@ int main(int argc, char** argv) {
         }
 
         std::string out_fp = out_prefix + f.name;
-        FILE* out_file = fopen(out_fp.c_str(), "w+");
+        FILE *out_file = fopen(out_fp.c_str(), "w+");
 
         std::size_t written_bytes = fwrite(buffer.get(), 1, f.size, out_file);
         if (written_bytes != f.size) {
