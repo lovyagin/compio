@@ -1,6 +1,6 @@
 #include "compio.h"
-#include "compio_file.hpp"
-#include "allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/allocator.hpp"
 
 #include "sample_data.hpp"
 

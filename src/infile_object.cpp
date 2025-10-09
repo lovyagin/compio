@@ -1,6 +1,6 @@
-#include "infile_object.hpp"
+#include "compio/infile_object.hpp"
 
-#include "debug_print.hpp"
+#include "compio/debug_print.hpp"
 
 #include <stdexcept>
 

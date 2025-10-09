@@ -1,11 +1,11 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #include "compio.h"
-#include "compio_file.hpp"
-#include "file.hpp"
-#include "utils.hpp"
-#include "allocator.hpp"
-#include "debug_print.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/file.hpp"
+#include "compio/utils.hpp"
+#include "compio/allocator.hpp"
+#include "compio/debug_print.hpp"
 
 #include <algorithm>
 #include <cstdlib>

@@ -3,7 +3,7 @@
 #include "benchmark_util.hpp"
 
 #ifdef BM_FILE_OPERATIONS_COUNTER
-#include "infile_object.hpp"
+#include "compio/infile_object.hpp"
 #endif
 
 #include <random>

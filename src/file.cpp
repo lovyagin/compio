@@ -3,9 +3,9 @@
 #include <cinttypes>
 #include <stdexcept>
 
-#include "debug_print.hpp"
+#include "compio/debug_print.hpp"
 
-#include "file.hpp"
+#include "compio/file.hpp"
 
 using namespace compio;
 

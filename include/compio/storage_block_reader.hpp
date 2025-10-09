@@ -6,8 +6,8 @@
 #ifndef STORAGE_BLOCK_READER_HPP_
 #define STORAGE_BLOCK_READER_HPP_
 
-#include "file.hpp"
-#include "infile_object.hpp"
+#include "compio/file.hpp"
+#include "compio/infile_object.hpp"
 #include "third_party/lrucache.hpp"
 
 namespace compio {

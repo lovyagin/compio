@@ -13,7 +13,7 @@
 #include <memory>
 
 #include "compio.h"
-#include "infile_object.hpp"
+#include "compio/infile_object.hpp"
 
 namespace compio {
 

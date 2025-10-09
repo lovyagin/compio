@@ -1,6 +1,6 @@
-#include "allocator.hpp"
-#include "compio_file.hpp"
-#include "utils.hpp"
+#include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <numeric>

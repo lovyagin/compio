@@ -1,11 +1,11 @@
 #ifndef COMPIO_FILE_HEADER_
 #define COMPIO_FILE_HEADER_
 
-#include "btree.hpp"
+#include "compio/btree.hpp"
 #include "compio.h"
-#include "file.hpp"
-#include "infile_object.hpp"
-#include "storage_block_reader.hpp"
+#include "compio/file.hpp"
+#include "compio/infile_object.hpp"
+#include "compio/storage_block_reader.hpp"
 
 #include <memory>
 

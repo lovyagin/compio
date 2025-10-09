@@ -14,8 +14,8 @@
 #include <map>
 #include <memory>
 
-#include "allocator.hpp"
-#include "file.hpp"
+#include "compio/allocator.hpp"
+#include "compio/file.hpp"
 #include "third_party/lrucache.hpp"
 
 namespace compio {
