@@ -90,7 +90,9 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto end1;
     }
 
-    if (is_file_empty(file)) {
+    bool is_new_file;
+    is_new_file = is_file_empty(file);
+    if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
     } else if (archive->header->compression_type != c->compressor.compression_type) {
         // compression type mismatch
@@ -109,7 +111,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto end3;
     }
 
-    if (!archive->allocator->load_state(archive)) {
+    if (!is_new_file && !archive->allocator->load_state(archive)) {
         goto end4;
     }
 
