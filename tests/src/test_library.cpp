@@ -34,8 +34,10 @@ protected:
     }
 
     void TearDown() override {
-        ASSERT_EQ(compio_close_file(file), 0);
-        ASSERT_EQ(compio_close_archive(archive), 0);
+        if (file)
+            ASSERT_EQ(compio_close_file(file), 0);
+        if (archive)
+            ASSERT_EQ(compio_close_archive(archive), 0);
 
         remove(fn);
     }
@@ -43,8 +45,10 @@ protected:
     void Reset() {
         // close and open file (cursor in the beginning after opening)
 
-        ASSERT_EQ(compio_close_file(file), 0);
-        ASSERT_EQ(compio_close_archive(archive), 0);
+        if (file)
+            ASSERT_EQ(compio_close_file(file), 0);
+        if (archive)
+            ASSERT_EQ(compio_close_archive(archive), 0);
         archive = compio_open_archive(fn, "r+", &config);
         if (!archive) {
             failed = true;
@@ -84,16 +88,16 @@ protected:
     }
 
     void TearDown() override {
+        if (file)
         ASSERT_EQ(compio_close_file(file), 0);
+        if (archive)
         ASSERT_EQ(compio_close_archive(archive), 0);
 
         remove(fn);
     }
 };
 
-TEST_F(OpenedFileTest, OpenClose) {
-    ASSERT_FALSE(failed);
-}
+TEST_F(OpenedFileTest, OpenClose) { ASSERT_FALSE(failed); }
 
 TEST_F(OpenedFileTest, BasicWriteRead) {
     ASSERT_FALSE(failed);
