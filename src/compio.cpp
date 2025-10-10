@@ -78,12 +78,14 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     else
         archive_open_mode = "a+";
 
-    auto file = fopen(fp, archive_open_mode);
+    FILE *file;
+    file = fopen(fp, archive_open_mode);
     if (file == nullptr) {
         goto end;
     }
 
-    auto archive = new compio_archive(file, mode_b, c);
+    compio_archive* archive;
+    archive = new compio_archive(file, mode_b, c);
     if (!archive) {
         goto end1;
     }
