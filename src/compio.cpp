@@ -28,10 +28,15 @@ void compio_build_default_config(compio_config *result) {
     result->fragmentation_threshold = 30;
 }
 
-int get_compression_type(const char *fp, compio_compression_type* t) {
+int compio_get_compression_type(const char *fp, compio_compression_type* t) {
     FILE *file = fopen(fp, "r");
     if (file == nullptr) {
         return -1; 
+    }
+
+    if (is_file_empty(file)) {
+        fclose(file);
+        return -2;
     }
 
     header h;
