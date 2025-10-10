@@ -79,6 +79,20 @@ void compio_build_default_config(compio_config *result) {
     result->fragmentation_threshold = 30;
 }
 
+int get_compression_type(const char *fp, enum compression_type* t) {
+    FILE *file = fopen(fp, "r");
+    if (file == nullptr) {
+        return -1; 
+    }
+
+    header h;
+    h.read_from(file, 0);
+    *t = (enum compression_type)h.compression_type;
+
+    fclose(file);
+    return 0;
+}
+
 compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
     : file(file),
       config(config),

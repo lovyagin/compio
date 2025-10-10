@@ -152,6 +152,15 @@ typedef struct {
 void compio_build_default_config(compio_config *result);
 
 /**
+ * @brief Get compression type from header of existing archive
+ * 
+ * @param fp path to archive file
+ * @param t pointer t compression_type object
+ * @return int
+ */
+int get_compression_type(const char *fp, compression_type* t);
+
+/**
  * @brief Opened archive
  */
 typedef struct compio_archive compio_archive;
