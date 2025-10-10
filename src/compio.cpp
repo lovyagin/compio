@@ -189,14 +189,21 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 }
 
 int compio_close_file(compio_file *file) {
+    if (!file) {
+        WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
+        return -1;
+    }
+
     delete file;
     return 0;
 }
 
 int compio_close_archive(compio_archive *archive) {
-    if (!archive)
-        return COMPIO_ERROR;
-
+    if (!archive) {
+        WARNING_PRINT("warning: passed nullptr into compio_close_archive\n");
+        return -1;
+    }
+    
     // Save allocator state before closing
     if (archive->allocator) {
         archive->allocator->save_state(archive);
@@ -212,10 +219,12 @@ int compio_close_archive(compio_archive *archive) {
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
-
+    
     // 4) and finally we close the file
-    if (fclose(archive->file))
-        return COMPIO_ERROR;
+    if (fclose(archive->file)) {
+        WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
+        return -2;
+    }
 
     delete archive->index;
     delete archive;
