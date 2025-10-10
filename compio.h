@@ -158,7 +158,7 @@ void compio_build_default_config(compio_config *result);
  * @param t pointer t compression_type object
  * @return int
  */
-int get_compression_type(const char *fp, compression_type* t);
+int get_compression_type(const char *fp, compio_compression_type* t);
 
 /**
  * @brief Opened archive
