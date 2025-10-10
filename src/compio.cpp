@@ -16,57 +16,6 @@ using namespace compio;
 
 extern "C" {
 
-// Helper function to build compressor from type
-static void build_compressor_from_type(compio_compression_type type, compio_compressor *result) {
-    switch (type) {
-    case COMPIO_COMPRESS_NONE:
-        compio_build_dummy_compressor(result);
-        break;
-    case COMPIO_COMPRESS_ZLIB:
-        compio_build_zlib_compressor(result);
-        break;
-    case COMPIO_COMPRESS_LZ4:
-        compio_build_lz4_compressor(result);
-        break;
-    case COMPIO_COMPRESS_ZSTD:
-        compio_build_zstd_compressor(result);
-        break;
-    case COMPIO_COMPRESS_BROTLI:
-        compio_build_brotli_compressor(result);
-        break;
-    default:
-        compio_build_zlib_compressor(result);
-        break;
-    }
-}
-
-// Helper function to get compression type from compressor
-static compio_compression_type get_compression_type(const compio_compressor *comp) {
-    compio_compressor test;
-
-    compio_build_dummy_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_NONE;
-
-    compio_build_zlib_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_ZLIB;
-
-    compio_build_lz4_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_LZ4;
-
-    compio_build_zstd_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_ZSTD;
-
-    compio_build_brotli_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_BROTLI;
-
-    return COMPIO_COMPRESS_ZLIB;
-}
-
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
@@ -98,10 +47,9 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       config(config),
       mode_b(mode_b),
       dec_cache(config->cache_size__compression),
+      c_buffer(new uint8_t[config->compressor.get_bufsize(config->block_size)]),
       block_reader(file, config->cache_size__blocks) {
-    fseek(file, 0, SEEK_END);
-    long fsize = ftell(file);
-    if (fsize == 0)
+    if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
         header = smart_infile_object<compio::header>(file, 0);
@@ -119,7 +67,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     uint8_t mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
-        return NULL;
+        goto end;
     }
 
     // if w+ passed as mode, we have to clear file contents (using w+)
@@ -131,46 +79,50 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         archive_open_mode = "a+";
 
     auto file = fopen(fp, archive_open_mode);
-    if (file == nullptr)
-        return NULL;
-
-    // Check if archive is new or existing
-    fseek(file, 0, SEEK_END);
-    long fsize = ftell(file);
-    bool is_new_archive = (fsize == 0);
+    if (file == nullptr) {
+        goto end;
+    }
 
     auto archive = new compio_archive(file, mode_b, c);
+    if (!archive) {
+        goto end1;
+    }
 
-    // For existing archives, check if compression type matches
-    if (!is_new_archive) {
-        compio_compression_type saved_type =
-            (compio_compression_type)archive->header->compression_type;
-        compio_compression_type provided_type = get_compression_type(&c->compressor);
-
-        if (saved_type != provided_type) {
-            // Compression type mismatch
-            delete archive;
-            fclose(file);
-            errno = EINVAL;
-            return NULL;
-        }
-    } else {
-        // For new archives, save compression type to header
-        archive->header.ptr()->compression_type = get_compression_type(&c->compressor);
+    if (is_file_empty(file)) {
+        archive->header->compression_type = c->compressor.compression_type;
+    } else if (archive->header->compression_type != c->compressor.compression_type) {
+        // compression type mismatch
+        errno = EINVAL;
+        goto end2;
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
     archive->allocator = new compio::block_allocator(archive);
-    archive->index = new btree(archive);
-
-    if (archive->allocator) {
-        archive->allocator->load_state(archive);
+    if (!archive->allocator) {
+        goto end2;
     }
 
-    archive->c_buffer =
-        std::unique_ptr<uint8_t[]>(new uint8_t[c->compressor.get_bufsize(c->block_size)]);
+    archive->index = new btree(archive);
+    if (!archive->index) {
+        goto end3;
+    }
+
+    if (!archive->allocator->load_state(archive)) {
+        goto end4;
+    }
 
     return archive;
+
+end4:
+    delete archive->index;
+end3:
+    delete archive->allocator;
+end2:
+    delete archive;
+end1:
+    fclose(file);
+end:
+    return NULL;
 }
 
 compio_file *compio_open_file(const char *name, compio_archive *archive) {
