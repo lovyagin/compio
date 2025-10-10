@@ -51,4 +51,10 @@ uint64_t get_hash_tail(const char *fname) {
     return hash_tail;
 }
 
+bool is_file_empty(FILE *file) {
+    fseek(file, 0, SEEK_END);
+    long fsize = ftell(file);
+    return fsize == 0;
+}
+
 } // namespace compio

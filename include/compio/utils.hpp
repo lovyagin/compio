@@ -116,6 +116,8 @@ template <> constexpr tree_key _max<tree_key>() { return {(uint64_t)-1, (uint64_
 
 uint64_t get_hash_tail(const char *fname);
 
+bool is_file_empty(FILE *file);
+
 } // namespace compio
 
 #endif // UTILS_HEADER_
