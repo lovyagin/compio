@@ -1,13 +1,13 @@
 #include <benchmark/benchmark.h>
+#include <memory>
 
-#include "compio.h"
 #include "benchmark_util.hpp"
 
-#include <memory>
+#include "compio.h"
 
 compio_config config;
 
-std::string get_config_fn(int argc, char** argv) {
+std::string get_config_fn(int argc, char **argv) {
     const std::string prefix("--compio_config=");
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -18,18 +18,18 @@ std::string get_config_fn(int argc, char** argv) {
     return "";
 }
 
-void build_config(int argc, char** argv) {
+void build_config(int argc, char **argv) {
     compio_build_default_config(&config);
     std::string config_fn = get_config_fn(argc, argv);
     if (config_fn.size() > 0) {
         auto bc = build_config_from_file(config_fn, &config);
-        for (const auto& [key, val] : bc) {
+        for (const auto &[key, val] : bc) {
             benchmark::AddCustomContext(key, val);
         }
     }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     build_config(argc, argv);
     benchmark::Initialize(&argc, argv);
     benchmark::RunSpecifiedBenchmarks();

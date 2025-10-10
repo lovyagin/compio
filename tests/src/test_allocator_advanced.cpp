@@ -1,9 +1,11 @@
-#include "allocator.hpp"
-#include "compio_file.hpp"
-#include "utils.hpp"
+#include <atomic>
 #include <gtest/gtest.h>
 #include <thread>
-#include <atomic>
+
+#include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
+
 #include "test_util.hpp"
 
 using namespace compio;
@@ -12,12 +14,12 @@ using namespace compio;
 class SerializationTest : public ::testing::Test {
 protected:
     char fn1[256], fn2[256];
-    FILE* file1;
-    FILE* file2;
-    compio_archive* archive1;
-    compio_archive* archive2;
-    block_allocator* allocator1;
-    block_allocator* allocator2;
+    FILE *file1;
+    FILE *file2;
+    compio_archive *archive1;
+    compio_archive *archive2;
+    block_allocator *allocator1;
+    block_allocator *allocator2;
 
     void SetUp() override {
         // Setup first archive
@@ -25,7 +27,7 @@ protected:
         file1 = fopen(fn1, "w+");
         ASSERT_TRUE(file1 != nullptr);
 
-        auto* config1 = new compio_config();
+        auto *config1 = new compio_config();
         compio_build_default_config(config1);
         config1->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config1->fragmentation_threshold = 30;
@@ -39,7 +41,7 @@ protected:
         file2 = fopen(fn2, "w+");
         ASSERT_TRUE(file2 != nullptr);
 
-        auto* config2 = new compio_config();
+        auto *config2 = new compio_config();
         compio_build_default_config(config2);
         config2->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config2->fragmentation_threshold = 30;
@@ -50,12 +52,18 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator1) delete allocator1;
-        if (allocator2) delete allocator2;
-        if (archive1) delete archive1;
-        if (archive2) delete archive2;
-        if (file1) fclose(file1);
-        if (file2) fclose(file2);
+        if (allocator1)
+            delete allocator1;
+        if (allocator2)
+            delete allocator2;
+        if (archive1)
+            delete archive1;
+        if (archive2)
+            delete archive2;
+        if (file1)
+            fclose(file1);
+        if (file2)
+            fclose(file2);
         remove(fn1);
         remove(fn2);
     }
@@ -102,19 +110,19 @@ TEST_F(SerializationTest, SaveAndLoadState) {
 class ThreadSafetyTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
     std::atomic<int> successful_allocations{0};
     std::atomic<int> failed_allocations{0};
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
-        
+
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -124,9 +132,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -135,7 +146,7 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
     // Note: This test checks if allocator can handle concurrent access
     // Most allocators are not thread-safe by design for performance reasons
 
-    const int num_threads = 2; // Reduced to minimize race conditions
+    const int num_threads = 2;             // Reduced to minimize race conditions
     const int allocations_per_thread = 50; // Reduced load
     const size_t block_size = 64;
 
@@ -161,7 +172,7 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
     }
 
     // Wait for all threads
-    for (auto& thread : threads) {
+    for (auto &thread : threads) {
         thread.join();
     }
 
@@ -170,7 +181,7 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
 
     // Collect all unique allocations (removing duplicates that indicate race conditions)
     std::set<uint64_t> unique_offsets;
-    for (const auto& thread_blocks : thread_allocations) {
+    for (const auto &thread_blocks : thread_allocations) {
         for (uint64_t offset : thread_blocks) {
             unique_offsets.insert(offset);
         }
@@ -194,9 +205,9 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
 class MemoryLeakTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -204,7 +215,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
         config->fill_holes_with_zeros = false;
@@ -214,9 +225,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -259,9 +273,9 @@ TEST_F(MemoryLeakTest, MassiveAllocationDeallocationCycle) {
 class FragmentationThresholdTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file = nullptr;
-    compio_archive* archive = nullptr;
-    block_allocator* allocator = nullptr;
+    FILE *file = nullptr;
+    compio_archive *archive = nullptr;
+    block_allocator *allocator = nullptr;
 
     void create_allocator_with_threshold(uint8_t threshold) {
         // Clean up existing resources
@@ -283,7 +297,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = threshold;
         config->fill_holes_with_zeros = false;

@@ -91,7 +91,6 @@ tests/Makefile
 .gdb_history
 
 Makefile
-compio
 docs/html/**
 tests/compio_gtest
 

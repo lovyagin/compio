@@ -1,10 +1,12 @@
-#include "allocator.hpp"
-#include "compio_file.hpp"
-#include "utils.hpp"
+#include <chrono>
 #include <gtest/gtest.h>
 #include <random>
-#include <chrono>
 #include <set>
+
+#include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
+
 #include "test_util.hpp"
 
 using namespace compio;
@@ -12,9 +14,9 @@ using namespace compio;
 class ComprehensiveAllocatorTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -22,7 +24,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -34,19 +36,25 @@ protected:
     }
 
     void TearDown() override {
-        if (archive->index) delete archive->index;
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (archive->index)
+            delete archive->index;
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 
     // Helper to create allocator with specific strategy
     void recreate_allocator_with_strategy(compio_allocation_strategy strategy) {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = strategy;
         config->fragmentation_threshold = 30;
@@ -64,7 +72,7 @@ protected:
     }
 
     // Helper to verify blocks don't overlap
-    bool blocks_dont_overlap(const std::vector<std::pair<uint64_t, size_t>>& blocks) {
+    bool blocks_dont_overlap(const std::vector<std::pair<uint64_t, size_t>> &blocks) {
         for (size_t i = 0; i < blocks.size(); i++) {
             for (size_t j = i + 1; j < blocks.size(); j++) {
                 uint64_t start1 = blocks[i].first;
@@ -110,21 +118,13 @@ protected:
     }
 };
 
-TEST_F(AllocationStrategyTest, FirstFitStrategy) {
-    test_strategy_behavior(COMPIO_ALLOC_FIRST_FIT);
-}
+TEST_F(AllocationStrategyTest, FirstFitStrategy) { test_strategy_behavior(COMPIO_ALLOC_FIRST_FIT); }
 
-TEST_F(AllocationStrategyTest, BestFitStrategy) {
-    test_strategy_behavior(COMPIO_ALLOC_BEST_FIT);
-}
+TEST_F(AllocationStrategyTest, BestFitStrategy) { test_strategy_behavior(COMPIO_ALLOC_BEST_FIT); }
 
-TEST_F(AllocationStrategyTest, WorstFitStrategy) {
-    test_strategy_behavior(COMPIO_ALLOC_WORST_FIT);
-}
+TEST_F(AllocationStrategyTest, WorstFitStrategy) { test_strategy_behavior(COMPIO_ALLOC_WORST_FIT); }
 
-TEST_F(AllocationStrategyTest, NextFitStrategy) {
-    test_strategy_behavior(COMPIO_ALLOC_NEXT_FIT);
-}
+TEST_F(AllocationStrategyTest, NextFitStrategy) { test_strategy_behavior(COMPIO_ALLOC_NEXT_FIT); }
 
 // Test edge cases and boundary conditions
 class EdgeCaseTest : public ComprehensiveAllocatorTest {};
@@ -351,8 +351,7 @@ TEST_F(AllocationSizeTest, OddSizes) {
 
     for (size_t size : odd_sizes) {
         uint64_t offset = allocator->allocate(size);
-        EXPECT_TRUE(verify_allocation(offset, size))
-            << "Failed to allocate " << size << " bytes";
+        EXPECT_TRUE(verify_allocation(offset, size)) << "Failed to allocate " << size << " bytes";
         if (verify_allocation(offset, size)) {
             blocks.emplace_back(offset, size);
         }
@@ -434,8 +433,8 @@ TEST_F(PerformanceTest, AllocationSpeed) {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    std::cout << "Allocated " << offsets.size() << " blocks in "
-              << duration.count() << " microseconds" << std::endl;
+    std::cout << "Allocated " << offsets.size() << " blocks in " << duration.count()
+              << " microseconds" << std::endl;
     std::cout << "Average: " << (duration.count() / double(offsets.size()))
               << " microseconds per allocation" << std::endl;
 
@@ -466,8 +465,8 @@ TEST_F(PerformanceTest, DeallocationSpeed) {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    std::cout << "Deallocated " << blocks.size() << " blocks in "
-              << duration.count() << " microseconds" << std::endl;
+    std::cout << "Deallocated " << blocks.size() << " blocks in " << duration.count()
+              << " microseconds" << std::endl;
     std::cout << "Average: " << (duration.count() / double(blocks.size()))
               << " microseconds per deallocation" << std::endl;
 }
@@ -537,11 +536,8 @@ TEST_F(StrategyComparisonTest, StrategiesBehaviorDifference) {
 
     // Test each strategy with same fragmented scenario
     std::vector<compio_allocation_strategy> strategies = {
-        COMPIO_ALLOC_FIRST_FIT,
-        COMPIO_ALLOC_BEST_FIT,
-        COMPIO_ALLOC_WORST_FIT,
-        COMPIO_ALLOC_NEXT_FIT
-    };
+        COMPIO_ALLOC_FIRST_FIT, COMPIO_ALLOC_BEST_FIT, COMPIO_ALLOC_WORST_FIT,
+        COMPIO_ALLOC_NEXT_FIT};
 
     std::vector<std::string> names = {"FIRST_FIT", "BEST_FIT", "WORST_FIT", "NEXT_FIT"};
 
@@ -549,14 +545,14 @@ TEST_F(StrategyComparisonTest, StrategiesBehaviorDifference) {
         recreate_allocator_with_strategy(strategies[i]);
 
         // Create same fragmented pattern
-        uint64_t block1 = allocator->allocate(50);   // Small
-        uint64_t block2 = allocator->allocate(200);  // Large
-        uint64_t block3 = allocator->allocate(100);  // Medium
-        uint64_t block4 = allocator->allocate(300);  // Very large
+        uint64_t block1 = allocator->allocate(50);  // Small
+        uint64_t block2 = allocator->allocate(200); // Large
+        uint64_t block3 = allocator->allocate(100); // Medium
+        uint64_t block4 = allocator->allocate(300); // Very large
 
         // Free blocks to create holes of different sizes
-        allocator->deallocate(block2, 200);  // Large hole
-        allocator->deallocate(block3, 100);  // Medium hole
+        allocator->deallocate(block2, 200); // Large hole
+        allocator->deallocate(block3, 100); // Medium hole
 
         // Now allocate 150 bytes - strategies should behave differently
         uint64_t test_offset = allocator->allocate(150);
@@ -567,8 +563,7 @@ TEST_F(StrategyComparisonTest, StrategiesBehaviorDifference) {
     }
 
     // Verify that we got valid allocations
-    for (const auto& result : results) {
-        EXPECT_TRUE(verify_allocation(result.offset, 150))
-            << result.name << " failed to allocate";
+    for (const auto &result : results) {
+        EXPECT_TRUE(verify_allocation(result.offset, 150)) << result.name << " failed to allocate";
     }
 }

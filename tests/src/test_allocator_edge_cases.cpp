@@ -1,10 +1,12 @@
-#include "allocator.hpp"
-#include "compio_file.hpp"
-#include "utils.hpp"
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <numeric>
 #include <random>
+
+#include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
+
 #include "test_util.hpp"
 
 using namespace compio;
@@ -13,9 +15,9 @@ using namespace compio;
 class BoundaryConditionTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -23,7 +25,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -34,9 +36,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -105,9 +110,9 @@ TEST_F(BoundaryConditionTest, MinimumSizeAllocation) {
 class RobustnessTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -115,7 +120,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -126,9 +131,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -205,8 +213,7 @@ TEST_F(RobustnessTest, AlternatingLargeSmallAllocations) {
             uint64_t start2 = allocations[j].first;
             uint64_t end2 = start2 + allocations[j].second;
 
-            EXPECT_TRUE(end1 <= start2 || end2 <= start1)
-                << "Overlapping allocations detected";
+            EXPECT_TRUE(end1 <= start2 || end2 <= start1) << "Overlapping allocations detected";
         }
     }
 
@@ -217,9 +224,9 @@ TEST_F(RobustnessTest, AlternatingLargeSmallAllocations) {
 class AllocationPatternTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -227,7 +234,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -238,9 +245,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -301,9 +311,9 @@ TEST_F(AllocationPatternTest, FibonacciSizeSequence) {
 class RealWorldPatternTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -311,7 +321,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -322,9 +332,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -365,8 +378,7 @@ TEST_F(RealWorldPatternTest, DatabaseLikePattern) {
         }
     }
 
-    EXPECT_EQ(new_pages.size(), pages_to_free)
-        << "Should be able to reuse all freed pages";
+    EXPECT_EQ(new_pages.size(), pages_to_free) << "Should be able to reuse all freed pages";
 }
 
 TEST_F(RealWorldPatternTest, LogFilePattern) {
@@ -412,9 +424,9 @@ TEST_F(RealWorldPatternTest, LogFilePattern) {
 class EfficiencyTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -422,7 +434,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -434,10 +446,14 @@ protected:
     }
 
     void TearDown() override {
-        if (archive->index) delete archive->index;
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (archive->index)
+            delete archive->index;
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -463,7 +479,8 @@ TEST_F(EfficiencyTest, SpaceUtilizationEfficiency) {
     // Calculate overhead percentage
     double overhead_ratio = double(actual_file_size - expected_min_size) / target_data;
 
-    std::cout << "Allocated " << blocks.size() << " blocks (" << target_data << " bytes)" << std::endl;
+    std::cout << "Allocated " << blocks.size() << " blocks (" << target_data << " bytes)"
+              << std::endl;
     std::cout << "File size: " << actual_file_size << " bytes" << std::endl;
     std::cout << "Overhead: " << (overhead_ratio * 100) << "%" << std::endl;
 
@@ -505,9 +522,9 @@ TEST_F(EfficiencyTest, FragmentationMeasurement) {
 class IntegrationTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -515,7 +532,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_BEST_FIT;
         config->fragmentation_threshold = 25;
@@ -527,10 +544,14 @@ protected:
     }
 
     void TearDown() override {
-        if (archive->index) delete archive->index;
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (archive->index)
+            delete archive->index;
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 };
@@ -556,7 +577,7 @@ TEST_F(IntegrationTest, CompleteLifecycleTest) {
     for (int i = 0; i < 20; i++) {
         if (i % 3 == 0 && !phase3_blocks.empty()) {
             // Deallocate random block
-            auto& block = phase3_blocks[i % phase3_blocks.size()];
+            auto &block = phase3_blocks[i % phase3_blocks.size()];
             allocator->deallocate(block.first, block.second);
             phase3_blocks.erase(phase3_blocks.begin() + (i % phase3_blocks.size()));
         } else {

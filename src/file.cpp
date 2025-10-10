@@ -1,20 +1,27 @@
+#include "compio/file.hpp"
+
+#include <cinttypes>
 #include <cstdlib>
 #include <cstring>
-#include <cinttypes>
 #include <stdexcept>
 
-#include "debug_print.hpp"
-
-#include "file.hpp"
+#include "compio/debug_print.hpp"
 
 using namespace compio;
 
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
-header::header() : magic_number(0), file_size(sizeof(header)), index_root(0), ftable(), allocator_state_offset(0), allocator_state_size(0), compression_type(COMPIO_COMPRESS_ZLIB) {}
+header::header()
+    : magic_number(0),
+      file_size(sizeof(header)),
+      index_root(0),
+      ftable(),
+      allocator_state_offset(0),
+      allocator_state_size(0),
+      compression_type(COMPIO_COMPRESS_ZLIB) {}
 
-void header::read_from(FILE* file, uint64_t addr) {
+void header::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][header]addr=%llu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -31,7 +38,7 @@ void header::read_from(FILE* file, uint64_t addr) {
     }
 }
 
-void header::write_to(FILE* file, uint64_t addr) const {
+void header::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][header]addr=%llu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -48,7 +55,7 @@ void header::write_to(FILE* file, uint64_t addr) const {
     }
 }
 
-void index_node::read_from(FILE* file, uint64_t addr) {
+void index_node::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][index_node]addr=%llu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -68,7 +75,7 @@ void index_node::read_from(FILE* file, uint64_t addr) {
     lendian_fread(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
 }
 
-void index_node::write_to(FILE* file, uint64_t addr) const {
+void index_node::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][index_node]addr=%llu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -85,7 +92,7 @@ void index_node::write_to(FILE* file, uint64_t addr) const {
     lendian_fwrite(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
 }
 
-void storage_block::read_from(FILE* file, uint64_t addr) {
+void storage_block::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][storage_block]addr=%llu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -98,7 +105,7 @@ void storage_block::read_from(FILE* file, uint64_t addr) {
     lendian_fread(data.get(), 1, size, file);
 }
 
-void storage_block::write_to(FILE* file, uint64_t addr) const {
+void storage_block::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][storage_block]addr=%llu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -120,32 +127,33 @@ index_node::index_node(int tree_degree)
 
 storage_block::storage_block() : data(nullptr) {}
 
-storage_block::storage_block(std::unique_ptr<uint8_t[]>&& data, uint64_t size)
+storage_block::storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size)
     : is_compressed(0),
       size(size),
       original_size(0),
       index_key({0, 0}),
       data(std::move(data)) {}
 
-storage_block::storage_block(uint64_t size) : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
+storage_block::storage_block(uint64_t size)
+    : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
 
 files_table::files_table() : n_files(0) {}
 
-const files_table::file* files_table::find(const char* name) const {
-    for (int i = 0; i < n_files; ++i)
-        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
-            return &files[i];
-    return NULL;    
-}
-
-files_table::file* files_table::find(const char* name) {
+const files_table::file *files_table::find(const char *name) const {
     for (int i = 0; i < n_files; ++i)
         if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
             return &files[i];
     return NULL;
 }
 
-files_table::file* files_table::add(const char* name) {
+files_table::file *files_table::find(const char *name) {
+    for (int i = 0; i < n_files; ++i)
+        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
+            return &files[i];
+    return NULL;
+}
+
+files_table::file *files_table::add(const char *name) {
     if (n_files >= COMPIO_MAX_FILES)
         return NULL;
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE);
@@ -153,7 +161,7 @@ files_table::file* files_table::add(const char* name) {
     return &files[n_files++];
 }
 
-int files_table::remove(const char* name) {
+int files_table::remove(const char *name) {
     for (int i = 0; i < n_files; ++i) {
         if (!strncmp(files[i].name, name, COMPIO_FNAME_MAX_SIZE)) {
             memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));

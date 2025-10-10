@@ -2,24 +2,22 @@
  * Test demonstrating compression type persistence across archive open/close cycles
  */
 
-#include "compio.h"
 #include <stdio.h>
 #include <string.h>
 
+#include "compio.h"
+
 int main() {
-    const char* archive_path = "/tmp/test_compression_persistence.cmp";
-    const char* test_data = "This is test data to verify compression persistence!";
+    const char *archive_path = "/tmp/test_compression_persistence.cmp";
+    const char *test_data = "This is test data to verify compression persistence!";
     size_t data_size = strlen(test_data) + 1;
 
     printf("=== Compression Type Persistence Test ===\n\n");
 
     // Test different compressors
-    const char* compressor_names[] = {"LZ4", "Zstandard", "Brotli"};
-    void (*build_funcs[])(compio_compressor*) = {
-        compio_build_lz4_compressor,
-        compio_build_zstd_compressor,
-        compio_build_brotli_compressor
-    };
+    const char *compressor_names[] = {"LZ4", "Zstandard", "Brotli"};
+    void (*build_funcs[])(compio_compressor *) = {
+        compio_build_lz4_compressor, compio_build_zstd_compressor, compio_build_brotli_compressor};
 
     for (int c = 0; c < 3; c++) {
         printf("Testing %s compressor:\n", compressor_names[c]);
@@ -29,13 +27,13 @@ int main() {
         compio_build_default_config(&config);
         build_funcs[c](&config.compressor);
 
-        compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+        compio_archive *archive = compio_open_archive(archive_path, "w+", &config);
         if (!archive) {
             printf("  ERROR: Failed to create archive\n");
             continue;
         }
 
-        compio_file* file = compio_open_file("test.txt", archive);
+        compio_file *file = compio_open_file("test.txt", archive);
         if (!file) {
             printf("  ERROR: Failed to create file\n");
             compio_close_archive(archive);
@@ -82,4 +80,3 @@ int main() {
     printf("=== Test Complete ===\n");
     return 0;
 }
-

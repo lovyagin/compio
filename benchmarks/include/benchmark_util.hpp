@@ -8,7 +8,7 @@
 
 #include "compio.h"
 
-inline unsigned long get_file_size(const char* fn) {
+inline unsigned long get_file_size(const char *fn) {
     struct stat st;
     if (stat(fn, &st) != 0) {
         return 0;
@@ -32,6 +32,6 @@ inline std::string get_temporary_filename() {
 
 using benchmark_context = std::vector<std::pair<std::string, std::string>>;
 
-benchmark_context build_config_from_file(std::string fn, compio_config* config);
+benchmark_context build_config_from_file(std::string fn, compio_config *config);
 
 #endif // BENCHMARK_UTIL_HPP_

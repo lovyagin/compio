@@ -6,3 +6,14 @@ IndentAccessModifiers: false
 AccessModifierOffset: -4
 PackConstructorInitializers: CurrentLine
 SortIncludes: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<.*>'
+    Priority: 1
+  - Regex: '^"compio/.*'
+    Priority: 2
+  - Regex: '^"compio.h"$'
+    Priority: 2
+    SortPriority: 3
+  - Regex: '.*'
+    Priority: 3

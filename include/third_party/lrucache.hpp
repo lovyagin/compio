@@ -23,7 +23,7 @@ public:
 
     lru_cache(size_t max_size) : _max_size(max_size) {}
 
-    void put(const key_t& key, const value_t& value) {
+    void put(const key_t &key, const value_t &value) {
         auto it = _cache_items_map.find(key);
         _cache_items_list.push_front(key_value_pair_t(key, value));
         if (it != _cache_items_map.end()) {
@@ -40,7 +40,7 @@ public:
         }
     }
 
-    const value_t& get(const key_t& key) {
+    const value_t &get(const key_t &key) {
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
             throw std::range_error("There is no such key in cache");
@@ -50,11 +50,11 @@ public:
         }
     }
 
-    bool exists(const key_t& key) const {
+    bool exists(const key_t &key) const {
         return _cache_items_map.find(key) != _cache_items_map.end();
     }
 
-    void remove(const key_t& key) {
+    void remove(const key_t &key) {
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
             throw std::range_error("There is no such key in cache");
@@ -69,9 +69,7 @@ public:
         _cache_items_list.clear();
     }
 
-    bool is_full() {
-        return _cache_items_map.size() >= _max_size;
-    }
+    bool is_full() { return _cache_items_map.size() >= _max_size; }
 
     value_t pop_back() {
         if (_cache_items_map.size() == 0) {
@@ -85,7 +83,7 @@ public:
         return result;
     }
 
-    value_t pop(const key_t& key) {
+    value_t pop(const key_t &key) {
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
             throw std::range_error("There is no such key in cache");

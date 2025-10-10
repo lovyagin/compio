@@ -1,12 +1,15 @@
-#include "utils.hpp"
+#include "compio/utils.hpp"
+
 #include <cstdio>
-#include "allocator.hpp"
-#include "third_party/hash_sha256.h"
 #include <cstring>
+
+#include "compio/allocator.hpp"
+
+#include "third_party/hash_sha256.h"
 
 namespace compio {
 
-uint8_t parse_mode(const char* mode) {
+uint8_t parse_mode(const char *mode) {
     uint8_t mode_b = 0;
     switch (mode[0]) {
     case 'r':
@@ -35,13 +38,13 @@ uint8_t parse_mode(const char* mode) {
     return mode_b;
 }
 
-uint64_t get_hash_tail(const char* fname) {
+uint64_t get_hash_tail(const char *fname) {
     hash_sha256 hash;
     hash.sha256_init();
-    hash.sha256_update((const uint8_t*)fname, COMPIO_FNAME_MAX_SIZE);
+    hash.sha256_update((const uint8_t *)fname, COMPIO_FNAME_MAX_SIZE);
     auto hashed_fname = hash.sha256_final();
     uint64_t hash_tail;
-    
+
     memcpy(&hash_tail, hashed_fname.data(), sizeof(uint64_t));
     memcpy(&hash_tail, &(*hashed_fname.begin()), sizeof(uint64_t));
 

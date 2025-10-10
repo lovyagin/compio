@@ -2,8 +2,9 @@
 // Пример простой программы с использованием библиотеки
 //
 
-#include "compio.h"
 #include <stdio.h>
+
+#include "compio.h"
 
 int main() {
     // --- Configuration
@@ -38,15 +39,15 @@ int main() {
 
     // --- Opening archive and file
 
-    const char* fp = "archive.compio";
-    compio_archive* archive = compio_open_archive(fp, "w+", &config);
+    const char *fp = "archive.compio";
+    compio_archive *archive = compio_open_archive(fp, "w+", &config);
     if (archive == NULL) {
         fprintf(stderr, "failed to open archive \"%s\"\n", fp);
         return -1;
     }
 
-    const char* name = "DATA";
-    compio_file* file = compio_open_file(name, archive);
+    const char *name = "DATA";
+    compio_file *file = compio_open_file(name, archive);
 
     if (archive == NULL) {
         fprintf(stderr, "failed to open file with name \"%s\"\n", name);
@@ -81,19 +82,21 @@ int main() {
         compio_close_archive(archive);
         return -5;
     }
-    
+
     uint64_t fsize = compio_tell(file);
 
     if (fsize != sizeof(buffer)) {
-        fprintf(stderr, "file size is not equal to number of written bytes (%d != %d)\n", fsize, sizeof(buffer));
+        fprintf(stderr, "file size is not equal to number of written bytes (%d != %d)\n", fsize,
+                sizeof(buffer));
         compio_close_file(file);
         compio_close_archive(archive);
         return -6;
     }
-    
+
     for (int i = 0; i < sizeof(buffer); ++i) {
         if (buffer[i] != out_buffer[i]) {
-            fprintf(stderr, "out data != in data (position: %d, %d != %d)\n", i, out_buffer[i], buffer[i]);
+            fprintf(stderr, "out data != in data (position: %d, %d != %d)\n", i, out_buffer[i],
+                    buffer[i]);
             compio_close_file(file);
             compio_close_archive(archive);
             return -7;

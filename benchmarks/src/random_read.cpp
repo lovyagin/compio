@@ -1,18 +1,19 @@
-#include "compio.h"
-#include "sample_data.hpp"
 #include "benchmark_util.hpp"
 
+#include "compio.h"
+
+#include "sample_data.hpp"
+
 #ifdef BM_FILE_OPERATIONS_COUNTER
-#include "infile_object.hpp"
+#include "compio/infile_object.hpp"
 #endif
 
-#include <random>
-
 #include <benchmark/benchmark.h>
+#include <random>
 
 extern compio_config config;
 
-static void BM_stdio_RandomRead(benchmark::State& state) {
+static void BM_stdio_RandomRead(benchmark::State &state) {
     const size_t n_blocks = state.range(0);
     const size_t block_size = state.range(1);
     const size_t file_size = state.range(2);
@@ -23,11 +24,11 @@ static void BM_stdio_RandomRead(benchmark::State& state) {
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, file_size - block_size);
 
-    char* buffer = new char[block_size];
+    char *buffer = new char[block_size];
 
     {
         // prepare file
-        FILE* file = fopen(fn.c_str(), "w+");
+        FILE *file = fopen(fn.c_str(), "w+");
         if (!file) {
             state.SkipWithError("fopen failed");
             return;
@@ -57,7 +58,7 @@ static void BM_stdio_RandomRead(benchmark::State& state) {
         get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
     for (auto _ : state) {
-        FILE* file = fopen(fn.c_str(), "r");
+        FILE *file = fopen(fn.c_str(), "r");
         if (!file) {
             state.SkipWithError("fopen failed");
             break;
@@ -101,7 +102,7 @@ static void BM_stdio_RandomRead(benchmark::State& state) {
     remove(fn.c_str());
 }
 
-static void BM_compio_RandomRead(benchmark::State& state) {
+static void BM_compio_RandomRead(benchmark::State &state) {
     const size_t n_blocks = state.range(0);
     const size_t block_size = state.range(1);
     const size_t file_size = state.range(2);
@@ -112,16 +113,16 @@ static void BM_compio_RandomRead(benchmark::State& state) {
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, file_size - block_size);
 
-    char* buffer = new char[block_size];
+    char *buffer = new char[block_size];
     {
         // prepare file
-        compio_archive* archive = compio_open_archive(fn.c_str(), "w+", &config);
+        compio_archive *archive = compio_open_archive(fn.c_str(), "w+", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
             return;
         }
 
-        compio_file* file = compio_open_file("A", archive);
+        compio_file *file = compio_open_file("A", archive);
         if (!file) {
             compio_close_archive(archive);
             state.SkipWithError("compio_open_file failed");
@@ -161,13 +162,13 @@ static void BM_compio_RandomRead(benchmark::State& state) {
 #endif
 
     for (auto _ : state) {
-        compio_archive* archive = compio_open_archive(fn.c_str(), "r", &config);
+        compio_archive *archive = compio_open_archive(fn.c_str(), "r", &config);
         if (!archive) {
             state.SkipWithError("compio_open_archive failed");
             break;
         }
 
-        compio_file* file = compio_open_file("A", archive);
+        compio_file *file = compio_open_file("A", archive);
         if (!file) {
             compio_close_archive(archive);
             state.SkipWithError("compio_open_file failed");

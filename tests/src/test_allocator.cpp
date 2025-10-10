@@ -1,7 +1,9 @@
-#include "allocator.hpp"
-#include "compio_file.hpp"
-#include "utils.hpp"
 #include <gtest/gtest.h>
+
+#include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
+
 #include "test_util.hpp"
 
 using namespace compio;
@@ -9,9 +11,9 @@ using namespace compio;
 class BasicAllocatorTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE* file;
-    compio_archive* archive;
-    block_allocator* allocator;
+    FILE *file;
+    compio_archive *archive;
+    block_allocator *allocator;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
@@ -19,7 +21,7 @@ protected:
         file = fopen(fn, "w+");
         ASSERT_TRUE(file != nullptr);
 
-        auto* config = new compio_config();
+        auto *config = new compio_config();
         compio_build_default_config(config);
         config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
         config->fragmentation_threshold = 30;
@@ -30,9 +32,12 @@ protected:
     }
 
     void TearDown() override {
-        if (allocator) delete allocator;
-        if (archive) delete archive;
-        if (file) fclose(file);
+        if (allocator)
+            delete allocator;
+        if (archive)
+            delete archive;
+        if (file)
+            fclose(file);
         remove(fn);
     }
 
@@ -64,15 +69,13 @@ TEST_F(BasicAllocatorTest, AllocationAndDeallocation) {
     ASSERT_TRUE(verify_allocation(new_offset, alloc_size));
 
     EXPECT_EQ(new_offset, initial_offset)
-        << "Expected new allocation to reuse freed space at offset "
-        << initial_offset << " but got " << new_offset;
+        << "Expected new allocation to reuse freed space at offset " << initial_offset
+        << " but got " << new_offset;
     EXPECT_EQ(archive->header->file_size, size_after_first)
         << "File size changed after reallocation";
 }
 
-TEST_F(BasicAllocatorTest, ZeroSizeAllocation) {
-    EXPECT_EQ(allocator->allocate(0), UINT64_MAX);
-}
+TEST_F(BasicAllocatorTest, ZeroSizeAllocation) { EXPECT_EQ(allocator->allocate(0), UINT64_MAX); }
 
 TEST_F(BasicAllocatorTest, MultipleAllocations) {
     std::vector<uint64_t> offsets;
@@ -87,10 +90,8 @@ TEST_F(BasicAllocatorTest, MultipleAllocations) {
 
     // Verify allocations are unique and properly ordered
     for (size_t i = 0; i < offsets.size() - 1; i++) {
-        EXPECT_LT(offsets[i], offsets[i + 1])
-            << "Allocations should have increasing offsets";
-        EXPECT_GE(offsets[i + 1] - offsets[i], block_size)
-            << "Blocks should not overlap";
+        EXPECT_LT(offsets[i], offsets[i + 1]) << "Allocations should have increasing offsets";
+        EXPECT_GE(offsets[i + 1] - offsets[i], block_size) << "Blocks should not overlap";
     }
 }
 
@@ -116,8 +117,7 @@ TEST_F(BasicAllocatorTest, FragmentedDeallocation) {
 
     // Allocate a block that fits in the freed space
     uint64_t new_offset = allocator->allocate(size2);
-    EXPECT_EQ(new_offset, middle_pos)
-        << "New allocation should reuse the freed middle block";
+    EXPECT_EQ(new_offset, middle_pos) << "New allocation should reuse the freed middle block";
 
     // Original blocks should still be valid
     EXPECT_NE(new_offset, offset1);

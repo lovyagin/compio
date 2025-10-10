@@ -5,16 +5,16 @@
 #include <cstdio>
 #include <type_traits>
 
-#define readonly(x, t) (const_cast<const smart_infile_object<t>&>(x))
+#define readonly(x, t) (const_cast<const smart_infile_object<t> &>(x))
 
-uint64_t lendian_fwrite(const void* ptr, uint64_t size, uint64_t nmemb, FILE* stream);
+uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *stream);
 
-uint64_t lendian_fread(void* ptr, uint64_t size, uint64_t nmemb, FILE* stream);
+uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream);
 
 class infile_object {
 public:
-    virtual void read_from(FILE* file, uint64_t addr) = 0;
-    virtual void write_to(FILE* file, uint64_t addr) const = 0;
+    virtual void read_from(FILE *file, uint64_t addr) = 0;
+    virtual void write_to(FILE *file, uint64_t addr) const = 0;
     virtual ~infile_object() = default;
 };
 
@@ -26,11 +26,11 @@ private:
         int ref_count;
         bool modified;
         bool removed;
-        T* data;
-        FILE* file;
+        T *data;
+        FILE *file;
         uint64_t addr;
 
-        storage(FILE* file, uint64_t addr, T* data)
+        storage(FILE *file, uint64_t addr, T *data)
             : file(file),
               addr(addr),
               ref_count(1),
@@ -38,7 +38,7 @@ private:
               removed(false),
               data(data) {}
 
-        storage(FILE* file, uint64_t addr) : storage(file, addr, new T()) {
+        storage(FILE *file, uint64_t addr) : storage(file, addr, new T()) {
             modified = false;
             read();
         }
@@ -55,26 +55,26 @@ private:
         void write() { data->write_to(file, addr); }
     };
 
-    storage* S;
+    storage *S;
 
 public:
     smart_infile_object() : S(nullptr) {}
 
-    smart_infile_object(FILE* file, uint64_t addr, T* data) : S(new storage(file, addr, data)) {}
+    smart_infile_object(FILE *file, uint64_t addr, T *data) : S(new storage(file, addr, data)) {}
 
-    smart_infile_object(FILE* file, uint64_t addr) : S(new storage(file, addr)) {}
+    smart_infile_object(FILE *file, uint64_t addr) : S(new storage(file, addr)) {}
 
-    smart_infile_object(const smart_infile_object& other) { *this = other; }
+    smart_infile_object(const smart_infile_object &other) { *this = other; }
 
-    smart_infile_object(smart_infile_object&& other) { *this = other; }
+    smart_infile_object(smart_infile_object &&other) { *this = other; }
 
-    smart_infile_object& operator=(const smart_infile_object& other) {
+    smart_infile_object &operator=(const smart_infile_object &other) {
         S = other.S;
         ++S->ref_count;
         return *this;
     }
 
-    smart_infile_object& operator=(smart_infile_object&& other) {
+    smart_infile_object &operator=(smart_infile_object &&other) {
         std::swap(S, other.S);
         return *this;
     }
@@ -89,7 +89,7 @@ public:
 
     uint64_t addr() const { return S->addr; }
 
-    T* ptr() const {
+    T *ptr() const {
         if (S == nullptr) {
             return nullptr;
         }
@@ -97,23 +97,21 @@ public:
         return S->data;
     }
 
-    const T* operator->() const { return S->data; }
+    const T *operator->() const { return S->data; }
 
-    T* operator->() {
+    T *operator->() {
         S->modified = true;
         return S->data;
     }
 
-    const T& operator*() const { return *S->data; }
+    const T &operator*() const { return *S->data; }
 
-    T& operator*() {
+    T &operator*() {
         S->modified = true;
         return *S->data;
     }
 
-    operator bool() const {
-        return S != nullptr;
-    }
+    operator bool() const { return S != nullptr; }
 
     void remove() { S->removed = true; }
 
