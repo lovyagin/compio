@@ -32,11 +32,18 @@ extern "C" {
  * @brief Compression algorithm types
  */
 typedef enum {
-    COMPIO_COMPRESS_NONE = 0,  /**< No compression (dummy) */
-    COMPIO_COMPRESS_ZLIB = 1,  /**< ZLIB compression */
-    COMPIO_COMPRESS_LZ4 = 2,   /**< LZ4 compression */
-    COMPIO_COMPRESS_ZSTD = 3,  /**< Zstandard compression */
-    COMPIO_COMPRESS_BROTLI = 4 /**< Brotli compression */
+    /**
+     * @brief Custom compression (use it, when you're using your custom compress/decompress algorithm;
+     * note, that if you want to use archive, created with custom compression, in different program,
+     * you'll need to provide the exact same compressor, and set compression_type to custom)
+     *
+     */
+    COMPIO_COMPRESS_CUSTOM = 0,
+    COMPIO_COMPRESS_DUMMY = 1,  /**< No compression (dummy) */
+    COMPIO_COMPRESS_ZLIB = 2,  /**< ZLIB compression */
+    COMPIO_COMPRESS_LZ4 = 3,   /**< LZ4 compression */
+    COMPIO_COMPRESS_ZSTD = 4,  /**< Zstandard compression */
+    COMPIO_COMPRESS_BROTLI = 5 /**< Brotli compression */
 } compio_compression_type;
 
 /**
@@ -64,6 +71,13 @@ typedef struct compio_compressor {
      *
      */
     uint64_t (*get_bufsize)(uint64_t src_size);
+
+    /**
+     * @brief Compression type, that will be saved in archive header (see compio_compression_type
+     * for possible values)
+     *
+     */
+    compio_compression_type compression_type;
 } compio_compressor;
 
 /**

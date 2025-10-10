@@ -29,6 +29,7 @@ void compio_build_dummy_compressor(compio_compressor *result) {
     result->compress = dummy_compress;
     result->decompress = dummy_decompress;
     result->get_bufsize = dummy_get_bufsize;
+    result->compression_type = COMPIO_COMPRESS_DUMMY;
 }
 
 int zlib_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
@@ -78,6 +79,7 @@ void compio_build_zlib_compressor(compio_compressor *result) {
     result->compress = zlib_compress;
     result->decompress = zlib_decompress;
     result->get_bufsize = zlib_get_bufsize;
+    result->compression_type = COMPIO_COMPRESS_ZLIB;
 }
 
 /**
@@ -153,6 +155,7 @@ void compio_build_lz4_compressor(compio_compressor *result) {
     result->compress = lz4_compress;
     result->decompress = lz4_decompress;
     result->get_bufsize = lz4_get_bufsize;
+    result->compression_type = COMPIO_COMPRESS_LZ4;
 }
 
 /**
@@ -209,6 +212,7 @@ void compio_build_zstd_compressor(compio_compressor *result) {
     result->compress = zstd_compress;
     result->decompress = zstd_decompress;
     result->get_bufsize = zstd_get_bufsize;
+    result->compression_type = COMPIO_COMPRESS_ZSTD;
 }
 
 /**
@@ -272,4 +276,5 @@ void compio_build_brotli_compressor(compio_compressor *result) {
     result->compress = brotli_compress;
     result->decompress = brotli_decompress;
     result->get_bufsize = brotli_get_bufsize;
+    result->compression_type = COMPIO_COMPRESS_BROTLI;
 }
