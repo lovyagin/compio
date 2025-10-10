@@ -206,7 +206,10 @@ int compio_close_archive(compio_archive *archive) {
     
     // Save allocator state before closing
     if (archive->allocator) {
-        archive->allocator->save_state(archive);
+        if (!archive->allocator->save_state(archive)) {
+            WARNING_PRINT("warning: failed to save allocator state\n");
+            return -3;
+        }
     }
 
     // 1) flush cached data to file
