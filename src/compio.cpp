@@ -28,10 +28,10 @@ void compio_build_default_config(compio_config *result) {
     result->fragmentation_threshold = 30;
 }
 
-int compio_get_compression_type(const char *fp, compio_compression_type* t) {
+int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     FILE *file = fopen(fp, "r");
     if (file == nullptr) {
-        return -1; 
+        return -1;
     }
 
     if (is_file_empty(file)) {
@@ -89,7 +89,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto end;
     }
 
-    compio_archive* archive;
+    compio_archive *archive;
     archive = new compio_archive(file, mode_b, c);
     if (!archive) {
         WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
@@ -203,7 +203,7 @@ int compio_close_archive(compio_archive *archive) {
         WARNING_PRINT("warning: passed nullptr into compio_close_archive\n");
         return -1;
     }
-    
+
     // Save allocator state before closing
     if (archive->allocator) {
         if (!archive->allocator->save_state(archive)) {
@@ -222,7 +222,7 @@ int compio_close_archive(compio_archive *archive) {
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
-    
+
     // 4) and finally we close the file
     if (fclose(archive->file)) {
         WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
@@ -258,24 +258,6 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
 }
 
 uint64_t compio_tell(compio_file *file) { return file->cursor; }
-
-static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file,
-                                                                    uint64_t size) {
-    // return range of blocks, that intersect [cursor, cursor + size)
-    std::vector<std::pair<tree_key, tree_val>> range;
-
-    // reserve number of blocks, that should be in the tree
-    int64_t n_blocks = std::min<int64_t>(file->cursor + size, file->size);
-    n_blocks -= static_cast<int64_t>(file->cursor);
-    n_blocks = std::max<int64_t>(0l, n_blocks);
-    n_blocks /= file->archive->config->block_size;
-    range.reserve(n_blocks);
-
-    tree_key key_min = {file->hash_tail, file->cursor};
-    tree_key key_max = {file->hash_tail, file->cursor + size};
-    file->archive->index->get_range(key_min, key_max, range);
-    return range;
-}
 
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%d, size=%d)\n", file->cursor, size);
@@ -531,3 +513,25 @@ void compio_flush(compio_archive *archive) {
     archive->index->reader.clear_cache();
 }
 }
+
+namespace compio {
+
+static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file,
+                                                                    uint64_t size) {
+    // return range of blocks, that intersect [cursor, cursor + size)
+    std::vector<std::pair<tree_key, tree_val>> range;
+
+    // reserve number of blocks, that should be in the tree
+    int64_t n_blocks = std::min<int64_t>(file->cursor + size, file->size);
+    n_blocks -= static_cast<int64_t>(file->cursor);
+    n_blocks = std::max<int64_t>(0l, n_blocks);
+    n_blocks /= file->archive->config->block_size;
+    range.reserve(n_blocks);
+
+    tree_key key_min = {file->hash_tail, file->cursor};
+    tree_key key_max = {file->hash_tail, file->cursor + size};
+    file->archive->index->get_range(key_min, key_max, range);
+    return range;
+}
+
+} // namespace compio
