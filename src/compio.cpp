@@ -87,6 +87,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     compio_archive* archive;
     archive = new compio_archive(file, mode_b, c);
     if (!archive) {
+        WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
         goto end1;
     }
 
@@ -97,21 +98,25 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     } else if (archive->header->compression_type != c->compressor.compression_type) {
         // compression type mismatch
         errno = EINVAL;
+        WARNING_PRINT("warning: compression type mismatch while opening archive\n");
         goto end2;
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
     archive->allocator = new compio::block_allocator(archive);
     if (!archive->allocator) {
+        WARNING_PRINT("warning: failed to allocate memory for allocator\n");
         goto end2;
     }
 
     archive->index = new btree(archive);
     if (!archive->index) {
+        WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto end3;
     }
 
     if (!is_new_file && !archive->allocator->load_state(archive)) {
+        WARNING_PRINT("warning: failed to load allocator state from archive\n");
         goto end4;
     }
 
