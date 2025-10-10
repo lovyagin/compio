@@ -14,7 +14,7 @@ protected:
     compio_archive *archive;
     compio_file *file;
     char fn[256];
-    bool failed;
+    bool failed = false;
 
     void SetUp() override {
         compio_build_default_config(&config);
@@ -68,7 +68,7 @@ protected:
     compio_archive *archive;
     compio_file *file;
     char fn[256];
-    bool failed;
+    bool failed = false;
 
     void SetUp() override {
         compio_build_default_config(&config);
