@@ -38,7 +38,7 @@ add_library(compio SHARED
     src/allocator.cpp
     src/btree.cpp
     src/compio.cpp
-    src/compressor.c
+    src/compressor.cpp
     src/file.cpp
     src/infile_object.cpp
     src/storage_block_reader.cpp
