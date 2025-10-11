@@ -14,8 +14,6 @@
 
 using namespace compio;
 
-extern "C" {
-
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
@@ -511,7 +509,6 @@ end:
 void compio_flush(compio_archive *archive) {
     archive->block_reader.clear_cache();
     archive->index->reader.clear_cache();
-}
 }
 
 namespace compio {
