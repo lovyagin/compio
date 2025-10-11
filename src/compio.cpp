@@ -513,7 +513,7 @@ void compio_flush(compio_archive *archive) {
 
 namespace compio {
 
-static std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file,
+std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file,
                                                                     uint64_t size) {
     // return range of blocks, that intersect [cursor, cursor + size)
     std::vector<std::pair<tree_key, tree_val>> range;
