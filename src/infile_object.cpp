@@ -4,7 +4,7 @@
 
 #include "compio/debug_print.hpp"
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
 int n_read_bytes = 0;
 int n_written_bytes = 0;
 
@@ -60,7 +60,7 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
                       "(expected: %llu bytes, actual: %llu bytes)\n",
                       size * nmemb, ret * size);
     }
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     n_written_bytes += ret;
 #endif
     return ret;
@@ -100,7 +100,7 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
                       "(expected: %llu bytes, actual: %llu bytes)\n",
                       size * nmemb, ret * size);
     }
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     n_read_bytes += ret;
 #endif
     return ret;

@@ -4,7 +4,7 @@
 
 #include "sample_data.hpp"
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
 #include "compio/infile_object.hpp"
 #endif
 
@@ -91,7 +91,7 @@ static void BM_stdio_RandomRead(benchmark::State &state) {
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     state.counters["read_bytes_per_op"] =
         benchmark::Counter(block_size, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
     state.counters["written_bytes_per_op"] =
@@ -154,7 +154,7 @@ static void BM_compio_RandomRead(benchmark::State &state) {
     state.counters["file_size"] = benchmark::Counter(
         get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     state.counters["read_bytes_per_op"] =
         benchmark::Counter(0, benchmark::Counter::kAvgIterations, benchmark::Counter::kIs1024);
     state.counters["written_bytes_per_op"] =
@@ -175,7 +175,7 @@ static void BM_compio_RandomRead(benchmark::State &state) {
             break;
         }
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
         int n_read_bytes_start = get_n_read_bytes();
         int n_written_bytes_start = get_n_written_bytes();
 #endif
@@ -206,7 +206,7 @@ static void BM_compio_RandomRead(benchmark::State &state) {
 
         compio_flush(archive);
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
         state.counters["read_bytes_per_op"] +=
             static_cast<double>(get_n_read_bytes() - n_read_bytes_start) / n_blocks;
         state.counters["written_bytes_per_op"] +=
