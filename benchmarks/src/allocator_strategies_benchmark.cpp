@@ -212,6 +212,10 @@ static void BM_AllocationFragmentationResistance(benchmark::State &state) {
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
 
         compio_archive *archive = compio_open_archive(filename.c_str(), "w+", &config);
+        if (!archive) {
+            state.SkipWithError("Failed to create archive");
+            continue;
+        }
 
         // Create a pattern of mixed allocations and deallocations
         for (size_t cycle = 0; cycle < cycle_count; cycle++) {

@@ -16,57 +16,6 @@ using namespace compio;
 
 extern "C" {
 
-// Helper function to build compressor from type
-static void build_compressor_from_type(compio_compression_type type, compio_compressor *result) {
-    switch (type) {
-    case COMPIO_COMPRESS_NONE:
-        compio_build_dummy_compressor(result);
-        break;
-    case COMPIO_COMPRESS_ZLIB:
-        compio_build_zlib_compressor(result);
-        break;
-    case COMPIO_COMPRESS_LZ4:
-        compio_build_lz4_compressor(result);
-        break;
-    case COMPIO_COMPRESS_ZSTD:
-        compio_build_zstd_compressor(result);
-        break;
-    case COMPIO_COMPRESS_BROTLI:
-        compio_build_brotli_compressor(result);
-        break;
-    default:
-        compio_build_zlib_compressor(result);
-        break;
-    }
-}
-
-// Helper function to get compression type from compressor
-static compio_compression_type get_compression_type(const compio_compressor *comp) {
-    compio_compressor test;
-
-    compio_build_dummy_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_NONE;
-
-    compio_build_zlib_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_ZLIB;
-
-    compio_build_lz4_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_LZ4;
-
-    compio_build_zstd_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_ZSTD;
-
-    compio_build_brotli_compressor(&test);
-    if (comp->compress == test.compress)
-        return COMPIO_COMPRESS_BROTLI;
-
-    return COMPIO_COMPRESS_ZLIB;
-}
-
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
@@ -79,15 +28,33 @@ void compio_build_default_config(compio_config *result) {
     result->fragmentation_threshold = 30;
 }
 
+int compio_get_compression_type(const char *fp, compio_compression_type* t) {
+    FILE *file = fopen(fp, "r");
+    if (file == nullptr) {
+        return -1; 
+    }
+
+    if (is_file_empty(file)) {
+        fclose(file);
+        return -2;
+    }
+
+    header h;
+    h.read_from(file, 0);
+    *t = (compio_compression_type)h.compression_type;
+
+    fclose(file);
+    return 0;
+}
+
 compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
     : file(file),
       config(config),
       mode_b(mode_b),
       dec_cache(config->cache_size__compression),
+      c_buffer(new uint8_t[config->compressor.get_bufsize(config->block_size)]),
       block_reader(file, config->cache_size__blocks) {
-    fseek(file, 0, SEEK_END);
-    long fsize = ftell(file);
-    if (fsize == 0)
+    if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
         header = smart_infile_object<compio::header>(file, 0);
@@ -105,7 +72,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     uint8_t mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
-        return NULL;
+        goto end;
     }
 
     // if w+ passed as mode, we have to clear file contents (using w+)
@@ -116,47 +83,60 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     else
         archive_open_mode = "a+";
 
-    auto file = fopen(fp, archive_open_mode);
-    if (file == nullptr)
-        return NULL;
+    FILE *file;
+    file = fopen(fp, archive_open_mode);
+    if (file == nullptr) {
+        goto end;
+    }
 
-    // Check if archive is new or existing
-    fseek(file, 0, SEEK_END);
-    long fsize = ftell(file);
-    bool is_new_archive = (fsize == 0);
+    compio_archive* archive;
+    archive = new compio_archive(file, mode_b, c);
+    if (!archive) {
+        WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
+        goto end1;
+    }
 
-    auto archive = new compio_archive(file, mode_b, c);
-
-    // For existing archives, check if compression type matches
-    if (!is_new_archive) {
-        compio_compression_type saved_type =
-            (compio_compression_type)archive->header->compression_type;
-        compio_compression_type provided_type = get_compression_type(&c->compressor);
-
-        if (saved_type != provided_type) {
-            // Compression type mismatch
-            delete archive;
-            fclose(file);
-            errno = EINVAL;
-            return NULL;
-        }
-    } else {
-        // For new archives, save compression type to header
-        archive->header.ptr()->compression_type = get_compression_type(&c->compressor);
+    bool is_new_file;
+    is_new_file = is_file_empty(file);
+    if (is_new_file) {
+        archive->header->compression_type = c->compressor.compression_type;
+    } else if (archive->header->compression_type != c->compressor.compression_type) {
+        // compression type mismatch
+        errno = EINVAL;
+        WARNING_PRINT("warning: compression type mismatch while opening archive\n");
+        goto end2;
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
     archive->allocator = new compio::block_allocator(archive);
-    archive->index = new btree(archive);
-
-    if (archive->allocator) {
-        archive->allocator->load_state(archive);
+    if (!archive->allocator) {
+        WARNING_PRINT("warning: failed to allocate memory for allocator\n");
+        goto end2;
     }
 
-    archive->c_buffer =
-        std::unique_ptr<uint8_t[]>(new uint8_t[c->compressor.get_bufsize(c->block_size)]);
+    archive->index = new btree(archive);
+    if (!archive->index) {
+        WARNING_PRINT("warning: failed to allocate memory for btree\n");
+        goto end3;
+    }
+
+    if (!is_new_file && !archive->allocator->load_state(archive)) {
+        WARNING_PRINT("warning: failed to load allocator state from archive\n");
+        goto end4;
+    }
 
     return archive;
+
+end4:
+    delete archive->index;
+end3:
+    delete archive->allocator;
+end2:
+    delete archive;
+end1:
+    fclose(file);
+end:
+    return NULL;
 }
 
 compio_file *compio_open_file(const char *name, compio_archive *archive) {
@@ -209,17 +189,27 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 }
 
 int compio_close_file(compio_file *file) {
+    if (!file) {
+        WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
+        return -1;
+    }
+
     delete file;
     return 0;
 }
 
 int compio_close_archive(compio_archive *archive) {
-    if (!archive)
-        return COMPIO_ERROR;
-
+    if (!archive) {
+        WARNING_PRINT("warning: passed nullptr into compio_close_archive\n");
+        return -1;
+    }
+    
     // Save allocator state before closing
     if (archive->allocator) {
-        archive->allocator->save_state(archive);
+        if (!archive->allocator->save_state(archive)) {
+            WARNING_PRINT("warning: failed to save allocator state\n");
+            return -3;
+        }
     }
 
     // 1) flush cached data to file
@@ -232,10 +222,12 @@ int compio_close_archive(compio_archive *archive) {
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
-
+    
     // 4) and finally we close the file
-    if (fclose(archive->file))
-        return COMPIO_ERROR;
+    if (fclose(archive->file)) {
+        WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
+        return -2;
+    }
 
     delete archive->index;
     delete archive;

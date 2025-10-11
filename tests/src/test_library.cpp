@@ -14,6 +14,7 @@ protected:
     compio_archive *archive;
     compio_file *file;
     char fn[256];
+    bool failed = false;
 
     void SetUp() override {
         compio_build_default_config(&config);
@@ -21,12 +22,22 @@ protected:
         generate_tmp_fn(fn, sizeof(fn));
 
         archive = compio_open_archive(fn, "w+", &config);
+        if (!archive) {
+            failed = true;
+            FAIL() << "failed to open archive";
+        }
         file = compio_open_file("A", archive);
+        if (!file) {
+            failed = true;
+            FAIL() << "failed to open file in archive";
+        }
     }
 
     void TearDown() override {
-        compio_close_file(file);
-        compio_close_archive(archive);
+        if (file)
+            ASSERT_EQ(compio_close_file(file), 0);
+        if (archive)
+            ASSERT_EQ(compio_close_archive(archive), 0);
 
         remove(fn);
     }
@@ -34,10 +45,20 @@ protected:
     void Reset() {
         // close and open file (cursor in the beginning after opening)
 
-        compio_close_file(file);
-        compio_close_archive(archive);
+        if (file)
+            ASSERT_EQ(compio_close_file(file), 0);
+        if (archive)
+            ASSERT_EQ(compio_close_archive(archive), 0);
         archive = compio_open_archive(fn, "r+", &config);
+        if (!archive) {
+            failed = true;
+            FAIL() << "failed to reopen archive";
+        }
         file = compio_open_file("A", archive);
+        if (!file) {
+            failed = true;
+            FAIL() << "failed to reopen file in archive";
+        }
     }
 };
 
@@ -47,6 +68,7 @@ protected:
     compio_archive *archive;
     compio_file *file;
     char fn[256];
+    bool failed = false;
 
     void SetUp() override {
         compio_build_default_config(&config);
@@ -54,23 +76,31 @@ protected:
         generate_tmp_fn(fn, sizeof(fn));
 
         archive = compio_open_archive(fn, "w+", &config);
+        if (!archive) {
+            failed = true;
+            FAIL() << "failed to open archive";
+        }
         file = compio_open_file("A", archive);
+        if (!file) {
+            failed = true;
+            FAIL() << "failed to open file in archive";
+        }
     }
 
     void TearDown() override {
-        compio_close_file(file);
-        compio_close_archive(archive);
+        if (file)
+            ASSERT_EQ(compio_close_file(file), 0);
+        if (archive)
+            ASSERT_EQ(compio_close_archive(archive), 0);
 
         remove(fn);
     }
 };
 
-TEST_F(OpenedFileTest, OpenClose) {
-    ASSERT_NE(archive, nullptr);
-    ASSERT_NE(file, nullptr);
-}
+TEST_F(OpenedFileTest, OpenClose) { ASSERT_FALSE(failed); }
 
 TEST_F(OpenedFileTest, BasicWriteRead) {
+    ASSERT_FALSE(failed);
     std::vector<unsigned char> in_data = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
     const std::size_t size = in_data.size();
 
@@ -110,6 +140,7 @@ std::vector<unsigned char> generate_random_buffer(std::size_t size) {
 }
 
 TEST_P(WriteReadNBytesTest, RandomWriteRead) {
+    ASSERT_FALSE(failed);
     uint64_t size = GetParam();
     auto in_data = generate_random_buffer(size);
     std::vector<unsigned char> out_data(size, '?');
@@ -131,6 +162,7 @@ TEST_P(WriteReadNBytesTest, RandomWriteRead) {
 }
 
 TEST_P(WriteReadNBytesTest, RandomWriteResetRead) {
+    ASSERT_FALSE(failed);
     uint64_t size = GetParam();
     auto in_data = generate_random_buffer(size);
     std::vector<unsigned char> out_data(size, '?');
@@ -138,6 +170,7 @@ TEST_P(WriteReadNBytesTest, RandomWriteResetRead) {
     ASSERT_EQ(compio_write(in_data.data(), size, file), size);
 
     Reset();
+    ASSERT_FALSE(failed);
 
     ASSERT_EQ(compio_read(out_data.data(), size, file), size);
 
@@ -163,7 +196,9 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     generate_tmp_fn(fn, sizeof(fn));
 
     archive = compio_open_archive(fn, "w+", &config);
+    ASSERT_NE(archive, nullptr);
     file = compio_open_file("A", archive);
+    ASSERT_NE(file, nullptr);
 
     auto [n_blocks, block_size] = GetParam();
 
@@ -175,11 +210,13 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
         fflush(archive->file);
     }
 
-    compio_close_file(file);
-    compio_close_archive(archive);
+    ASSERT_EQ(compio_close_file(file), 0);
+    ASSERT_EQ(compio_close_archive(archive), 0);
 
     archive = compio_open_archive(fn, "r+", &config);
+    ASSERT_NE(archive, nullptr);
     file = compio_open_file("A", archive);
+    ASSERT_NE(file, nullptr);
 
     for (std::size_t i = 0; i < n_blocks; ++i) {
         ASSERT_EQ(compio_tell(file), block_size * i) << "; iter=" << i;
@@ -190,8 +227,8 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
         }
     }
 
-    compio_close_file(file);
-    compio_close_archive(archive);
+    ASSERT_EQ(compio_close_file(file), 0);
+    ASSERT_EQ(compio_close_archive(archive), 0);
 
     remove(fn);
 }
@@ -235,7 +272,9 @@ TEST_P(RandomUsageTest, RandomUsage) {
         int current_fsize = 0;
 
         archive = compio_open_archive(fn, "w+", &config);
+        ASSERT_NE(archive, nullptr);
         file = compio_open_file("A", archive);
+        ASSERT_NE(file, nullptr);
 
         for (int i = 0; i < n_operations; ++i) {
             // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
@@ -283,8 +322,8 @@ TEST_P(RandomUsageTest, RandomUsage) {
             }
         }
 
-        compio_close_file(file);
-        compio_close_archive(archive);
+        ASSERT_EQ(compio_close_file(file), 0);
+        ASSERT_EQ(compio_close_archive(archive), 0);
     }
 
     remove(fn);
@@ -331,7 +370,9 @@ TEST_P(CustomUsageTest, CustomUsage) {
     int cursor = 0;
 
     archive = compio_open_archive(fn, "w+", &config);
+    ASSERT_NE(archive, nullptr);
     file = compio_open_file("A", archive);
+    ASSERT_NE(file, nullptr);
 
     for (const auto &operation : params.operations) {
         // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
@@ -361,8 +402,8 @@ TEST_P(CustomUsageTest, CustomUsage) {
         }
     }
 
-    compio_close_file(file);
-    compio_close_archive(archive);
+    ASSERT_EQ(compio_close_file(file), 0);
+    ASSERT_EQ(compio_close_archive(archive), 0);
 
     remove(fn);
 }
