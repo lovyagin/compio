@@ -5,8 +5,6 @@
 
 #include "compio/allocator.hpp"
 
-#include "third_party/hash_sha256.h"
-
 namespace compio {
 
 uint8_t parse_mode(const char *mode) {
