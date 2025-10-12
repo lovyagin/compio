@@ -1,6 +1,3 @@
-cmake_minimum_required(VERSION 3.10)
-project(compio)
-
 find_package(GTest REQUIRED)
 
 add_executable(compio_gtest
@@ -14,13 +11,8 @@ add_executable(compio_gtest
     src/test_library.cpp
 )
 
-target_compile_features(compio_gtest PRIVATE cxx_std_17)
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
-target_include_directories(compio_gtest PRIVATE 
-    ${PROJECT_SOURCE_DIR}/..
-    ${PROJECT_SOURCE_DIR}/../include
-    ${PROJECT_SOURCE_DIR}/include
-)
+target_include_directories(compio_gtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 enable_testing()
 

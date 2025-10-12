@@ -1,4 +1,4 @@
-#ifdef DEBUG_PRINT_ENABLED
+#ifdef COMPIO_DEBUG_PRINT
 #define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
 #else
 #define DEBUG_PRINT(...)                                                                           \
@@ -6,7 +6,7 @@
     } while (0)
 #endif
 
-#ifdef WARNING_PRINT_ENABLED
+#ifdef COMPIO_WARNING_PRINT
 #define WARNING_PRINT(...) fprintf(stderr, __VA_ARGS__)
 #else
 #define WARNING_PRINT(...)                                                                         \

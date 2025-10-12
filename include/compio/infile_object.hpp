@@ -125,7 +125,7 @@ public:
     void write() { S->write(); }
 };
 
-#ifdef BM_FILE_OPERATIONS_COUNTER
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
 int get_n_read_bytes();
 int get_n_written_bytes();
 #endif
