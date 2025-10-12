@@ -169,7 +169,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     file->archive = archive;
     strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
 
-    file->hash_tail = get_hash_tail(name);
+    file->hash_tail = fnv1a(name);
 
     return file;
 }
