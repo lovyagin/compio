@@ -60,7 +60,7 @@ int main() {
     const char buffer[] = "Hello, World!";
     uint64_t bytes_written = compio_write(buffer, sizeof(buffer), file);
     if (bytes_written != sizeof(buffer)) {
-        fprintf(stderr, "compio_write returned %d != %d\n", bytes_written, sizeof(buffer));
+        fprintf(stderr, "compio_write returned %lu != %lu\n", bytes_written, sizeof(buffer));
         compio_close_file(file);
         compio_close_archive(archive);
         return -3;
@@ -77,7 +77,7 @@ int main() {
     char out_buffer[sizeof(buffer)];
     uint64_t bytes_read = compio_read(out_buffer, sizeof(buffer), file);
     if (bytes_read != sizeof(buffer)) {
-        fprintf(stderr, "compio_read returned %d != %d\n", bytes_read, sizeof(buffer));
+        fprintf(stderr, "compio_read returned %lu != %lu\n", bytes_read, sizeof(buffer));
         compio_close_file(file);
         compio_close_archive(archive);
         return -5;
@@ -86,14 +86,14 @@ int main() {
     uint64_t fsize = compio_tell(file);
 
     if (fsize != sizeof(buffer)) {
-        fprintf(stderr, "file size is not equal to number of written bytes (%d != %d)\n", fsize,
+        fprintf(stderr, "file size is not equal to number of written bytes (%lu != %lu)\n", fsize,
                 sizeof(buffer));
         compio_close_file(file);
         compio_close_archive(archive);
         return -6;
     }
 
-    for (int i = 0; i < sizeof(buffer); ++i) {
+    for (size_t i = 0; i < sizeof(buffer); ++i) {
         if (buffer[i] != out_buffer[i]) {
             fprintf(stderr, "out data != in data (position: %d, %d != %d)\n", i, out_buffer[i],
                     buffer[i]);

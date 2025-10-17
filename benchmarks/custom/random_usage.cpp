@@ -25,7 +25,7 @@ int main() {
     std::uniform_int_distribution<int> d_op(0, 3);
     std::uniform_int_distribution<int> d_pos(0, file_size - 2);
 
-    for (int k = 0; k < n_repetitions; ++k) {
+    for (std::size_t k = 0; k < n_repetitions; ++k) {
         rng.seed(k);
 
         int cursor = 0;
@@ -34,7 +34,7 @@ int main() {
         archive = compio_open_archive(fn.c_str(), "w+", &config);
         file = compio_open_file("A", archive);
 
-        for (int i = 0; i < n_operations; ++i) {
+        for (std::size_t i = 0; i < n_operations; ++i) {
             std::size_t max_size = std::min<uint64_t>(file_size - cursor, sizeof(html_data));
             std::uniform_int_distribution<int> d_size(1, max_size);
             int size = d_size(rng);
@@ -55,9 +55,10 @@ int main() {
                     cursor += size;
                     break;
                 }
+                [[fallthrough]];
             }
             case 3: {
-                if (cursor < file_size) {
+                if (cursor < static_cast<int>(file_size)) {
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
 

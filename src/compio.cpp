@@ -284,7 +284,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 
     DEBUG_PRINT("[CW]b-tree range:\n");
     for (const auto &[key, val] : range) {
-        DEBUG_PRINT("\t(key.pos=%d) --- (val.addr=%d, val.size=%d)\n", key.pos, val.addr, val.size);
+        DEBUG_PRINT("\t(key.pos=%llu) --- (val.addr=%llu, val.size=%llu)\n", key.pos, val.addr, val.size);
     }
 
     const uint8_t *p_ptr = reinterpret_cast<const uint8_t *>(ptr);
@@ -343,7 +343,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                         // invalid archive (compressed data is too big after decompression)
                         // TODO: set appropriate errno
                         WARNING_PRINT(
-                            "compressed data is too big after decompression (%d is not enough)\n",
+                            "compressed data is too big after decompression (%llu is not enough)\n",
                             dst_size);
                         goto end;
                     }
@@ -481,7 +481,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                     // invalid archive (compressed data is too big after decompression)
                     // TODO: set appropriate errno
                     WARNING_PRINT(
-                        "compressed data is too big after decompression (%d is not enough)\n",
+                        "compressed data is too big after decompression (%llu is not enough)\n",
                         dst_size);
                     goto end;
                 }

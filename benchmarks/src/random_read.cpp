@@ -46,7 +46,7 @@ static void BM_stdio_RandomRead(benchmark::State &state) {
         }
 
         auto actual_file_size = ftell(file);
-        if (actual_file_size != file_size) {
+        if (static_cast<size_t>(actual_file_size) != file_size) {
             state.SkipWithError("wrong file_size: " + std::to_string(actual_file_size) +
                                 " != " + std::to_string(file_size));
         }

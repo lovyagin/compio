@@ -74,8 +74,7 @@ int main(int argc, char **argv) {
     std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
     std::uniform_int_distribution<std::size_t> d2(0, filesize - block_size);
 
-    char fn[L_tmpnam];
-    tmpnam(fn);
+    std::string fn = "tmp_fsize_benchmark_XXXXXX.compio";
 
     std::vector<std::vector<std::size_t>> columns(2, std::vector<std::size_t>());
     for (auto &column : columns) {
@@ -88,7 +87,7 @@ int main(int argc, char **argv) {
         config.cache_size__nodes = 0;
         config.cache_size__blocks = 0;
 
-        compio_archive *archive = compio_open_archive(fn, "w+", &config);
+        compio_archive *archive = compio_open_archive(fn.c_str(), "w+", &config);
         compio_file *file = compio_open_file("A", archive);
 
         for (std::size_t i = 0; i < n_blocks; ++i) {
@@ -112,7 +111,7 @@ int main(int argc, char **argv) {
     rng.seed(0);
 
     {
-        FILE *file = fopen(fn, "w+");
+        FILE *file = fopen(fn.c_str(), "w+");
 
         for (std::size_t i = 0; i < n_blocks; ++i) {
             if (type == 1) {
@@ -131,7 +130,7 @@ int main(int argc, char **argv) {
         fclose(file);
     }
 
-    remove(fn);
+    remove(fn.c_str());
 
     save_csv(columns, {"compio", "stdio"}, out_file);
 
