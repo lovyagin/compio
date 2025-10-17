@@ -465,10 +465,10 @@ TEST_F(PerformanceTest, DeallocationSpeed) {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
-    std::cout << "Deallocated " << blocks.size() << " blocks in " << duration.count()
-              << " microseconds" << std::endl;
-    std::cout << "Average: " << (duration.count() / double(blocks.size()))
-              << " microseconds per deallocation" << std::endl;
+    double avg_time = duration.count() / double(blocks.size());
+    RecordProperty("total_time_us", duration.count());
+    RecordProperty("average_time_us", avg_time);
+    RecordProperty("deallocations_count", blocks.size());
 }
 
 // Test boundary alignment
@@ -516,9 +516,11 @@ TEST_F(ErrorHandlingTest, ExtremeAllocationSizes) {
     // Test very large allocation - may succeed or fail, both are acceptable
     uint64_t huge_offset = allocator->allocate(1ULL << 30); // 1GB
     if (huge_offset != UINT64_MAX) {
-        std::cout << "Successfully allocated 1GB block" << std::endl;
+        RecordProperty("large_allocation_success", true);
         // If it succeeded, it should be valid
         EXPECT_TRUE(verify_allocation(huge_offset, 1ULL << 30));
+    } else {
+        RecordProperty("large_allocation_success", false);
     }
 }
 
@@ -559,7 +561,7 @@ TEST_F(StrategyComparisonTest, StrategiesBehaviorDifference) {
 
         results.push_back({strategies[i], test_offset, names[i]});
 
-        std::cout << names[i] << " allocated 150 bytes at offset " << test_offset << std::endl;
+        SCOPED_TRACE(names[i] + " allocated 150 bytes at offset " + std::to_string(test_offset));
     }
 
     // Verify that we got valid allocations

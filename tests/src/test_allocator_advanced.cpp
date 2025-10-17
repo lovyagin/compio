@@ -177,8 +177,8 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
         thread.join();
     }
 
-    std::cout << "Successful allocations: " << successful_allocations.load() << std::endl;
-    std::cout << "Failed allocations: " << failed_allocations.load() << std::endl;
+    RecordProperty("successful_allocations", successful_allocations.load());
+    RecordProperty("failed_allocations", failed_allocations.load());
 
     // Collect all unique allocations (removing duplicates that indicate race conditions)
     std::set<uint64_t> unique_offsets;
@@ -193,13 +193,7 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
     EXPECT_GT(successful_allocations.load(), num_threads * allocations_per_thread * 0.5)
         << "Should have reasonable success rate even with race conditions";
 
-    std::cout << "Unique allocations: " << unique_offsets.size() << std::endl;
-    std::cout << "Total allocations: " << successful_allocations.load() << std::endl;
-
-    if (unique_offsets.size() < successful_allocations.load()) {
-        std::cout << "Warning: Detected " << (successful_allocations.load() - unique_offsets.size())
-                  << " duplicate allocations (race condition detected)" << std::endl;
-    }
+    RecordProperty("unique_allocations", unique_offsets.size());
 }
 
 // Memory leak detection tests

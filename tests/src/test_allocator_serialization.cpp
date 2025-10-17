@@ -79,13 +79,13 @@ TEST_F(AllocatorStateTest, SaveAndLoadState) {
     bool load_success = new_allocator->load_state(new_archive);
 
     if (load_success) {
-        std::cout << "Serialization works! State loaded successfully." << std::endl;
+        RecordProperty("serialization_state_loaded", true);
 
         // Check that free space is available
         uint64_t reuse_offset = new_allocator->allocate(200);
         EXPECT_EQ(reuse_offset, offset2) << "Should reuse freed space after loading state";
     } else {
-        std::cout << "Serialization not fully working - load_state returned false" << std::endl;
+        RecordProperty("serialization_state_loaded", false);
         uint64_t test_offset = new_allocator->allocate(100);
         EXPECT_NE(test_offset, UINT64_MAX) << "Allocator should work even without state loading";
     }

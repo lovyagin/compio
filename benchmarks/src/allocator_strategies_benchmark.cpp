@@ -195,6 +195,8 @@ static void BM_AllocationStrategyCompression(benchmark::State &state) {
     state.SetBytesProcessed(state.iterations() * total_bytes);
 }
 
+// Commented out - unused benchmark function
+#if 0
 static void BM_AllocationFragmentationResistance(benchmark::State &state) {
     const int strategy = state.range(0);
     const size_t cycle_count = state.range(1);
@@ -202,7 +204,7 @@ static void BM_AllocationFragmentationResistance(benchmark::State &state) {
     std::string filename = "benchmark_frag_resist_" + std::to_string(strategy) + ".tmp";
 
     // Track internal fragmentation
-    size_t wasted_space = 0;
+    // size_t wasted_space = 0;
     size_t file_size = 0;
 
     for (auto _ : state) {
@@ -255,6 +257,7 @@ static void BM_AllocationFragmentationResistance(benchmark::State &state) {
     state.counters["FileSizePerOp"] =
         file_size / (double)(cycle_count * 10 / 2); // Size per remaining file
 }
+#endif
 
 static void BM_ExtremeFragmentation(benchmark::State &state) {
     const int strategy = state.range(0);
@@ -637,3 +640,4 @@ BENCHMARK(BM_FragmentedAllocationSpeed)
     ->Args({COMPIO_ALLOC_WORST_FIT, 100})
     ->Args({COMPIO_ALLOC_NEXT_FIT, 100})
     ->Unit(benchmark::kMillisecond);
+

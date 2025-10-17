@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
     ifs.seekg(0, std::ios_base::end);
     std::size_t sample_size = ifs.tellg();
 
-    if (sample_size < config.block_size * 4) {
+    if (sample_size < static_cast<std::size_t>(config.block_size * 4)) {
         throw std::runtime_error("sample file is too small");
     }
 
@@ -84,8 +84,7 @@ int main(int argc, char **argv) {
     std::uniform_int_distribution<std::size_t> d_start_prep(0, sample_size - config.block_size);
     std::uniform_int_distribution<std::size_t> d_size(config.block_size / 4, config.block_size * 4);
 
-    char fn[L_tmpnam];
-    tmpnam(fn);
+    std::string fn = "tmp_fragmentation_XXXXXX.compio";
 
     std::vector<std::vector<std::size_t>> columns(1, std::vector<std::size_t>());
     columns[0].reserve(n_blocks);
@@ -94,7 +93,7 @@ int main(int argc, char **argv) {
         config.cache_size__nodes = 0;
         config.cache_size__blocks = 0;
 
-        compio_archive *archive = compio_open_archive(fn, "w+", &config);
+        compio_archive *archive = compio_open_archive(fn.c_str(), "w+", &config);
         compio_file *file = compio_open_file("A", archive);
 
         for (std::size_t i = 0; i < file_size; i += config.block_size) {
@@ -122,7 +121,7 @@ int main(int argc, char **argv) {
         compio_close_archive(archive);
     }
 
-    remove(fn);
+    remove(fn.c_str());
 
     save_csv(columns, {"file size"}, out_file);
 
