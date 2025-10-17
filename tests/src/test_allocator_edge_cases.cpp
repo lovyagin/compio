@@ -512,8 +512,8 @@ TEST_F(EfficiencyTest, FragmentationMeasurement) {
     allocator->maintenance();
     uint8_t frag_after = allocator->get_fragmentation();
 
-    std::cout << "Fragmentation before defrag: " << (int)frag_before << "%" << std::endl;
-    std::cout << "Fragmentation after defrag: " << (int)frag_after << "%" << std::endl;
+    RecordProperty("fragmentation_before", (int)frag_before);
+    RecordProperty("fragmentation_after", (int)frag_after);
 
     EXPECT_LE(frag_after, frag_before) << "Defragmentation should not increase fragmentation";
 }
@@ -592,7 +592,7 @@ TEST_F(IntegrationTest, CompleteLifecycleTest) {
 
     // Phase 4: Stress fragmentation and defragmentation
     uint8_t frag_level = allocator->get_fragmentation();
-    std::cout << "Final fragmentation level: " << (int)frag_level << "%" << std::endl;
+    RecordProperty("final_fragmentation_level", (int)frag_level);
 
     allocator->maintenance();
 
@@ -600,5 +600,5 @@ TEST_F(IntegrationTest, CompleteLifecycleTest) {
     uint64_t final_offset = allocator->allocate(10000);
     EXPECT_NE(final_offset, UINT64_MAX) << "Should handle large allocation after full lifecycle";
 
-    std::cout << "Integration test completed successfully" << std::endl;
+    RecordProperty("integration_test_completed", true);
 }
