@@ -5,8 +5,6 @@
 
 #include "compio/allocator.hpp"
 
-#include "third_party/hash_sha256.h"
-
 namespace compio {
 
 uint8_t parse_mode(const char *mode) {
@@ -38,17 +36,10 @@ uint8_t parse_mode(const char *mode) {
     return mode_b;
 }
 
-uint64_t get_hash_tail(const char *fname) {
-    hash_sha256 hash;
-    hash.sha256_init();
-    hash.sha256_update((const uint8_t *)fname, COMPIO_FNAME_MAX_SIZE);
-    auto hashed_fname = hash.sha256_final();
-    uint64_t hash_tail;
-
-    memcpy(&hash_tail, hashed_fname.data(), sizeof(uint64_t));
-    memcpy(&hash_tail, &(*hashed_fname.begin()), sizeof(uint64_t));
-
-    return hash_tail;
+uint64_t fnv1a(const char *s) {
+    uint64_t hash = 0xcbf29ce484222325;
+    while (*s) hash = (hash ^ *s++) * 0x100000001b3;
+    return hash;
 }
 
 bool is_file_empty(FILE *file) {
