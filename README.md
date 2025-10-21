@@ -98,6 +98,35 @@ Compio is a lightweight library designed for transparent data compression, enabl
 
       Then, use the IDE's build tools to compile the project.
 
+## Usage
+
+Compio provides two interfaces:
+
+### C API
+```c
+#include <compio.h>
+
+compio_archive* archive = compio_open_archive("data.compio", "w+", &config);
+compio_file* file = compio_open_file("myfile.bin", archive);
+compio_write(data, size, file);
+compio_close_file(file);
+compio_close_archive(archive);
+```
+
+### C++ API (Modern)
+```cpp
+#include <compio.hpp>
+
+compio::Archive archive("data.compio", "w+");
+auto file = archive.open_file("myfile.bin");
+file << data;  // Stream-style I/O
+// Automatic cleanup via RAII
+```
+
+**C++ Features**: RAII, stream operators (`<<`/`>>`), exceptions, type safety, zero overhead.
+
+See [`docs/cpp_wrapper.md`](docs/cpp_wrapper.md) for full API reference and [`examples/`](examples/) for code examples.
+
 ## Notes
 
 - Ensure the path `C:/Users/Admin/compio/vcpkg/scripts/buildsystems/vcpkg.cmake` is adjusted to match your actual directory structure on Windows.
