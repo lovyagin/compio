@@ -5,6 +5,7 @@
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
+#include "compio/debug_print.hpp"
 #include "compio/utils.hpp"
 
 #include "test_util.hpp"
@@ -68,6 +69,7 @@ protected:
 
     // Helper to verify block allocation
     bool verify_allocation(uint64_t offset, size_t size) {
+        UNUSED(size);
         return offset != UINT64_MAX && offset >= sizeof(header);
     }
 
@@ -394,8 +396,10 @@ TEST_F(CoalescingTest, NonAdjacentBlocks) {
     // Allocate blocks with gaps
     uint64_t offset1 = allocator->allocate(block_size);
     uint64_t gap1 = allocator->allocate(50); // Gap
+    UNUSED(gap1);
     uint64_t offset2 = allocator->allocate(block_size);
     uint64_t gap2 = allocator->allocate(50); // Gap
+    UNUSED(gap2);
     uint64_t offset3 = allocator->allocate(block_size);
 
     ASSERT_TRUE(verify_allocation(offset1, block_size));
@@ -409,6 +413,7 @@ TEST_F(CoalescingTest, NonAdjacentBlocks) {
 
     // Should have separate free blocks, not one large one
     uint64_t new_offset = allocator->allocate(block_size * 3);
+    UNUSED(new_offset);
     // This allocation should either fail or get space at end of file
     // since the blocks can't be merged due to gaps
 }
@@ -548,9 +553,11 @@ TEST_F(StrategyComparisonTest, StrategiesBehaviorDifference) {
 
         // Create same fragmented pattern
         uint64_t block1 = allocator->allocate(50);  // Small
+        UNUSED(block1);
         uint64_t block2 = allocator->allocate(200); // Large
         uint64_t block3 = allocator->allocate(100); // Medium
         uint64_t block4 = allocator->allocate(300); // Very large
+        UNUSED(block4);
 
         // Free blocks to create holes of different sizes
         allocator->deallocate(block2, 200); // Large hole

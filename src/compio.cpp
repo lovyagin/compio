@@ -284,6 +284,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 
     DEBUG_PRINT("[CW]b-tree range:\n");
     for (const auto &[key, val] : range) {
+        UNUSED(key);
+        UNUSED(val);
         DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
             val.size);
     }
@@ -514,8 +516,7 @@ void compio_flush(compio_archive *archive) {
 
 namespace compio {
 
-std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file,
-                                                                    uint64_t size) {
+std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file, uint64_t size) {
     // return range of blocks, that intersect [cursor, cursor + size)
     std::vector<std::pair<tree_key, tree_val>> range;
 
