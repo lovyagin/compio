@@ -298,7 +298,7 @@ void free_blocks_manager::defragment() {
 void free_blocks_manager::print_list() const {
     free_block *current = head_;
     while (current) {
-        DEBUG_PRINT("Block: %d, %d\n", current->offset, current->size);
+        DEBUG_PRINT("Block: %lu, %lu\n", current->offset, current->size);
         current = current->next;
     }
 }

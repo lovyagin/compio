@@ -95,7 +95,7 @@ int main() {
 
     for (size_t i = 0; i < sizeof(buffer); ++i) {
         if (buffer[i] != out_buffer[i]) {
-            fprintf(stderr, "out data != in data (position: %d, %d != %d)\n", i, out_buffer[i],
+            fprintf(stderr, "out data != in data (position: %lu, %d != %d)\n", i, out_buffer[i],
                     buffer[i]);
             compio_close_file(file);
             compio_close_archive(archive);

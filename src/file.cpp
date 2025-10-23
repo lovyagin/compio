@@ -22,7 +22,7 @@ header::header()
       compression_type(COMPIO_COMPRESS_ZLIB) {}
 
 void header::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][header]addr=%llu\n", addr);
+    DEBUG_PRINT("[R][header]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(magic_number, file);
@@ -39,7 +39,7 @@ void header::read_from(FILE *file, uint64_t addr) {
 }
 
 void header::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][header]addr=%llu\n", addr);
+    DEBUG_PRINT("[W][header]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(magic_number, file);
@@ -56,7 +56,7 @@ void header::write_to(FILE *file, uint64_t addr) const {
 }
 
 void index_node::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][index_node]addr=%llu\n", addr);
+    DEBUG_PRINT("[R][index_node]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(is_leaf, file);
@@ -76,7 +76,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
 }
 
 void index_node::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][index_node]addr=%llu\n", addr);
+    DEBUG_PRINT("[W][index_node]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(is_leaf, file);
@@ -93,7 +93,7 @@ void index_node::write_to(FILE *file, uint64_t addr) const {
 }
 
 void storage_block::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][storage_block]addr=%llu\n", addr);
+    DEBUG_PRINT("[R][storage_block]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(is_compressed, file);
@@ -106,7 +106,7 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
 }
 
 void storage_block::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][storage_block]addr=%llu\n", addr);
+    DEBUG_PRINT("[W][storage_block]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(is_compressed, file);

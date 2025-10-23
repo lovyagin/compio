@@ -258,7 +258,7 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
 uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_write(cursor=%d, size=%d)\n", file->cursor, size);
+    DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
 
     if (size == 0) {
         return 0;
@@ -284,7 +284,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 
     DEBUG_PRINT("[CW]b-tree range:\n");
     for (const auto &[key, val] : range) {
-        DEBUG_PRINT("\t(key.pos=%llu) --- (val.addr=%llu, val.size=%llu)\n", key.pos, val.addr, val.size);
+        DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
+            val.size);
     }
 
     const uint8_t *p_ptr = reinterpret_cast<const uint8_t *>(ptr);
@@ -300,29 +301,29 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         if (i < n_existing_blocks) {
             if (range_idx >= range.size()) {
                 // this should not happen
-                WARNING_PRINT("range_idx = %d >= %d = range.size()\n", range_idx, range.size());
+                WARNING_PRINT("range_idx = %lu >= %lu = range.size()\n", range_idx, range.size());
                 goto end;
             }
             const auto &[key, val] = range[range_idx];
             if (key.pos != i * block_size) {
                 // this should not happen
-                WARNING_PRINT("key.pos = %d != %d = i * block_size\n", key.pos, i * block_size);
+                WARNING_PRINT("key.pos = %lu != %lu = i * block_size\n", key.pos, i * block_size);
                 for (const auto &[key, val] : range) {
-                    WARNING_PRINT("%d, %d - %d, %d\n", key.hash, key.pos, val.addr, val.size);
+                    WARNING_PRINT("%lu, %lu - %lu, %lu\n", key.hash, key.pos, val.addr, val.size);
                 }
-                WARNING_PRINT("cur=%d, size=%d\n", file->cursor, size);
-                WARNING_PRINT("fsize=%d\n", fsize);
+                WARNING_PRINT("cur=%lu, size=%lu\n", file->cursor, size);
+                WARNING_PRINT("fsize=%lu\n", fsize);
                 goto end;
             }
 
             uint64_t c_size;
-            DEBUG_PRINT("[CW]want block on val.addr=%d\n", val.addr);
+            DEBUG_PRINT("[CW]want block on val.addr=%lu\n", val.addr);
 
             if (archive->dec_cache.exists(val.addr)) {
                 auto cache_elem = archive->dec_cache.pop(val.addr);
                 dec_buffer = cache_elem.first;
                 c_size = cache_elem.second;
-                DEBUG_PRINT("[CW]compression_cache hit for val.addr=%d\n", val.addr);
+                DEBUG_PRINT("[CW]compression_cache hit for val.addr=%lu\n", val.addr);
             } else {
                 if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
                     // can reuse already allocated buffer
@@ -343,7 +344,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                         // invalid archive (compressed data is too big after decompression)
                         // TODO: set appropriate errno
                         WARNING_PRINT(
-                            "compressed data is too big after decompression (%llu is not enough)\n",
+                            "compressed data is too big after decompression (%lu is not enough)\n",
                             dst_size);
                         goto end;
                     }
@@ -354,7 +355,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                 c_size = block->size;
             }
 
-            DEBUG_PRINT("[CW]removing and deallocating block val.addr=%d\n", val.addr);
+            DEBUG_PRINT("[CW]removing and deallocating block val.addr=%lu\n", val.addr);
             archive->block_reader.remove_block(val.addr);
             archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + c_size);
         } else {
@@ -398,7 +399,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 
         // create new block
         uint64_t addr = archive->allocator->allocate(STORAGE_BLOCK_METASIZE + c_buffer_size);
-        DEBUG_PRINT("[CW]creating block on addr=%d\n", addr);
+        DEBUG_PRINT("[CW]creating block on addr=%lu\n", addr);
         tree_key new_key = {file->hash_tail, block_start};
         tree_val new_val = {addr, block_size};
 
@@ -455,7 +456,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         const uint64_t block_end = block_start + block_size;
 
         if (range_idx >= range.size()) {
-            WARNING_PRINT("went out of range in compio_read (%d >= %d)\n", range_idx, range.size());
+            WARNING_PRINT("went out of range in compio_read (%lu >= %lu)\n", range_idx, range.size());
             goto end;
         }
 
@@ -481,7 +482,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                     // invalid archive (compressed data is too big after decompression)
                     // TODO: set appropriate errno
                     WARNING_PRINT(
-                        "compressed data is too big after decompression (%llu is not enough)\n",
+                        "compressed data is too big after decompression (%lu is not enough)\n",
                         dst_size);
                     goto end;
                 }

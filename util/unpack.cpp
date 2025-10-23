@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
             throw std::runtime_error("failed to open file " + std::string(f.name));
         }
 
-        printf("size = %d\n", f.size);
+        printf("size = %lu\n", f.size);
 
         auto buffer = std::make_unique<uint8_t[]>(f.size);
         std::size_t read_bytes = compio_read(buffer.get(), f.size, file);
