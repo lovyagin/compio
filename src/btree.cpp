@@ -12,8 +12,8 @@ using namespace compio;
 #define RO(x) readonly(x, index_node)
 
 node_reader::node_reader(FILE *file, int tree_degree, int max_size)
-    : file(file),
-      tree_degree(tree_degree),
+    : tree_degree(tree_degree),
+      file(file),
       cache(max_size) {}
 
 shared_node node_reader::read_node(uint64_t addr) {
@@ -66,15 +66,15 @@ shared_node btree::create_node() { return reader.create_node(allocate_node()); }
 
 shared_node btree::read_root() { return read_node(readonly(archive->header, header)->index_root); }
 
-btree::btree(compio_archive *archive)
-    : archive(archive),
-      degree(archive->config->b_tree_degree),
-      reader(archive->file, degree, archive->config->cache_size__nodes) {
-    if (readonly(archive->header, header)->index_root != 0)
+btree::btree(compio_archive *archive_)
+    : degree(archive_->config->b_tree_degree),
+      archive(archive_),
+      reader(archive_->file, degree, archive_->config->cache_size__nodes) {
+    if (readonly(archive_->header, header)->index_root != 0)
         return;
 
     shared_node root = create_node();
-    archive->header->index_root = root.addr();
+    archive_->header->index_root = root.addr();
 }
 
 void btree::split_child(shared_node &parent, shared_node &child, const int index) {

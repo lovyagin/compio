@@ -31,12 +31,12 @@ private:
         uint64_t addr;
 
         storage(FILE *file, uint64_t addr, T *data)
-            : file(file),
-              addr(addr),
-              ref_count(1),
+            : ref_count(1),
               modified(true),
               removed(false),
-              data(data) {}
+              data(data),
+              file(file),
+              addr(addr) {}
 
         storage(FILE *file, uint64_t addr) : storage(file, addr, new T()) {
             modified = false;

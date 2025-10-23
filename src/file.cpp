@@ -14,8 +14,8 @@ using namespace compio;
 
 header::header()
     : magic_number(0),
-      file_size(sizeof(header)),
       index_root(0),
+      file_size(sizeof(header)),
       ftable(),
       allocator_state_offset(0),
       allocator_state_size(0),
@@ -120,10 +120,10 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
 index_node::index_node(int tree_degree)
     : is_leaf(true),
       num_keys(0),
-      tree_degree(tree_degree),
       keys(2 * tree_degree - 1),
       values(2 * tree_degree - 1),
-      children(2 * tree_degree) {}
+      children(2 * tree_degree),
+      tree_degree(tree_degree) {}
 
 storage_block::storage_block() : data(nullptr) {}
 

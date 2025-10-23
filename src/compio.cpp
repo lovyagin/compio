@@ -46,10 +46,12 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
 compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
     : file(file),
       config(config),
+      index(nullptr),
+      block_reader(file, config->cache_size__blocks),
       mode_b(mode_b),
-      dec_cache(config->cache_size__compression),
+      allocator(nullptr),
       c_buffer(new uint8_t[config->compressor.get_bufsize(config->block_size)]),
-      block_reader(file, config->cache_size__blocks) {
+      dec_cache(config->cache_size__compression) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
@@ -199,7 +201,7 @@ int compio_close_archive(compio_archive *archive) {
         WARNING_PRINT("warning: passed nullptr into compio_close_archive\n");
         return -1;
     }
-    
+
     // 1) flush cached data to file
     compio_flush(archive);
 
@@ -228,7 +230,7 @@ int compio_close_archive(compio_archive *archive) {
     // 6) and delete remaining structures
     delete archive->index;
     delete archive;
-    
+
     return COMPIO_SUCCESS;
 }
 
@@ -287,7 +289,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         UNUSED(key);
         UNUSED(val);
         DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
-            val.size);
+                    val.size);
     }
 
     const uint8_t *p_ptr = reinterpret_cast<const uint8_t *>(ptr);
