@@ -34,10 +34,12 @@ protected:
     }
 
     void TearDown() override {
-        if (file)
+        if (file) {
             ASSERT_EQ(compio_close_file(file), 0);
-        if (archive)
+        }
+        if (archive) {
             ASSERT_EQ(compio_close_archive(archive), 0);
+        }
 
         remove(fn);
     }
@@ -45,10 +47,12 @@ protected:
     void Reset() {
         // close and open file (cursor in the beginning after opening)
 
-        if (file)
+        if (file) {
             ASSERT_EQ(compio_close_file(file), 0);
-        if (archive)
+        }
+        if (archive) {
             ASSERT_EQ(compio_close_archive(archive), 0);
+        }
         archive = compio_open_archive(fn, "r+", &config);
         if (!archive) {
             failed = true;
@@ -88,10 +92,12 @@ protected:
     }
 
     void TearDown() override {
-        if (file)
+        if (file) {
             ASSERT_EQ(compio_close_file(file), 0);
-        if (archive)
+        }
+        if (archive) {
             ASSERT_EQ(compio_close_archive(archive), 0);
+        }
 
         remove(fn);
     }
@@ -131,7 +137,7 @@ std::vector<unsigned char> generate_random_buffer(std::size_t size) {
 
     for (uint64_t i = 0; i < size; i += sizeof(uint32_t)) {
         auto x = eng();
-        for (int j = 0; j < sizeof(uint32_t) && i + j < size; ++j) {
+        for (uint64_t j = 0; j < sizeof(uint32_t) && i + j < size; ++j) {
             data[i + j] = reinterpret_cast<char *>(&x)[j];
         }
     }
@@ -205,7 +211,7 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     auto in_data = generate_random_buffer(block_size);
     std::vector<unsigned char> out_data(block_size, '?');
 
-    for (std::size_t i = 0; i < n_blocks; ++i) {
+    for (int i = 0; i < n_blocks; ++i) {
         ASSERT_EQ(compio_write(in_data.data(), block_size, file), block_size);
         fflush(archive->file);
     }
@@ -218,11 +224,11 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     file = compio_open_file("A", archive);
     ASSERT_NE(file, nullptr);
 
-    for (std::size_t i = 0; i < n_blocks; ++i) {
+    for (int i = 0; i < n_blocks; ++i) {
         ASSERT_EQ(compio_tell(file), block_size * i) << "; iter=" << i;
         ASSERT_EQ(compio_read(out_data.data(), block_size, file), block_size) << "; iter=" << i;
 
-        for (std::size_t i = 0; i < block_size; ++i) {
+        for (int i = 0; i < block_size; ++i) {
             ASSERT_EQ(in_data[i], out_data[i]);
         }
     }
@@ -301,8 +307,8 @@ TEST_P(RandomUsageTest, RandomUsage) {
                         ASSERT_EQ(buffer[i], file_data[cursor + i]);
                     }
                     cursor += size;
-                    break;
                 }
+                break;
             }
             case 3: {
                 if (cursor < file_size) {

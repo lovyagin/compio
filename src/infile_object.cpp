@@ -57,7 +57,7 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
 
     if (ret != nmemb) {
         WARNING_PRINT("warning: failed to fwrite bytes to file "
-                      "(expected: %llu bytes, actual: %llu bytes)\n",
+                      "(expected: %lu bytes, actual: %lu bytes)\n",
                       size * nmemb, ret * size);
     }
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
@@ -97,7 +97,7 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
 
     if (ret != nmemb) {
         WARNING_PRINT("warning: failed to fread bytes from file "
-                      "(expected: %llu bytes, actual: %llu bytes)\n",
+                      "(expected: %lu bytes, actual: %lu bytes)\n",
                       size * nmemb, ret * size);
     }
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
