@@ -45,11 +45,18 @@ int main() {
         compio_close_archive(archive);
         printf("  ✓ Created archive with %s compression\n", compressor_names[c]);
 
-        // Reopen archive with default config (should auto-detect compressor)
-        compio_config default_config;
-        compio_build_default_config(&default_config);
+        // Get compression type from archive and configure matching compressor
+        compio_compression_type stored_type;
+        if (compio_get_compression_type(archive_path, &stored_type) != 0) {
+            printf("  ERROR: Failed to get compression type from archive\n");
+            continue;
+        }
 
-        archive = compio_open_archive(archive_path, "r+", &default_config);
+        compio_config reopen_config;
+        compio_build_default_config(&reopen_config);
+        compio_build_compressor_by_type(&reopen_config.compressor, stored_type);
+
+        archive = compio_open_archive(archive_path, "r+", &reopen_config);
         if (!archive) {
             printf("  ERROR: Failed to reopen archive\n");
             continue;
