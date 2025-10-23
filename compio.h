@@ -115,6 +115,18 @@ void compio_build_zstd_compressor(compio_compressor *result);
  */
 void compio_build_brotli_compressor(compio_compressor *result);
 
+/**
+ * @brief Build compressor based on compression type
+ *
+ * This is a helper function that automatically initializes the appropriate
+ * compressor based on the compression type. Useful for auto-detecting
+ * compression type from archive headers.
+ *
+ * @param result Pointer to compressor structure to initialize
+ * @param type Compression type to use
+ */
+void compio_build_compressor_by_type(compio_compressor *result, compio_compression_type type);
+
 typedef enum {
     COMPIO_ALLOC_FIRST_FIT, /**< First-fit allocation strategy */
     COMPIO_ALLOC_BEST_FIT,  /**< Best-fit allocation strategy */
