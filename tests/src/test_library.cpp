@@ -301,8 +301,8 @@ TEST_P(RandomUsageTest, RandomUsage) {
                         ASSERT_EQ(buffer[i], file_data[cursor + i]);
                     }
                     cursor += size;
-                    break;
                 }
+                break;
             }
             case 3: {
                 if (cursor < file_size) {
