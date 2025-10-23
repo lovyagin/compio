@@ -140,14 +140,14 @@ storage_block::storage_block(uint64_t size)
 files_table::files_table() : n_files(0) {}
 
 const files_table::file *files_table::find(const char *name) const {
-    for (int i = 0; i < n_files; ++i)
+    for (uint64_t i = 0; i < n_files; ++i)
         if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
             return &files[i];
     return NULL;
 }
 
 files_table::file *files_table::find(const char *name) {
-    for (int i = 0; i < n_files; ++i)
+    for (uint64_t i = 0; i < n_files; ++i)
         if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
             return &files[i];
     return NULL;
@@ -162,7 +162,7 @@ files_table::file *files_table::add(const char *name) {
 }
 
 int files_table::remove(const char *name) {
-    for (int i = 0; i < n_files; ++i) {
+    for (uint64_t i = 0; i < n_files; ++i) {
         if (!strncmp(files[i].name, name, COMPIO_FNAME_MAX_SIZE)) {
             memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));
             return 0;

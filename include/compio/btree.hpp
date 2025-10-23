@@ -98,7 +98,7 @@ public:
     bool update(const tree_key &key, const tree_val &new_value);
 
     // private:
-    int degree;
+    uint64_t degree;
     compio_archive *archive;
 
     /**

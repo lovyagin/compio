@@ -7,7 +7,7 @@
 #include <random>
 #include <string>
 
-inline void generate_tmp_fn(char *fn, int max_size) {
+inline void generate_tmp_fn(char *fn, std::size_t max_size) {
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path();
 

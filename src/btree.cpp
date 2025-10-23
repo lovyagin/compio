@@ -82,21 +82,21 @@ void btree::split_child(shared_node &parent, shared_node &child, const int index
 
     new_node->is_leaf = child->is_leaf;
     new_node->num_keys = degree - 1;
-    for (size_t j = 0; j < degree - 1; j++) {
+    for (uint64_t j = 0; j < degree - 1; j++) {
         new_node->keys[j] = child->keys[j + degree];
         new_node->values[j] = child->values[j + degree];
     }
     if (!child->is_leaf) {
-        for (size_t j = 0; j < degree; j++) {
+        for (uint64_t j = 0; j < degree; j++) {
             new_node->children[j] = child->children[j + degree];
         }
     }
     child->num_keys = degree - 1;
-    for (size_t j = parent->num_keys; j > index; j--) {
+    for (long j = parent->num_keys; j > index; j--) {
         parent->children[j + 1] = parent->children[j];
     }
     parent->children[index + 1] = new_node.addr();
-    for (size_t j = parent->num_keys; j > index; j--) {
+    for (long j = parent->num_keys; j > index; j--) {
         parent->keys[j] = parent->keys[j - 1];
         parent->values[j] = parent->values[j - 1];
     }
@@ -357,7 +357,7 @@ bool btree::update(const tree_key &key, const tree_val &new_value) {
 bool btree::update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value) {
     const auto num_keys = RO(node)->num_keys;
     const auto is_leaf = RO(node)->is_leaf;
-    for (int i = 0; i < num_keys; ++i) {
+    for (uint64_t i = 0; i < num_keys; ++i) {
         auto current_key = RO(node)->keys[i];
         if (current_key >= key) {
             if (current_key == key) {
