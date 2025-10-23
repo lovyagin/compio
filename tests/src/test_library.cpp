@@ -34,10 +34,12 @@ protected:
     }
 
     void TearDown() override {
-        if (file)
+        if (file) {
             ASSERT_EQ(compio_close_file(file), 0);
-        if (archive)
+        }
+        if (archive) {
             ASSERT_EQ(compio_close_archive(archive), 0);
+        }
 
         remove(fn);
     }
@@ -45,10 +47,12 @@ protected:
     void Reset() {
         // close and open file (cursor in the beginning after opening)
 
-        if (file)
+        if (file) {
             ASSERT_EQ(compio_close_file(file), 0);
-        if (archive)
+        }
+        if (archive) {
             ASSERT_EQ(compio_close_archive(archive), 0);
+        }
         archive = compio_open_archive(fn, "r+", &config);
         if (!archive) {
             failed = true;
@@ -88,10 +92,12 @@ protected:
     }
 
     void TearDown() override {
-        if (file)
+        if (file) {
             ASSERT_EQ(compio_close_file(file), 0);
-        if (archive)
+        }
+        if (archive) {
             ASSERT_EQ(compio_close_archive(archive), 0);
+        }
 
         remove(fn);
     }
