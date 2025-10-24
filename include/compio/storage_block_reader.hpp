@@ -6,6 +6,7 @@
 #ifndef STORAGE_BLOCK_READER_HPP_
 #define STORAGE_BLOCK_READER_HPP_
 
+#include "compio/allocator.hpp"
 #include "compio/file.hpp"
 #include "compio/infile_object.hpp"
 
@@ -25,7 +26,7 @@ struct storage_block_reader {
      * @param file File handle to read from
      * @param max_size Maximum number of blocks to cache
      */
-    storage_block_reader(FILE *file, int max_size);
+    storage_block_reader(FILE *file, block_allocator *allocator, int max_size);
 
     /**
      * @brief Read storage block from file
@@ -59,6 +60,7 @@ private:
     FILE *file; /**< Archive file handle */
     cache::lru_cache<uint64_t, smart_infile_object<storage_block>>
         cache; /**< LRU cache for blocks */
+    block_allocator *allocator;
 };
 
 } // namespace compio

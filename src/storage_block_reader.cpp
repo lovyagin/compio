@@ -4,9 +4,10 @@
 
 namespace compio {
 
-storage_block_reader::storage_block_reader(FILE *file, int max_size)
+storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, int max_size)
     : file(file),
-      cache(max_size) {}
+      cache(max_size),
+      allocator(allocator) {}
 
 smart_infile_object<storage_block> storage_block_reader::read_block(uint64_t addr) {
     if (!cache.exists(addr)) {

@@ -47,7 +47,7 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
     : file(file),
       config(config),
       index(nullptr),
-      block_reader(file, config->cache_size__blocks),
+      block_reader(nullptr),
       mode_b(mode_b),
       allocator(nullptr),
       c_buffer(new uint8_t[config->compressor.get_bufsize(config->block_size)]),
@@ -91,7 +91,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     archive = new compio_archive(file, mode_b, c);
     if (!archive) {
         WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
-        goto end1;
+        goto no_archive;
     }
 
     bool is_new_file;
@@ -102,36 +102,45 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         // compression type mismatch
         errno = EINVAL;
         WARNING_PRINT("warning: compression type mismatch while opening archive\n");
-        goto end2;
+        goto no_allocator;
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
     archive->allocator = new compio::block_allocator(archive);
     if (!archive->allocator) {
         WARNING_PRINT("warning: failed to allocate memory for allocator\n");
-        goto end2;
+        goto no_allocator;
+    }
+
+    archive->block_reader =
+        new compio::storage_block_reader(file, archive->allocator, c->cache_size__blocks);
+    if (!archive->block_reader) {
+        WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
+        goto no_block_reader;
     }
 
     archive->index = new btree(archive);
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
-        goto end3;
+        goto no_index;
     }
 
     if (!is_new_file && !archive->allocator->load_state(archive)) {
         WARNING_PRINT("warning: failed to load allocator state from archive\n");
-        goto end4;
+        goto no_allocator_state;
     }
 
     return archive;
 
-end4:
+no_allocator_state:
     delete archive->index;
-end3:
+no_index:
+    delete archive->block_reader;
+no_block_reader:
     delete archive->allocator;
-end2:
+no_allocator:
     delete archive;
-end1:
+no_archive:
     fclose(file);
 end:
     return NULL;
@@ -202,8 +211,9 @@ int compio_close_archive(compio_archive *archive) {
         return -1;
     }
 
-    // 1) flush cached data to file
+    // 1) flush cached data to file and delete block_reader
     compio_flush(archive);
+    delete archive->block_reader;
 
     // 2) save allocator state to the end of the file
     if (archive->allocator) {
@@ -338,7 +348,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                     DEBUG_PRINT("[CW]compression_cache fault, allocating buffer\n");
                 }
 
-                auto block = archive->block_reader.read_block(val.addr);
+                auto block = archive->block_reader->read_block(val.addr);
 
                 uint64_t dst_size = block->original_size;
                 if (block->is_compressed) {
@@ -360,7 +370,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
             }
 
             DEBUG_PRINT("[CW]removing and deallocating block val.addr=%lu\n", val.addr);
-            archive->block_reader.remove_block(val.addr);
+            archive->block_reader->remove_block(val.addr);
             archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + c_size);
         } else {
             DEBUG_PRINT("[CW]zero-initializing new block\n");
@@ -407,7 +417,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         tree_key new_key = {file->hash_tail, block_start};
         tree_val new_val = {addr, block_size};
 
-        auto block = archive->block_reader.create_block(addr, std::move(c_buffer), c_buffer_size);
+        auto block = archive->block_reader->create_block(addr, std::move(c_buffer), c_buffer_size);
         block->original_size = block_size;
         block->is_compressed = is_compressed;
         block->index_key = new_key;
@@ -460,7 +470,8 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         const uint64_t block_end = block_start + block_size;
 
         if (range_idx >= range.size()) {
-            WARNING_PRINT("went out of range in compio_read (%lu >= %lu)\n", range_idx, range.size());
+            WARNING_PRINT("went out of range in compio_read (%lu >= %lu)\n", range_idx,
+                          range.size());
             goto end;
         }
 
@@ -476,7 +487,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                 dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
             }
 
-            const auto block = archive->block_reader.read_block(val.addr);
+            const auto block = archive->block_reader->read_block(val.addr);
 
             uint64_t dst_size = block->original_size;
             if (block->is_compressed) {
@@ -512,7 +523,7 @@ end:
 }
 
 void compio_flush(compio_archive *archive) {
-    archive->block_reader.clear_cache();
+    archive->block_reader->clear_cache();
     archive->index->reader.clear_cache();
 }
 
