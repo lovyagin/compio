@@ -12,33 +12,24 @@ using namespace compio;
 class BasicAllocatorTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE *file;
     compio_archive *archive;
     block_allocator *allocator;
+    compio_config config;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
 
-        file = fopen(fn, "w+");
-        ASSERT_TRUE(file != nullptr);
+        compio_build_default_config(&config);
+        config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+        config.fragmentation_threshold = 30;
+        config.fill_holes_with_zeros = false;
 
-        auto *config = new compio_config();
-        compio_build_default_config(config);
-        config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
-        config->fragmentation_threshold = 30;
-        config->fill_holes_with_zeros = false;
-
-        archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        allocator = new block_allocator(archive);
+        archive = compio_open_archive(fn, "w+", &config);
+        allocator = archive->allocator;
     }
 
     void TearDown() override {
-        if (allocator)
-            delete allocator;
-        if (archive)
-            delete archive;
-        if (file)
-            fclose(file);
+        compio_close_archive(archive);
         remove(fn);
     }
 
