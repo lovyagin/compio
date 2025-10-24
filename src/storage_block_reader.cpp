@@ -4,12 +4,13 @@
 
 namespace compio {
 
-block::block(FILE *file, block_allocator *allocator, const compio_compressor *compressor,
-             tree_key key, uint64_t addr)
+block::block(FILE *file, block_allocator *allocator, btree *index,
+             const compio_compressor *compressor, uint64_t addr)
     : file(file),
       allocator(allocator),
+      index(index),
       compressor(compressor),
-      key(key),
+      key({0, 0}),
       addr(addr),
       c_size(0),
       dec_data(nullptr),
@@ -23,6 +24,7 @@ block::block(FILE *file, block_allocator *allocator, const compio_compressor *co
 
     c_size = b.size;
     dec_size = b.original_size;
+    key = b.index_key;
 
     if (b.is_compressed) {
         dec_data = std::make_unique<uint8_t[]>(dec_size);
@@ -38,10 +40,12 @@ block::block(FILE *file, block_allocator *allocator, const compio_compressor *co
     }
 }
 
-block::block(FILE *file, block_allocator *allocator, const compio_compressor *compressor,
-             tree_key key, uint64_t size, std::unique_ptr<uint8_t[]> &&data)
+block::block(FILE *file, block_allocator *allocator, btree *index,
+             const compio_compressor *compressor, tree_key key, uint64_t size,
+             std::unique_ptr<uint8_t[]> &&data)
     : file(file),
       allocator(allocator),
+      index(index),
       compressor(compressor),
       key(key),
       addr(0),
@@ -52,19 +56,23 @@ block::block(FILE *file, block_allocator *allocator, const compio_compressor *co
       is_removed(false),
       is_valid(true) {}
 
-// block::block(FILE *file, block_allocator *allocator, compio_compressor *compressor, tree_key key,
-//              uint64_t size)
-//     : block(file, allocator, compressor, key, size, std::make_unique<uint8_t[]>(size)) {}
+block::block(FILE *file, block_allocator *allocator, btree *index,
+             const compio_compressor *compressor, tree_key key, uint64_t size,
+             bool initialize_with_zeros)
+    : block(file, allocator, index, compressor, key, size, std::make_unique<uint8_t[]>(size)) {
+    if (initialize_with_zeros) {
+        std::fill_n(dec_data.get(), size, 0);
+    }
+}
 
 block::~block() {
     if (is_valid && is_modified && !is_removed) {
-        uint64_t c_buffer_size = compressor->get_bufsize(dec_size);
-        storage_block b(c_buffer_size);
+        storage_block b(compressor->get_bufsize(dec_size));
         b.original_size = dec_size;
         b.index_key = key;
 
-        int ret = compressor->compress(b.data.get(), &c_buffer_size, dec_data.get(), dec_size);
-        if (ret != 0 || c_buffer_size > dec_size) {
+        int ret = compressor->compress(b.data.get(), &b.size, dec_data.get(), dec_size);
+        if (ret != 0 || b.size > dec_size) {
             if (ret != 0) {
                 WARNING_PRINT("compressor->compress returned %d\n", ret);
             }
@@ -89,6 +97,14 @@ block::~block() {
 
         uint64_t new_addr = allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
         b.write_to(file, new_addr);
+
+        if (addr == 0) {
+            // this block was created with block_reader::create_block
+            index->insert(key, {new_addr, dec_size});
+        } else {
+            // this block was read from file with block_reader::read_block
+            index->update(key, {new_addr, dec_size});
+        }
     } else if (is_valid && is_removed && addr != 0) {
         allocator->deallocate(addr, c_size);
     }
@@ -96,43 +112,26 @@ block::~block() {
 
 const uint8_t *block::data() const { return dec_data.get(); }
 
-uint8_t *block::data() { return dec_data.get(); }
+uint8_t *block::data() {
+    is_modified = true;
+    return dec_data.get();
+}
 
-storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator,
+storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
     : file(file),
-      cache(max_size),
       allocator(allocator),
-      compressor(compressor) {}
-
-smart_infile_object<storage_block> storage_block_reader::read_block(uint64_t addr) {
-    if (!cache.exists(addr)) {
-        auto result = smart_infile_object<storage_block>(file, addr);
-        cache.put(addr, result);
-        return result;
-    } else {
-        return cache.get(addr);
-    }
+      index(index),
+      compressor(compressor) {
+    UNUSED(max_size);
 }
 
-smart_infile_object<storage_block>
-storage_block_reader::create_block(uint64_t addr, std::unique_ptr<uint8_t[]> &&data,
-                                   uint64_t size) {
-    auto result =
-        smart_infile_object<storage_block>(file, addr, new storage_block(std::move(data), size));
-    cache.put(addr, result);
-    return result;
+std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr) {
+    return std::make_shared<block>(file, allocator, index, compressor, addr);
 }
 
-void storage_block_reader::remove_block(uint64_t addr) {
-    if (!cache.exists(addr)) {
-        return;
-    }
-    auto block = cache.get(addr);
-    block.remove();
-    cache.remove(addr);
+std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
+    return std::make_shared<block>(file, allocator, index, compressor, key, size, true);
 }
-
-void storage_block_reader::clear_cache() { cache.clear(); }
 
 } // namespace compio

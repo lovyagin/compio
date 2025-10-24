@@ -49,9 +49,7 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       index(nullptr),
       block_reader(nullptr),
       mode_b(mode_b),
-      allocator(nullptr),
-      c_buffer(new uint8_t[config->compressor.get_bufsize(config->block_size)]),
-      dec_cache(config->cache_size__compression) {
+      allocator(nullptr) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
@@ -112,17 +110,17 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_allocator;
     }
 
-    archive->block_reader = new compio::storage_block_reader(file, archive->allocator,
-                                                             &c->compressor, c->cache_size__blocks);
-    if (!archive->block_reader) {
-        WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
-        goto no_block_reader;
-    }
-
     archive->index = new btree(archive);
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto no_index;
+    }
+
+    archive->block_reader = new compio::storage_block_reader(
+        file, archive->allocator, archive->index, &c->compressor, c->cache_size__blocks);
+    if (!archive->block_reader) {
+        WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
+        goto no_block_reader;
     }
 
     if (!is_new_file && !archive->allocator->load_state(archive)) {
@@ -133,10 +131,10 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     return archive;
 
 no_allocator_state:
-    delete archive->index;
-no_index:
     delete archive->block_reader;
 no_block_reader:
+    delete archive->index;
+no_index:
     delete archive->allocator;
 no_allocator:
     delete archive;
@@ -308,10 +306,9 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         const uint64_t block_start = i * block_size;
         const uint64_t block_end = block_start + block_size;
 
-        std::shared_ptr<uint8_t[]> dec_buffer;
+        const tree_key new_key{file->hash_tail, block_start};
+        std::shared_ptr<block> b;
 
-        // read block from file and decompress it into dec_buffer (or take decompressed data from
-        // cache)
         if (i < n_existing_blocks) {
             if (range_idx >= range.size()) {
                 // this should not happen
@@ -330,56 +327,11 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                 goto end;
             }
 
-            uint64_t c_size;
             DEBUG_PRINT("[CW]want block on val.addr=%lu\n", val.addr);
-
-            if (archive->dec_cache.exists(val.addr)) {
-                auto cache_elem = archive->dec_cache.pop(val.addr);
-                dec_buffer = cache_elem.first;
-                c_size = cache_elem.second;
-                DEBUG_PRINT("[CW]compression_cache hit for val.addr=%lu\n", val.addr);
-            } else {
-                if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
-                    // can reuse already allocated buffer
-                    dec_buffer = archive->dec_cache.pop_back().first;
-                    DEBUG_PRINT("[CW]compression_cache fault, reusing cache tail buffer\n");
-                } else {
-                    dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
-                    DEBUG_PRINT("[CW]compression_cache fault, allocating buffer\n");
-                }
-
-                auto block = archive->block_reader->read_block(val.addr);
-
-                uint64_t dst_size = block->original_size;
-                if (block->is_compressed) {
-                    int ret = config->compressor.decompress(dec_buffer.get(), &dst_size,
-                                                            block->data.get(), block->size);
-                    if (ret != 0) {
-                        // invalid archive (compressed data is too big after decompression)
-                        // TODO: set appropriate errno
-                        WARNING_PRINT(
-                            "compressed data is too big after decompression (%lu is not enough)\n",
-                            dst_size);
-                        goto end;
-                    }
-                } else {
-                    std::copy_n(block->data.get(), block->size, dec_buffer.get());
-                }
-
-                c_size = block->size;
-            }
-
-            DEBUG_PRINT("[CW]removing and deallocating block val.addr=%lu\n", val.addr);
-            archive->block_reader->remove_block(val.addr);
-            archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + c_size);
+            b = archive->block_reader->read_block(val.addr);
         } else {
             DEBUG_PRINT("[CW]zero-initializing new block\n");
-            if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
-                dec_buffer = archive->dec_cache.pop_back().first;
-            } else {
-                dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
-            }
-            std::fill_n(dec_buffer.get(), block_size, 0);
+            b = archive->block_reader->create_block(block_size, new_key);
         }
 
         // copy data from ptr into dec_buffer
@@ -390,47 +342,10 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                 std::max<int64_t>(0, static_cast<int64_t>(file->cursor) - block_start);
             uint64_t ptr_offset =
                 std::max<int64_t>(0, static_cast<int64_t>(block_start) - file->cursor);
-            std::copy_n(p_ptr + ptr_offset, copy_size, dec_buffer.get() + dec_offset);
+            std::copy_n(p_ptr + ptr_offset, copy_size, b->data() + dec_offset);
             written_bytes += copy_size;
             DEBUG_PRINT("[CW]copied ptr data to dec_buffer\n");
         }
-
-        // compress dec_buffer into c_buffer
-        bool is_compressed = true;
-        uint64_t c_buffer_size = config->compressor.get_bufsize(block_size);
-        auto c_buffer = std::make_unique<uint8_t[]>(c_buffer_size);
-        int ret = config->compressor.compress(c_buffer.get(), &c_buffer_size, dec_buffer.get(),
-                                              block_size);
-        if (ret != 0 || c_buffer_size > block_size) {
-            if (ret != 0) {
-                WARNING_PRINT("compressor->compress returned %d\n", ret);
-            }
-
-            is_compressed = false;
-            std::copy_n(dec_buffer.get(), block_size, c_buffer.get());
-            c_buffer_size = block_size;
-        }
-
-        // create new block
-        uint64_t addr = archive->allocator->allocate(STORAGE_BLOCK_METASIZE + c_buffer_size);
-        DEBUG_PRINT("[CW]creating block on addr=%lu\n", addr);
-        tree_key new_key = {file->hash_tail, block_start};
-        tree_val new_val = {addr, block_size};
-
-        auto block = archive->block_reader->create_block(addr, std::move(c_buffer), c_buffer_size);
-        block->original_size = block_size;
-        block->is_compressed = is_compressed;
-        block->index_key = new_key;
-
-        // insert to the tree (or update)
-        if (i < n_existing_blocks) {
-            archive->index->update(new_key, new_val);
-        } else {
-            archive->index->insert(new_key, new_val);
-        }
-
-        // save uncompressed data to cache
-        archive->dec_cache.put(addr, {dec_buffer, c_buffer_size});
     }
 
 end:
@@ -476,43 +391,14 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         }
 
         const auto &[key, val] = range[range_idx];
-
-        std::shared_ptr<uint8_t[]> dec_buffer;
-        if (archive->dec_cache.exists(val.addr)) {
-            dec_buffer = archive->dec_cache.get(val.addr).first;
-        } else {
-            if (config->cache_size__compression > 0 && archive->dec_cache.is_full()) {
-                dec_buffer = archive->dec_cache.pop_back().first;
-            } else {
-                dec_buffer = std::shared_ptr<uint8_t[]>(new uint8_t[block_size]);
-            }
-
-            const auto block = archive->block_reader->read_block(val.addr);
-
-            uint64_t dst_size = block->original_size;
-            if (block->is_compressed) {
-                int ret = config->compressor.decompress(dec_buffer.get(), &dst_size,
-                                                        block->data.get(), block->size);
-                if (ret != 0) {
-                    // invalid archive (compressed data is too big after decompression)
-                    // TODO: set appropriate errno
-                    WARNING_PRINT(
-                        "compressed data is too big after decompression (%lu is not enough)\n",
-                        dst_size);
-                    goto end;
-                }
-                archive->dec_cache.put(val.addr, {dec_buffer, block->size});
-            } else {
-                std::copy_n(block->data.get(), block->size, dec_buffer.get());
-            }
-        }
+        const std::shared_ptr<const block> b = archive->block_reader->read_block(val.addr);
 
         int64_t copy_size =
             std::min<int64_t>(read_end, block_end) - std::max<int64_t>(read_start, block_start);
         if (copy_size > 0) {
             uint64_t dec_offset = std::max<int64_t>(0, static_cast<int64_t>(cursor) - block_start);
             uint64_t ptr_offset = std::max<int64_t>(0, static_cast<int64_t>(block_start) - cursor);
-            std::copy_n(dec_buffer.get() + dec_offset, copy_size, p_ptr + ptr_offset);
+            std::copy_n(b->data() + dec_offset, copy_size, p_ptr + ptr_offset);
             read_bytes += copy_size;
         }
     }
@@ -523,7 +409,7 @@ end:
 }
 
 void compio_flush(compio_archive *archive) {
-    archive->block_reader->clear_cache();
+    // archive->block_reader->clear_cache();
     archive->index->reader.clear_cache();
 }
 

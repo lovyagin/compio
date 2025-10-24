@@ -6,7 +6,10 @@
 #ifndef STORAGE_BLOCK_READER_HPP_
 #define STORAGE_BLOCK_READER_HPP_
 
+#include <memory>
+
 #include "compio/allocator.hpp"
+#include "compio/btree.hpp"
 #include "compio/file.hpp"
 #include "compio/infile_object.hpp"
 
@@ -17,6 +20,7 @@ namespace compio {
 class block {
     FILE *file;
     block_allocator *allocator;
+    btree *index;
     const compio_compressor *compressor;
     tree_key key;
     uint64_t addr;
@@ -28,12 +32,12 @@ class block {
     bool is_valid;
 
 public:
-    block(FILE *file, block_allocator *allocator, const compio_compressor *compressor, tree_key key,
+    block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
           uint64_t addr);
-    block(FILE *file, block_allocator *allocator, const compio_compressor *compressor, tree_key key,
-          uint64_t size, std::unique_ptr<uint8_t[]> &&data);
-    // block(FILE *file, block_allocator *allocator, compio_compressor *compressor, tree_key key,
-    //       uint64_t size);
+    block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
+          tree_key key, uint64_t size, std::unique_ptr<uint8_t[]> &&data);
+    block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
+          tree_key key, uint64_t size, bool initialize_with_zeros);
     ~block();
 
     const uint8_t *data() const;
@@ -52,7 +56,7 @@ struct storage_block_reader {
      * @param file File handle to read from
      * @param max_size Maximum number of blocks to cache
      */
-    storage_block_reader(FILE *file, block_allocator *allocator,
+    storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                          const compio_compressor *compressor, int max_size);
 
     /**
@@ -60,7 +64,7 @@ struct storage_block_reader {
      * @param addr Block address in file
      * @return Smart pointer to storage block
      */
-    smart_infile_object<storage_block> read_block(uint64_t addr);
+    std::shared_ptr<block> read_block(uint64_t addr);
 
     /**
      * @brief Create new storage block
@@ -69,25 +73,23 @@ struct storage_block_reader {
      * @param size Data size
      * @return Smart pointer to created block
      */
-    smart_infile_object<storage_block>
-    create_block(uint64_t addr, std::unique_ptr<uint8_t[]> &&data, uint64_t size);
+    std::shared_ptr<block> create_block(uint64_t size, tree_key key);
 
     /**
      * @brief Remove block from cache
      * @param addr Block address to remove
      */
-    void remove_block(uint64_t addr);
+    // void remove_block(uint64_t addr);
 
     /**
      * @brief Clear all cached blocks
      */
-    void clear_cache();
+    // void clear_cache();
 
 private:
     FILE *file; /**< Archive file handle */
-    cache::lru_cache<uint64_t, smart_infile_object<storage_block>>
-        cache; /**< LRU cache for blocks */
     block_allocator *allocator;
+    btree *index;
     const compio_compressor *compressor;
 };
 
