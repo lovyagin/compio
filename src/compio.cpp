@@ -112,8 +112,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_allocator;
     }
 
-    archive->block_reader =
-        new compio::storage_block_reader(file, archive->allocator, c->cache_size__blocks);
+    archive->block_reader = new compio::storage_block_reader(file, archive->allocator,
+                                                             &c->compressor, c->cache_size__blocks);
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;

@@ -14,6 +14,32 @@
 
 namespace compio {
 
+class block {
+    FILE *file;
+    block_allocator *allocator;
+    const compio_compressor *compressor;
+    tree_key key;
+    uint64_t addr;
+    uint64_t c_size;
+    std::unique_ptr<uint8_t[]> dec_data;
+    uint64_t dec_size;
+    bool is_modified;
+    bool is_removed;
+    bool is_valid;
+
+public:
+    block(FILE *file, block_allocator *allocator, const compio_compressor *compressor, tree_key key,
+          uint64_t addr);
+    block(FILE *file, block_allocator *allocator, const compio_compressor *compressor, tree_key key,
+          uint64_t size, std::unique_ptr<uint8_t[]> &&data);
+    // block(FILE *file, block_allocator *allocator, compio_compressor *compressor, tree_key key,
+    //       uint64_t size);
+    ~block();
+
+    const uint8_t *data() const;
+    uint8_t *data();
+};
+
 /**
  * @brief Reader for storage blocks with LRU caching
  *
@@ -26,7 +52,8 @@ struct storage_block_reader {
      * @param file File handle to read from
      * @param max_size Maximum number of blocks to cache
      */
-    storage_block_reader(FILE *file, block_allocator *allocator, int max_size);
+    storage_block_reader(FILE *file, block_allocator *allocator,
+                         const compio_compressor *compressor, int max_size);
 
     /**
      * @brief Read storage block from file
@@ -61,6 +88,7 @@ private:
     cache::lru_cache<uint64_t, smart_infile_object<storage_block>>
         cache; /**< LRU cache for blocks */
     block_allocator *allocator;
+    const compio_compressor *compressor;
 };
 
 } // namespace compio
