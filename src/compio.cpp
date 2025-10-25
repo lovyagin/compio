@@ -234,6 +234,7 @@ int compio_close_archive(compio_archive *archive) {
         WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
         return -2;
     }
+    DEBUG_PRINT("[cca]: closed file\n");
 
     // 6) and delete remaining structures
     delete archive->index;
@@ -355,6 +356,8 @@ end:
 }
 
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
+    DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu)\n", file->cursor, size);
+
     const auto archive = file->archive;
     const auto config = archive->config;
 
@@ -377,6 +380,14 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     auto range = get_range_in_file(file, size);
     uint64_t range_idx = 0;
+
+    DEBUG_PRINT("[CR]b-tree range:\n");
+    for (const auto &[key, val] : range) {
+        UNUSED(key);
+        UNUSED(val);
+        DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
+                    val.size);
+    }
 
     uint8_t *p_ptr = reinterpret_cast<uint8_t *>(ptr);
 
