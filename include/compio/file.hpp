@@ -13,27 +13,10 @@
 #include <vector>
 
 #include "compio/infile_object.hpp"
+#include "compio/tree_types.hpp"
 #include "compio.h"
 
 namespace compio {
-
-/**
- * @brief Type for key in btree
- *
- */
-typedef struct {
-    uint64_t hash; /**< last 64 bits of hashed internal file name */
-    uint64_t pos;  /**< Position of block start in uncompressed file */
-} tree_key;
-
-/**
- * @brief Type for value in btree
- *
- */
-typedef struct {
-    uint64_t addr; /**< Address of storage_block in archive file */
-    uint64_t size; /**< Original size of uncompressed block */
-} tree_val;
 
 /**
  * @brief Files table for archive header

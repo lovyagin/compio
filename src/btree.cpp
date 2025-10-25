@@ -4,8 +4,8 @@
 #include <limits>
 
 #include "compio/allocator.hpp"
+#include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
-#include "compio/utils.hpp"
 
 using namespace compio;
 

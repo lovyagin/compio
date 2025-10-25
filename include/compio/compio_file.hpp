@@ -3,11 +3,8 @@
 
 #include <memory>
 
-#include "compio/btree.hpp"
-#include "compio/file.hpp"
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
-#include "compio.h"
 
 // forward declaration
 namespace compio {

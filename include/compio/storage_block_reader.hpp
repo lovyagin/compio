@@ -10,8 +10,7 @@
 
 #include "compio/allocator.hpp"
 #include "compio/btree.hpp"
-#include "compio/file.hpp"
-#include "compio/infile_object.hpp"
+#include "compio/tree_types.hpp"
 
 #include "third_party/lrucache.hpp"
 
