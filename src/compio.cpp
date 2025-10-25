@@ -329,7 +329,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
             }
 
             DEBUG_PRINT("[CW]want block on val.addr=%lu\n", val.addr);
-            b = archive->block_reader->read_block(val.addr);
+            b = archive->block_reader->read_block(val.addr, key);
         } else {
             DEBUG_PRINT("[CW]zero-initializing new block\n");
             b = archive->block_reader->create_block(block_size, new_key);
@@ -402,7 +402,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         }
 
         const auto &[key, val] = range[range_idx];
-        const std::shared_ptr<const block> b = archive->block_reader->read_block(val.addr);
+        const std::shared_ptr<const block> b = archive->block_reader->read_block(val.addr, key);
 
         int64_t copy_size =
             std::min<int64_t>(read_end, block_end) - std::max<int64_t>(read_start, block_start);
@@ -420,7 +420,7 @@ end:
 }
 
 void compio_flush(compio_archive *archive) {
-    // archive->block_reader->clear_cache();
+    archive->block_reader->clear_cache();
     archive->index->reader.clear_cache();
 }
 

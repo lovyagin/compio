@@ -98,13 +98,9 @@ block::~block() {
         uint64_t new_addr = allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
         b.write_to(file, new_addr);
 
-        if (addr == 0) {
-            // this block was created with block_reader::create_block
-            index->insert(key, {new_addr, dec_size});
-        } else {
-            // this block was read from file with block_reader::read_block
-            index->update(key, {new_addr, dec_size});
-        }
+        // block already in btree thanks to storage_block_reader
+        // we just need to update it's file address
+        index->update(key, {new_addr, dec_size}); 
     } else if (is_valid && is_removed && addr != 0) {
         allocator->deallocate(addr, c_size);
     }
@@ -122,16 +118,43 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
     : file(file),
       allocator(allocator),
       index(index),
-      compressor(compressor) {
-    UNUSED(max_size);
-}
+      compressor(compressor),
+      cache(max_size) {}
 
-std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr) {
-    return std::make_shared<block>(file, allocator, index, compressor, addr);
+std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
+    DEBUG_PRINT("[sbr][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
+                key.pos);
+    if (cache.exists(key)) {
+        DEBUG_PRINT("[sbr][read_block]: cache hit\n");
+        return cache.get(key);
+    }
+    DEBUG_PRINT("[sbr][read_block]: cache miss\n");
+    auto b = std::make_shared<block>(file, allocator, index, compressor, addr);
+    cache.put(key, b);
+    return b;
 }
 
 std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
-    return std::make_shared<block>(file, allocator, index, compressor, key, size, true);
+    DEBUG_PRINT("[sbr][create_block]: size=%lu, key.hash=%lu, key.pos=%lu\n", size, key.hash,
+                key.pos);
+    if (cache.exists(key)) {
+        WARNING_PRINT("[storage_block_reader]: trying to create block with key (%lu, %lu), that "
+                      "already exists in cache\n",
+                      key.hash, key.pos);
+        return cache.get(key);
+    }
+    auto b = std::make_shared<block>(file, allocator, index, compressor, key, size, true);
+    cache.put(key, b);
+    
+    // adding element to btree, but without file address (we didn't allocate memory block yet)
+    // block::~block will update this element in btree with new address
+    index->insert(key, {0, size});
+    return b;
+}
+
+void storage_block_reader::clear_cache() {
+    DEBUG_PRINT("[sbr][clear_cache]\n");
+    cache.clear();
 }
 
 } // namespace compio

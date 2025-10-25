@@ -44,7 +44,7 @@
 
 namespace cache {
 
-template <typename key_t, typename value_t> class lru_cache {
+template <typename key_t, typename value_t, typename hasher = std::hash<key_t>> class lru_cache {
 public:
     typedef typename std::pair<key_t, value_t> key_value_pair_t;
     typedef typename std::list<key_value_pair_t>::iterator list_iterator_t;
@@ -127,7 +127,7 @@ public:
 
 private:
     std::list<key_value_pair_t> _cache_items_list;
-    std::unordered_map<key_t, list_iterator_t> _cache_items_map;
+    std::unordered_map<key_t, list_iterator_t, hasher> _cache_items_map;
     size_t _max_size;
 };
 

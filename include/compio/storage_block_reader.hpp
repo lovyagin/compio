@@ -63,7 +63,7 @@ struct storage_block_reader {
      * @param addr Block address in file
      * @return Smart pointer to storage block
      */
-    std::shared_ptr<block> read_block(uint64_t addr);
+    std::shared_ptr<block> read_block(uint64_t addr, tree_key key);
 
     /**
      * @brief Create new storage block
@@ -75,21 +75,16 @@ struct storage_block_reader {
     std::shared_ptr<block> create_block(uint64_t size, tree_key key);
 
     /**
-     * @brief Remove block from cache
-     * @param addr Block address to remove
-     */
-    // void remove_block(uint64_t addr);
-
-    /**
      * @brief Clear all cached blocks
      */
-    // void clear_cache();
+    void clear_cache();
 
 private:
     FILE *file; /**< Archive file handle */
     block_allocator *allocator;
     btree *index;
     const compio_compressor *compressor;
+    cache::lru_cache<tree_key, std::shared_ptr<block>, tree_key_hash> cache;
 };
 
 } // namespace compio
