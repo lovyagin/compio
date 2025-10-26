@@ -70,6 +70,7 @@ Testing/
 CTestTestfile.cmake
 cmake_install.cmake
 tests/Makefile
+CMakeUserPresets.json
 
 # Logs and temporary files
 *.log

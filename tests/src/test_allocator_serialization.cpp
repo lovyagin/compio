@@ -12,25 +12,14 @@ using namespace compio;
 class AllocatorStateTest : public ::testing::Test {
 protected:
     char fn1[256], fn2[256];
-    FILE *file1;
-    FILE *file2;
 
     void SetUp() override {
         // Create two temporary files
         generate_tmp_fn(fn1, sizeof(fn1));
         generate_tmp_fn(fn2, sizeof(fn2));
-
-        file1 = fopen(fn1, "w+");
-        file2 = fopen(fn2, "w+");
-        ASSERT_TRUE(file1 != nullptr);
-        ASSERT_TRUE(file2 != nullptr);
     }
 
     void TearDown() override {
-        if (file1)
-            fclose(file1);
-        if (file2)
-            fclose(file2);
         remove(fn1);
         remove(fn2);
     }
@@ -38,14 +27,14 @@ protected:
 
 TEST_F(AllocatorStateTest, SaveAndLoadState) {
     // Create allocator and archive
-    auto *config = new compio_config();
-    compio_build_default_config(config);
-    config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
-    config->fragmentation_threshold = 30;
-    config->fill_holes_with_zeros = false;
+    compio_config config;
+    compio_build_default_config(&config);
+    config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+    config.fragmentation_threshold = 30;
+    config.fill_holes_with_zeros = false;
 
-    auto *archive = new compio_archive(file1, mode_bit::w | mode_bit::r, config);
-    auto *allocator = new block_allocator(archive);
+    auto *archive = compio_open_archive(fn1, "w+", &config);
+    auto *allocator = archive->allocator;
 
     // Create state with free blocks
     uint64_t offset1 = allocator->allocate(100);
@@ -64,16 +53,11 @@ TEST_F(AllocatorStateTest, SaveAndLoadState) {
     EXPECT_TRUE(save_success) << "Should be able to save allocator state";
 
     // Close allocator and archive
-    delete allocator;
-    delete archive;
-
-    // Reopen file in read mode
-    file1 = freopen(fn1, "r+", file1);
-    ASSERT_TRUE(file1 != nullptr);
+    compio_close_archive(archive);
 
     // Create new archive in read mode - should load header
-    auto *new_archive = new compio_archive(file1, mode_bit::r, config);
-    auto *new_allocator = new block_allocator(new_archive);
+    auto *new_archive = compio_open_archive(fn1, "r", &config);
+    auto *new_allocator = new_archive->allocator;
 
     // Try to load state
     bool load_success = new_allocator->load_state(new_archive);
@@ -90,6 +74,5 @@ TEST_F(AllocatorStateTest, SaveAndLoadState) {
         EXPECT_NE(test_offset, UINT64_MAX) << "Allocator should work even without state loading";
     }
 
-    delete new_allocator;
-    delete new_archive;
+    compio_close_archive(new_archive);
 }

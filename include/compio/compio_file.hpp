@@ -3,11 +3,8 @@
 
 #include <memory>
 
-#include "compio/btree.hpp"
-#include "compio/file.hpp"
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
-#include "compio.h"
 
 // forward declaration
 namespace compio {
@@ -27,7 +24,7 @@ struct compio_archive {
     const compio_config *config;                /**< Compio configuration */
     smart_infile_object<compio::header> header; /**< Read file header */
     compio::btree *index;
-    compio::storage_block_reader block_reader;
+    compio::storage_block_reader *block_reader;
 
     /**
      * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear
@@ -38,9 +35,6 @@ struct compio_archive {
     compio_archive(FILE *file, uint8_t mode_b, const compio_config *config);
 
     compio::block_allocator *allocator;
-
-    std::unique_ptr<uint8_t[]> c_buffer;
-    cache::lru_cache<uint64_t, std::pair<std::shared_ptr<uint8_t[]>, uint64_t>> dec_cache;
 };
 
 /**

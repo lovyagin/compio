@@ -15,56 +15,39 @@ using namespace compio;
 class ComprehensiveAllocatorTest : public ::testing::Test {
 protected:
     char fn[256];
-    FILE *file;
     compio_archive *archive;
     block_allocator *allocator;
+    compio_config config;
 
     void SetUp() override {
         generate_tmp_fn(fn, sizeof(fn));
 
-        file = fopen(fn, "w+");
-        ASSERT_TRUE(file != nullptr);
+        compio_build_default_config(&config);
+        config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+        config.fragmentation_threshold = 30;
+        config.fill_holes_with_zeros = false;
 
-        auto *config = new compio_config();
-        compio_build_default_config(config);
-        config->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
-        config->fragmentation_threshold = 30;
-        config->fill_holes_with_zeros = false;
-
-        archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        archive->allocator = allocator = new block_allocator(archive);
-        archive->index = new btree(archive);
+        archive = compio_open_archive(fn, "w+", &config);
+        allocator = archive->allocator;
     }
 
     void TearDown() override {
-        if (archive->index)
-            delete archive->index;
-        if (allocator)
-            delete allocator;
-        if (archive)
-            delete archive;
-        if (file)
-            fclose(file);
+        compio_close_archive(archive);
         remove(fn);
     }
 
     // Helper to create allocator with specific strategy
     void recreate_allocator_with_strategy(compio_allocation_strategy strategy) {
-        if (allocator)
-            delete allocator;
-        if (archive)
-            delete archive;
+        if (archive) {
+            compio_close_archive(archive);
+        }
+        allocator = nullptr;
+        archive = nullptr;
 
-        auto *config = new compio_config();
-        compio_build_default_config(config);
-        config->allocation_strategy = strategy;
-        config->fragmentation_threshold = 30;
-        config->fill_holes_with_zeros = false;
+        config.allocation_strategy = strategy;
 
-        file = freopen(fn, "w+", file);
-        archive = new compio_archive(file, mode_bit::w | mode_bit::r, config);
-        archive->allocator = allocator = new block_allocator(archive);
-        archive->index = new btree(archive);
+        archive = compio_open_archive(fn, "w+", &config);
+        allocator = archive->allocator;
     }
 
     // Helper to verify block allocation
