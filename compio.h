@@ -127,6 +127,9 @@ void compio_build_brotli_compressor(compio_compressor *result);
  */
 void compio_build_compressor_by_type(compio_compressor *result, compio_compression_type type);
 
+/**
+ * @brief Memory allocation strategies for managing free blocks in archive
+ */
 typedef enum {
     COMPIO_ALLOC_FIRST_FIT, /**< First-fit allocation strategy */
     COMPIO_ALLOC_BEST_FIT,  /**< Best-fit allocation strategy */
