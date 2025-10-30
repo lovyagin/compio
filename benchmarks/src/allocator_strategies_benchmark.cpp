@@ -10,13 +10,13 @@
 
 // Simple benchmark to test allocation strategy performance
 static void BM_AllocationSpeed(benchmark::State &state) {
-    const int strategy = state.range(0);
-    const size_t block_count = state.range(1);
-    const size_t block_size = state.range(2);
+    const auto strategy = static_cast<int>(state.range(0));
+    const auto block_count = static_cast<size_t>(state.range(1));
+    const auto block_size = static_cast<size_t>(state.range(2));
 
     std::string filename = "benchmark_alloc_" + std::to_string(strategy) + ".tmp";
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         // Create a fresh archive with the specified allocation strategy
         remove(filename.c_str());
         compio_config config = {};
@@ -49,17 +49,17 @@ static void BM_AllocationSpeed(benchmark::State &state) {
         remove(filename.c_str());
     }
 
-    state.SetBytesProcessed(state.iterations() * block_count * block_size);
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * block_count * block_size));
 }
 
 // Simple benchmark for fragmented allocation performance
 static void BM_FragmentedAllocationSpeed(benchmark::State &state) {
-    const int strategy = state.range(0);
-    const size_t operation_count = state.range(1);
+    const auto strategy = static_cast<int>(state.range(0));
+    const auto operation_count = static_cast<size_t>(state.range(1));
 
     std::string filename = "benchmark_frag_" + std::to_string(strategy) + ".tmp";
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         // Setup
         remove(filename.c_str());
         compio_config config = {};
@@ -115,14 +115,14 @@ static void BM_FragmentedAllocationSpeed(benchmark::State &state) {
     }
 
     size_t total_bytes = operation_count * 1024 + (operation_count / 2) * 512;
-    state.SetBytesProcessed(state.iterations() * total_bytes);
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * total_bytes));
 }
 
 static void BM_AllocationStrategyCompression(benchmark::State &state) {
-    const int strategy = state.range(0);
-    const size_t compressible_blocks = state.range(1);
-    const size_t random_blocks = state.range(2);
-    const size_t block_size = state.range(3);
+    const auto strategy = static_cast<int>(state.range(0));
+    const auto compressible_blocks = static_cast<size_t>(state.range(1));
+    const auto random_blocks = static_cast<size_t>(state.range(2));
+    const auto block_size = static_cast<size_t>(state.range(3));
 
     std::string filename = "benchmark_mixed_" + std::to_string(strategy) + ".tmp";
 
@@ -141,7 +141,7 @@ static void BM_AllocationStrategyCompression(benchmark::State &state) {
 
     size_t final_file_size = 0;
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         // Setup
         remove(filename.c_str());
         compio_config config = {};
@@ -188,11 +188,11 @@ static void BM_AllocationStrategyCompression(benchmark::State &state) {
     }
 
     // Report the file size as custom counter
-    state.counters["FileSize"] = final_file_size;
+    state.counters["FileSize"] = static_cast<double>(final_file_size);
 
     // Still report throughput for reference
     size_t total_bytes = (compressible_blocks + random_blocks) * block_size;
-    state.SetBytesProcessed(state.iterations() * total_bytes);
+    state.SetBytesProcessed(static_cast<int64_t>(state.iterations() * total_bytes));
 }
 
 // Commented out - unused benchmark function
@@ -260,13 +260,13 @@ static void BM_AllocationFragmentationResistance(benchmark::State &state) {
 #endif
 
 static void BM_ExtremeFragmentation(benchmark::State &state) {
-    const int strategy = state.range(0);
+    const auto strategy = static_cast<int>(state.range(0));
     // Reduced number of files to avoid potential resource issues
     const size_t initial_files = 50;
 
     std::string filename = "benchmark_extreme_frag_" + std::to_string(strategy) + ".tmp";
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         // Remove any existing file
         remove(filename.c_str());
 
@@ -340,17 +340,17 @@ static void BM_ExtremeFragmentation(benchmark::State &state) {
         remove(filename.c_str());
 
         // Store metrics
-        state.counters["FileSize"] = file_size;
-        state.counters["TotalAllocated"] = total_allocated;
-        state.counters["FailedAllocs"] = failed_allocations;
+        state.counters["FileSize"] = static_cast<double>(file_size);
+        state.counters["TotalAllocated"] = static_cast<double>(total_allocated);
+        state.counters["FailedAllocs"] = static_cast<double>(failed_allocations);
         if (file_size > 0) {
-            state.counters["SpaceEfficiency"] = total_allocated / (double)file_size * 100.0;
+            state.counters["SpaceEfficiency"] = static_cast<double>(total_allocated) / static_cast<double>(file_size) * 100.0;
         }
     }
 }
 
 static void BM_TargetedFragmentation(benchmark::State &state) {
-    const int strategy = state.range(0);
+    const auto strategy = static_cast<int>(state.range(0));
     std::string filename = "benchmark_targeted_" + std::to_string(strategy) + ".tmp";
 
     // Metrics to track
@@ -359,7 +359,7 @@ static void BM_TargetedFragmentation(benchmark::State &state) {
     size_t allocation_attempts = 0;
     size_t success_count = 0;
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         remove(filename.c_str());
         compio_config config = {};
         compio_build_default_config(&config);
@@ -430,14 +430,14 @@ static void BM_TargetedFragmentation(benchmark::State &state) {
     }
 
     // Report metrics that highlight differences
-    state.counters["FileSize"] = final_size;
-    state.counters["SuccessRate"] = 100.0 * success_count / (double)allocation_attempts;
-    state.counters["SpaceEfficiency"] = 100.0 * total_allocated / (double)final_size;
-    state.counters["AvgAllocationSize"] = total_allocated / (double)success_count;
+    state.counters["FileSize"] = static_cast<double>(final_size);
+    state.counters["SuccessRate"] = 100.0 * static_cast<double>(success_count) / static_cast<double>(allocation_attempts);
+    state.counters["SpaceEfficiency"] = 100.0 * static_cast<double>(total_allocated) / static_cast<double>(final_size);
+    state.counters["AvgAllocationSize"] = static_cast<double>(total_allocated) / static_cast<double>(success_count);
 }
 
 static void BM_LargeAllocationAfterFragmentation(benchmark::State &state) {
-    const int strategy = state.range(0);
+    const auto strategy = static_cast<int>(state.range(0));
     std::string filename = "benchmark_large_alloc_" + std::to_string(strategy) + ".tmp";
 
     // Metrics
@@ -445,7 +445,7 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State &state) {
     size_t final_file_size = 0;
     size_t total_allocated = 0;
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         remove(filename.c_str());
         compio_config config = {};
         compio_build_default_config(&config);
@@ -505,15 +505,15 @@ static void BM_LargeAllocationAfterFragmentation(benchmark::State &state) {
     }
 
     // The key metrics for comparing strategies
-    state.counters["LargeAllocSuccess"] = successful_large_allocations;
-    state.counters["SpaceEfficiency"] = 100.0 * total_allocated / (double)final_file_size;
-    state.counters["FileSize"] = final_file_size;
+    state.counters["LargeAllocSuccess"] = static_cast<double>(successful_large_allocations);
+    state.counters["SpaceEfficiency"] = 100.0 * static_cast<double>(total_allocated) / static_cast<double>(final_file_size);
+    state.counters["FileSize"] = static_cast<double>(final_file_size);
     state.counters["FragmentationRatio"] =
-        (final_file_size - total_allocated) / (double)final_file_size * 100.0;
+        static_cast<double>(final_file_size - total_allocated) / static_cast<double>(final_file_size) * 100.0;
 }
 
 static void BM_AlternatingSmallLargeAllocations(benchmark::State &state) {
-    const int strategy = state.range(0);
+    const auto strategy = static_cast<int>(state.range(0));
     std::string filename = "benchmark_alternating_" + std::to_string(strategy) + ".tmp";
 
     // Performance metrics
@@ -521,7 +521,7 @@ static void BM_AlternatingSmallLargeAllocations(benchmark::State &state) {
     size_t successful_allocations = 0;
     size_t allocation_attempts = 0;
 
-    for (auto _ : state) {
+    for ([[maybe_unused]] auto _ : state) {
         state.PauseTiming();
         remove(filename.c_str());
         compio_config config = {};
@@ -589,9 +589,9 @@ static void BM_AlternatingSmallLargeAllocations(benchmark::State &state) {
     }
 
     // Report metrics focused on allocation performance
-    state.counters["SuccessRate"] = 100.0 * successful_allocations / (double)allocation_attempts;
-    state.counters["AvgAllocTimeNs"] = allocation_time * 1e9 / allocation_attempts;
-    state.counters["TotalAllocations"] = allocation_attempts;
+    state.counters["SuccessRate"] = 100.0 * static_cast<double>(successful_allocations) / static_cast<double>(allocation_attempts);
+    state.counters["AvgAllocTimeNs"] = allocation_time * 1e9 / static_cast<double>(allocation_attempts);
+    state.counters["TotalAllocations"] = static_cast<double>(allocation_attempts);
 }
 
 BENCHMARK(BM_AlternatingSmallLargeAllocations)
