@@ -272,7 +272,6 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
     } else {
         if (RO(node)->is_leaf)
             return;
-        const bool flag = (idx == RO(node)->num_keys);
         auto child = read_node(RO(node)->children[idx]);
         if (RO(child)->num_keys < degree) {
             // Check if we can borrow from predecessor (only if idx > 0)
