@@ -74,10 +74,13 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     // if w+ passed as mode, we have to clear file contents (using w+)
     // otherwise we open with a+ mode to read and write
     const char *archive_open_mode;
-    if (mode_b & mode_bit::w)
+    if (mode_b & mode_bit::w) {
         archive_open_mode = "w+";
-    else
+    } else if (mode_b & mode_bit::a) {
         archive_open_mode = "a+";
+    } else {
+        archive_open_mode = "r";
+    }
 
     FILE *file;
     file = fopen(fp, archive_open_mode);
@@ -311,6 +314,12 @@ uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
+
+    if (file->archive->mode_b & mode_bit::r) {
+        WARNING_PRINT("warning: can't compio_write to read-only file\n");
+        errno = EROFS;
+        return 0;
+    }
 
     if (size == 0) {
         return 0;
