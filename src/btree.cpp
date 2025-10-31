@@ -300,9 +300,19 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
             // Need to merge
             if (idx != RO(node)->num_keys) {
                 merge_children(node, idx);
-            } else {
+            } else if (idx > 0) {
+                // Only merge with previous child if idx > 0
                 merge_children(node, idx - 1);
+            } else {
+                // idx == 0 and idx == num_keys means this is the only child
+                // This shouldn't happen in a valid B-tree, but handle gracefully
+                return;
             }
+        }
+
+        // After potential merge, recalculate child position
+        if (idx > RO(node)->num_keys) {
+            idx = RO(node)->num_keys;
         }
 
         child = read_node(RO(node)->children[idx]);

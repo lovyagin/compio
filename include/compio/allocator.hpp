@@ -192,9 +192,18 @@ private:
             if (it == blocks_by_size.end())
                 return nullptr;
 
+            // Worst-fit: find the LARGEST block among those >= size
+            // Start from lower_bound and iterate to find the maximum
             auto last = blocks_by_size.end();
             --last;
-            return last->second;
+
+            // Verify that the last block is actually >= size
+            if (last->first >= size) {
+                return last->second;
+            }
+
+            // If the largest block is too small, return nullptr
+            return nullptr;
         }
     };
 
