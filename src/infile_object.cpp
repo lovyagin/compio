@@ -95,7 +95,8 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
         ret = fread(ptr, size, nmemb, stream);
     }
 
-    if (ret != nmemb) {
+    if (ret != nmemb && !feof(stream)) {
+        // Only warn if it's an actual error, not just EOF
         WARNING_PRINT("warning: failed to fread bytes from file "
                       "(expected: %lu bytes, actual: %lu bytes)\n",
                       size * nmemb, ret * size);

@@ -7,7 +7,7 @@ add_executable(compio_benchmarks
     src/consecutive_write.cpp
     src/random_read.cpp
     src/random_write.cpp
-    src/allocator_strategies_benchmark.cpp
+    src/allocator_benchmark.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
 target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
