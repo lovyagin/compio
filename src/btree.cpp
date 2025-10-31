@@ -275,28 +275,48 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
         const bool flag = (idx == RO(node)->num_keys);
         auto child = read_node(RO(node)->children[idx]);
         if (RO(child)->num_keys < degree) {
-            const auto predecessor = read_node(RO(node)->children[idx - 1]);
-            const auto successor = read_node(RO(node)->children[idx + 1]);
-            if (idx != 0 && RO(predecessor)->num_keys >= degree) {
-                borrow_from_prev(node, idx);
-            } else if (idx != RO(node)->num_keys && RO(successor)->num_keys >= degree) {
-                borrow_from_next(node, idx);
-            } else {
-                if (idx != RO(node)->num_keys) {
-                    merge_children(node, idx);
-                } else {
-                    merge_children(node, idx - 1);
+            // Check if we can borrow from predecessor (only if idx > 0)
+            if (idx != 0) {
+                const auto predecessor = read_node(RO(node)->children[idx - 1]);
+                if (RO(predecessor)->num_keys >= degree) {
+                    borrow_from_prev(node, idx);
+                    child = read_node(RO(node)->children[idx]);
+                    remove_node(child, key);
+                    return;
                 }
+            }
+
+            // Check if we can borrow from successor (only if idx < num_keys)
+            if (idx != RO(node)->num_keys) {
+                const auto successor = read_node(RO(node)->children[idx + 1]);
+                if (RO(successor)->num_keys >= degree) {
+                    borrow_from_next(node, idx);
+                    child = read_node(RO(node)->children[idx]);
+                    remove_node(child, key);
+                    return;
+                }
+            }
+
+            // Need to merge
+            if (idx != RO(node)->num_keys) {
+                merge_children(node, idx);
+            } else if (idx > 0) {
+                // Only merge with previous child if idx > 0
+                merge_children(node, idx - 1);
+            } else {
+                // idx == 0 and idx == num_keys means this is the only child
+                // This shouldn't happen in a valid B-tree, but handle gracefully
+                return;
             }
         }
 
-        child = read_node(RO(node)->children[idx]);
-        auto predecessor = read_node(RO(node)->children[idx - 1]);
-        if (flag && idx > RO(node)->num_keys) {
-            remove_node(predecessor, key);
-        } else {
-            remove_node(child, key);
+        // After potential merge, recalculate child position
+        if (idx > RO(node)->num_keys) {
+            idx = RO(node)->num_keys;
         }
+
+        child = read_node(RO(node)->children[idx]);
+        remove_node(child, key);
     }
 }
 

@@ -189,7 +189,49 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         errno = ENAMETOOLONG;
         return -2;
     }
-    // TODO: remove all blocks from this file
+
+    // Find file in file table
+    auto file_table_item = readonly(archive->header, compio::header)->ftable.find(name);
+    if (file_table_item == nullptr) {
+        errno = ENOENT;
+        return -1;
+    }
+
+    // Get all blocks belonging to this file
+    const uint64_t file_size = file_table_item->size;
+    const uint64_t hash_tail = fnv1a(name);
+
+    if (file_size > 0) {
+        std::vector<std::pair<tree_key, tree_val>> all_blocks;
+        tree_key key_min = {hash_tail, 0};
+        tree_key key_max = {hash_tail, UINT64_MAX}; // Get all blocks for this file
+        archive->index->get_range(key_min, key_max, all_blocks);
+
+        // Save current file position
+        long saved_pos = ftell(archive->file);
+
+        // Deallocate all blocks and remove them from index
+        for (const auto &[key, val] : all_blocks) {
+            if (val.addr != 0) {
+                // Read storage_block metadata to get compressed size
+                storage_block sb;
+                sb.read_from(archive->file, val.addr);
+
+                // Deallocate: metadata + compressed data size
+                archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size);
+            }
+
+            // Remove block from B-tree index
+            archive->index->remove(key);
+        }
+
+        // Restore file position
+        if (saved_pos >= 0) {
+            fseek(archive->file, saved_pos, SEEK_SET);
+        }
+    }
+
+    // Remove file from file table
     return archive->header->ftable.remove(name);
 }
 

@@ -5,6 +5,8 @@
 #include <random>
 #include <string>
 #include <sys/stat.h>
+#include <utility>
+#include <vector>
 
 #include "compio.h"
 

@@ -9,6 +9,7 @@ add_executable(compio_gtest
     src/test_allocator_serialization.cpp
     src/test_compression_type.cpp
     src/test_library.cpp
+    src/test_file_removal.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)

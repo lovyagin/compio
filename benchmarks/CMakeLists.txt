@@ -1,13 +1,13 @@
 find_package(benchmark REQUIRED)
 
 add_executable(compio_benchmarks
-    src/benchmarks_main.cpp
-    src/consecutive_write.cpp
-    src/random_write.cpp
-    src/consecutive_read.cpp
-    src/random_read.cpp
     src/benchmark_util.cpp
-    src/allocator_strategies_benchmark.cpp
+    src/benchmarks_main.cpp
+    src/consecutive_read.cpp
+    src/consecutive_write.cpp
+    src/random_read.cpp
+    src/random_write.cpp
+    src/allocator_benchmark.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
 target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -23,3 +23,4 @@ target_include_directories(fragmentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/inc
 add_executable(random_usage custom/random_usage.cpp)
 target_link_libraries(random_usage PRIVATE compio)
 target_include_directories(random_usage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
