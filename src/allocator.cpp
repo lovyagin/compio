@@ -449,6 +449,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     // Get current file position
     long pos = ftell(archive->file);
     if (pos < 0) {
+        WARNING_PRINT("warning: ftell returned error in allocator.save_state\n");
         return false;
     }
 
@@ -456,13 +457,18 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     if (pos < static_cast<long>(sizeof(header))) {
         pos = sizeof(header);
         if (fseek(archive->file, pos, SEEK_SET) != 0) {
+            WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
             return false;
         }
     }
 
     // Write serialized data
+    DEBUG_PRINT("[W][allocator]addr=%lu;size=%lu\n", pos, size);
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
+        WARNING_PRINT(
+            "warning: fwrite failed to write all bytes in allocator.save_state (%lu < %lu)\n",
+            written, size);
         return false;
     }
 
@@ -633,6 +639,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         static constexpr size_t BUFFER_SIZE = 4096;
         static uint8_t zeros[BUFFER_SIZE] = {0};
 
+        DEBUG_PRINT("[W][deallocate]addr=%lu;size=%lu\n", offset, size);
         fseek(archive_->file, offset, SEEK_SET);
 
         size_t remaining = size;
