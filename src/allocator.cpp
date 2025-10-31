@@ -476,9 +476,6 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
     archive->header->allocator_state_size = size;
 
-    // Explicitly write header to disk to ensure it's saved
-    readonly(archive->header, header)->write_to(archive->file, 0);
-
     // Ensure data is written to disk
     fflush(archive->file);
 
