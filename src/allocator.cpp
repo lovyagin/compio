@@ -23,7 +23,7 @@ struct free_block;
 
 uint8_t ZEROS[4096] = {0};
 
-free_blocks_manager::free_blocks_manager(uint64_t *file_size)
+free_blocks_manager::free_blocks_manager(const uint64_t *file_size)
     : head_(nullptr),
       tail_(nullptr),
       last_alloc_(nullptr),
@@ -473,12 +473,11 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     }
 
     // Update header with allocator state location
-    // Use ptr() to mark header as modified so it gets written to disk
-    archive->header.ptr()->allocator_state_offset = static_cast<uint64_t>(pos);
-    archive->header.ptr()->allocator_state_size = size;
+    archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
+    archive->header->allocator_state_size = size;
 
     // Explicitly write header to disk to ensure it's saved
-    archive->header->write_to(archive->file, 0);
+    readonly(archive->header, header)->write_to(archive->file, 0);
 
     // Ensure data is written to disk
     fflush(archive->file);
@@ -487,28 +486,30 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
 }
 
 bool free_blocks_manager::load_from_file(compio_archive *archive) {
-    if (!archive || !archive->file || !archive->header) {
+    if (!archive || !archive->file || !readonly(archive->header, header)) {
         return false;
     }
 
     // Check if allocator state exists
-    if (archive->header->allocator_state_offset == 0 ||
-        archive->header->allocator_state_size == 0) {
+    if (readonly(archive->header, header)->allocator_state_offset == 0 ||
+        readonly(archive->header, header)->allocator_state_size == 0) {
         return false;
     }
 
     // Seek to allocator state position
-    if (fseek(archive->file, static_cast<long>(archive->header->allocator_state_offset),
+    if (fseek(archive->file,
+              static_cast<long>(readonly(archive->header, header)->allocator_state_offset),
               SEEK_SET) != 0) {
         return false;
     }
 
     // Create buffer for reading data
-    std::vector<uint8_t> buffer(archive->header->allocator_state_size);
+    std::vector<uint8_t> buffer(readonly(archive->header, header)->allocator_state_size);
 
     // Read allocator state data
-    size_t read = fread(buffer.data(), 1, archive->header->allocator_state_size, archive->file);
-    if (read != archive->header->allocator_state_size) {
+    size_t read = fread(buffer.data(), 1, readonly(archive->header, header)->allocator_state_size,
+                        archive->file);
+    if (read != readonly(archive->header, header)->allocator_state_size) {
         return false;
     }
 
@@ -559,12 +560,12 @@ free_block *free_blocks_manager::find_next_fit(const uint64_t size) const {
 
 block_allocator::block_allocator(compio_archive *archive)
     : archive_(archive),
-      blocks_manager_(&archive->header->file_size),
+      blocks_manager_(&readonly(archive->header, header)->file_size),
       last_fragmentation_(0) {
     if (!archive_) {
         throw std::runtime_error("Archive pointer is null");
     }
-    if (!archive_->header) {
+    if (!readonly(archive_->header, header)) {
         throw std::runtime_error("Archive header is null");
     }
 
@@ -573,7 +574,7 @@ block_allocator::block_allocator(compio_archive *archive)
     // and will be set properly when save_state() is called
 
     // Ensure we have valid initial file size
-    if (archive_->header->file_size < sizeof(header)) {
+    if (readonly(archive_->header, header)->file_size < sizeof(header)) {
         archive_->header->file_size = sizeof(header);
     }
 }
@@ -611,7 +612,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
         }
 
         // If no suitable free block found, allocate at the end
-        offset = archive_->header->file_size;
+        offset = readonly(archive_->header, header)->file_size;
         archive_->header->file_size += size;
         return offset;
     } catch (const std::exception &e) {
@@ -621,11 +622,11 @@ uint64_t block_allocator::allocate(uint64_t size) {
 }
 
 void block_allocator::deallocate(uint64_t offset, uint64_t size) {
-    if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
+    if (offset == UINT64_MAX || size == 0 || !archive_ || !readonly(archive_->header, header)) {
         return;
     }
 
-    if (offset + size > archive_->header->file_size) {
+    if (offset + size > readonly(archive_->header, header)->file_size) {
         return;
     }
 
@@ -772,10 +773,10 @@ void block_allocator::perform_defragmentation() {
     fflush(archive_->file);
 
     blocks_manager_ =
-        free_blocks_manager(archive_->header->file_size ? &archive_->header->file_size : nullptr);
+        free_blocks_manager(readonly(archive_->header, header)->file_size ? &readonly(archive_->header, header)->file_size : nullptr);
 
-    if (new_offset < archive_->header->file_size) {
-        blocks_manager_.add_free_block(new_offset, archive_->header->file_size - new_offset);
+    if (new_offset < readonly(archive_->header, header)->file_size) {
+        blocks_manager_.add_free_block(new_offset, readonly(archive_->header, header)->file_size - new_offset);
     } else {
         archive_->header->file_size = new_offset;
     }

@@ -63,7 +63,7 @@ public:
      * @brief Initialize manager with storage parameters
      * @param file_size Pointer to total file size reference
      */
-    explicit free_blocks_manager(uint64_t *file_size);
+    explicit free_blocks_manager(const uint64_t *file_size);
 
     /**
      * @brief Add new free block to the storage
@@ -125,7 +125,7 @@ public:
      * @brief Get pointer to file size reference
      * @return Raw pointer to managed file size
      */
-    uint64_t *get_file_size_ptr() const { return file_size_; }
+    const uint64_t *get_file_size_ptr() const { return file_size_; }
 
     /**
      * @brief Serialize manager state to buffer
@@ -213,7 +213,7 @@ private:
     free_block *tail_;                           /**< Tail of free blocks list */
     free_block *last_alloc_;                     /**< Last allocation position for NEXT_FIT */
     uint64_t total_free_;                        /**< Total free space in bytes */
-    uint64_t *file_size_;                        /**< Reference to total file size */
+    const uint64_t *file_size_;                        /**< Reference to total file size */
     uint8_t cached_fragmentation_;               /**< Cached fragmentation level */
     mutable bool recently_defragmented_ = false; /**< Flag for recent defragmentation */
 
