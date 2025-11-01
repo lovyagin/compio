@@ -47,7 +47,7 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
                 buffer[8 * i + 7] = input[4 * i];
             }
         } else {
-            throw std::invalid_argument("lendian_fwrite possible size values are 1, 2, 4, 8");
+            WARNING_PRINT("warning: lendian_fwrite possible size values are 1, 2, 4, 8 (%lu was passed)\n", size);
         }
         ret = fwrite((void *)buffer, size, nmemb, stream);
         delete buffer;
@@ -93,7 +93,7 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
                     std::swap(output[8 * i + 3], output[8 * i + 4]);
                 }
             } else {
-                throw std::invalid_argument("lendian_fread possible size values are 1, 2, 4, 8");
+                WARNING_PRINT("warning: lendian_fread possible size values are 1, 2, 4, 8 (%lu was passed)\n", size);
             }
         }
     } else {
