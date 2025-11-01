@@ -74,27 +74,28 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
     uint64_t ret;
     if (is_big_endian() && size != sizeof(uint8_t)) {
         ret = fread(ptr, size, nmemb, stream);
-        unsigned char *output = static_cast<unsigned char *>(ptr);
-        if (size == sizeof(uint16_t)) {
-            for (uint32_t i = 0; i < nmemb; i++) {
-                std::swap(output[2 * i], output[2 * i + 1]);
+        if (ret == nmemb) {
+            unsigned char *output = static_cast<unsigned char *>(ptr);
+            if (size == sizeof(uint16_t)) {
+                for (uint32_t i = 0; i < nmemb; i++) {
+                    std::swap(output[2 * i], output[2 * i + 1]);
+                }
+            } else if (size == sizeof(uint32_t)) {
+                for (uint32_t i = 0; i < nmemb; i++) {
+                    std::swap(output[4 * i], output[4 * i + 3]);
+                    std::swap(output[4 * i + 1], output[4 * i + 2]);
+                }
+            } else if (size == sizeof(uint64_t)) {
+                for (uint32_t i = 0; i < nmemb; i++) {
+                    std::swap(output[8 * i], output[8 * i + 7]);
+                    std::swap(output[8 * i + 1], output[8 * i + 6]);
+                    std::swap(output[8 * i + 2], output[8 * i + 5]);
+                    std::swap(output[8 * i + 3], output[8 * i + 4]);
+                }
+            } else {
+                throw std::invalid_argument("lendian_fread possible size values are 1, 2, 4, 8");
             }
-        } else if (size == sizeof(uint32_t)) {
-            for (uint32_t i = 0; i < nmemb; i++) {
-                std::swap(output[4 * i], output[4 * i + 3]);
-                std::swap(output[4 * i + 1], output[4 * i + 2]);
-            }
-        } else if (size == sizeof(uint64_t)) {
-            for (uint32_t i = 0; i < nmemb; i++) {
-                std::swap(output[8 * i], output[8 * i + 7]);
-                std::swap(output[8 * i + 1], output[8 * i + 6]);
-                std::swap(output[8 * i + 2], output[8 * i + 5]);
-                std::swap(output[8 * i + 3], output[8 * i + 4]);
-            }
-        } else {
-            throw std::invalid_argument("lendian_fread possible size values are 1, 2, 4, 8");
         }
-        return ret;
     } else {
         ret = fread(ptr, size, nmemb, stream);
     }
