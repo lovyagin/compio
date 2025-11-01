@@ -75,11 +75,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     // otherwise we open with a+ mode to read and write
     const char *archive_open_mode;
     if (mode_b & mode_bit::w) {
-        archive_open_mode = "w+";
+        archive_open_mode = "wb+";
     } else if (mode_b & mode_bit::a) {
-        archive_open_mode = "a+";
+        archive_open_mode = "ab+";
     } else {
-        archive_open_mode = "r";
+        archive_open_mode = "rb";
     }
 
     FILE *file;
