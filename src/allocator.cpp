@@ -483,7 +483,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
 }
 
 bool free_blocks_manager::load_from_file(compio_archive *archive) {
-    if (!archive || !archive->file || !readonly(archive->header, header)) {
+    if (!archive || !archive->file || !archive->header) {
         return false;
     }
 
@@ -562,7 +562,7 @@ block_allocator::block_allocator(compio_archive *archive)
     if (!archive_) {
         throw std::runtime_error("Archive pointer is null");
     }
-    if (!readonly(archive_->header, header)) {
+    if (!archive_->header) {
         throw std::runtime_error("Archive header is null");
     }
 
@@ -619,7 +619,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
 }
 
 void block_allocator::deallocate(uint64_t offset, uint64_t size) {
-    if (offset == UINT64_MAX || size == 0 || !archive_ || !readonly(archive_->header, header)) {
+    if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
         return;
     }
 
