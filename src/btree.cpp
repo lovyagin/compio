@@ -272,7 +272,6 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
     } else {
         if (RO(node)->is_leaf)
             return;
-        const bool flag = (idx == RO(node)->num_keys);
         auto child = read_node(RO(node)->children[idx]);
         if (RO(child)->num_keys < degree) {
             // Check if we can borrow from predecessor (only if idx > 0)
@@ -306,6 +305,7 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
             } else {
                 // idx == 0 and idx == num_keys means this is the only child
                 // This shouldn't happen in a valid B-tree, but handle gracefully
+                WARNING_PRINT("warning: trying to remove key from empty node in b-tree::remove_node\n");
                 return;
             }
         }

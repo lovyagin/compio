@@ -74,10 +74,13 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     // if w+ passed as mode, we have to clear file contents (using w+)
     // otherwise we open with a+ mode to read and write
     const char *archive_open_mode;
-    if (mode_b & mode_bit::w)
-        archive_open_mode = "w+";
-    else
-        archive_open_mode = "a+";
+    if (mode_b & mode_bit::w) {
+        archive_open_mode = "wb+";
+    } else if (mode_b & mode_bit::a) {
+        archive_open_mode = "ab+";
+    } else {
+        archive_open_mode = "rb";
+    }
 
     FILE *file;
     file = fopen(fp, archive_open_mode);
@@ -96,7 +99,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     is_new_file = is_file_empty(file);
     if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
-    } else if (archive->header->compression_type != c->compressor.compression_type) {
+    } else if (readonly(archive->header, header)->compression_type != c->compressor.compression_type) {
         // compression type mismatch
         errno = EINVAL;
         WARNING_PRINT("warning: compression type mismatch while opening archive\n");
@@ -151,10 +154,9 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
         return NULL;
     }
 
-    auto file_table_item = readonly(archive->header, compio::header)->ftable.find(name);
+    auto file_table_item = readonly(archive->header, header)->ftable.find(name);
     if (file_table_item == nullptr) {
-        // if mode != "r"
-        if (!((archive->mode_b & mode_bit::r) && (!(archive->mode_b & mode_bit::plus)))) {
+        if (!(archive->mode_b & mode_bit::r)) {
             file_table_item = archive->header->ftable.add(name);
             if (file_table_item == NULL) {
                 errno = ENFILE;
@@ -255,8 +257,8 @@ int compio_close_archive(compio_archive *archive) {
     compio_flush(archive);
     delete archive->block_reader;
 
-    // 2) save allocator state to the end of the file
-    if (archive->allocator) {
+    // 2) save allocator state to the end of the file, if not read-only mode
+    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
         if (!archive->allocator->save_state(archive)) {
             WARNING_PRINT("warning: failed to save allocator state\n");
             return -3;
@@ -312,6 +314,12 @@ uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
+
+    if (file->archive->mode_b & mode_bit::r) {
+        WARNING_PRINT("warning: can't compio_write to read-only file\n");
+        errno = EROFS;
+        return 0;
+    }
 
     if (size == 0) {
         return 0;
@@ -403,7 +411,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     const auto archive = file->archive;
     const auto config = archive->config;
 
-    auto file_table_item = archive->header->ftable.find(file->name);
+    auto file_table_item = readonly(archive->header, header)->ftable.find(file->name);
     const uint64_t fsize = file_table_item->size;
     const uint64_t block_size = config->block_size;
     const uint64_t cursor = file->cursor;

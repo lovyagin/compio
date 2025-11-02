@@ -2,6 +2,7 @@
 #include "compio.h"
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
+#include "compio/debug_print.hpp"
 #include <cstdio>
 #include <cstring>
 
@@ -27,6 +28,7 @@ TEST_F(FileRemovalTest, RemoveFileFreesBlocks) {
 
     // Get initial allocator state
     uint8_t initial_fragmentation = archive->allocator->get_fragmentation();
+    UNUSED(initial_fragmentation);
 
     // Create file and write some data
     compio_file* file = compio_open_file("test.txt", archive);
