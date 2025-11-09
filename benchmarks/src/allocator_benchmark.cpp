@@ -11,7 +11,7 @@
 #define COMPIO_SUCCESS 0
 #endif
 
-// Helper to generate random incompressible data
+/// Generates random incompressible data for testing.
 static void fill_random_data(std::vector<uint8_t>& data, std::mt19937& gen) {
     std::uniform_int_distribution<uint8_t> dist(0, 255);
     for (auto& byte : data) {
@@ -19,7 +19,7 @@ static void fill_random_data(std::vector<uint8_t>& data, std::mt19937& gen) {
     }
 }
 
-// Helper function to get file size
+/// Returns the size of a file in bytes.
 static size_t get_file_size(const char* filename) {
     FILE* f = fopen(filename, "rb");
     if (!f) return 0;
@@ -29,18 +29,19 @@ static size_t get_file_size(const char* filename) {
     return size;
 }
 
-
-// =============================================================================
-// BENCHMARK 1: Fragmentation Overhead with Different Block Sizes
-// Parameters: block_size, num_gaps, alloc_size
-// Measures how much space is wasted due to fragmentation
-// Expected: Best-fit wastes least space, Worst-fit wastes most
-// =============================================================================
+/**
+ * Benchmark: Fragmentation Overhead
+ *
+ * Measures space waste due to fragmentation with different block sizes.
+ * Parameters: strategy, block_size, num_gaps, alloc_size
+ *
+ * Expected results: Best-fit minimizes wasted space, Worst-fit maximizes it.
+ */
 static void BM_FragmentationOverhead(benchmark::State& state) {
     const int strategy = static_cast<int>(state.range(0));
     const size_t block_size = state.range(1);      // Archive block size (1KB, 4KB, 8KB)
     const size_t num_gaps = state.range(2);        // Number of gaps to create (10, 20, 50)
-    const size_t alloc_size = state.range(3);      // Size of files to allocate (500, 1000, 2000)
+    const size_t alloc_size = state.range(3);      // Size of files to allocate (500, 1000, 2000 bytes)
 
     std::string filename = "bench_frag_" + std::to_string(strategy) + ".tmp";
     std::mt19937 gen(12345);
@@ -63,9 +64,9 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
             continue;
         }
 
-        // Create gaps: small (1 block) and large (3 blocks)
+        // Create small (1 block) and large (3 blocks) files that will be deleted to form gaps
         for (size_t i = 0; i < num_gaps; i++) {
-            // Small gap file
+            // Create small file for 1-block gap
             std::string del1 = "del_s_" + std::to_string(i);
             compio_file* file = compio_open_file(del1.c_str(), archive);
             if (file) {
@@ -75,7 +76,7 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
                 compio_close_file(file);
             }
 
-            // Separator
+            // Create separator file to prevent gap merging
             std::string sep = "sep_" + std::to_string(i);
             file = compio_open_file(sep.c_str(), archive);
             if (file) {
@@ -84,7 +85,7 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
                 compio_close_file(file);
             }
 
-            // Large gap file (3 blocks)
+            // Create large file for 3-block gap
             std::string del2 = "del_l_" + std::to_string(i);
             file = compio_open_file(del2.c_str(), archive);
             if (file) {
@@ -94,7 +95,7 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
                 compio_close_file(file);
             }
 
-            // Separator
+            // Create another separator file
             std::string sep2 = "sep2_" + std::to_string(i);
             file = compio_open_file(sep2.c_str(), archive);
             if (file) {
@@ -106,13 +107,13 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
 
         size_t size_before_delete = get_file_size(filename.c_str());
 
-        // Delete to create gaps
+        // Delete files to create fragmented gaps
         for (size_t i = 0; i < num_gaps; i++) {
             compio_remove_file(archive, ("del_s_" + std::to_string(i)).c_str());
             compio_remove_file(archive, ("del_l_" + std::to_string(i)).c_str());
         }
 
-        // Allocate files of specified size
+        // Allocate new files of specified size into the fragmented space
         total_allocated_files = num_gaps * 2;
         for (size_t i = 0; i < total_allocated_files; i++) {
             std::string name = "new_" + std::to_string(i);
@@ -138,12 +139,14 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
     state.counters["AllocSize_bytes"] = static_cast<double>(alloc_size);
 }
 
-// =============================================================================
-// BENCHMARK 2: Space Reuse Efficiency
-// Parameters: block_size, num_files, realloc_percentage
-// Measures how efficiently strategies reuse freed space
-// Expected: Best-fit should reuse space most efficiently
-// =============================================================================
+/**
+ * Benchmark: Space Reuse Efficiency
+ *
+ * Measures how efficiently different allocation strategies reuse freed space.
+ * Parameters: strategy, block_size, num_files, delete_percentage
+ *
+ * Expected results: Best-fit should demonstrate the most efficient space reuse.
+ */
 static void BM_SpaceReuseEfficiency(benchmark::State& state) {
     const int strategy = static_cast<int>(state.range(0));
     const size_t block_size = state.range(1);
@@ -222,12 +225,12 @@ static void BM_SpaceReuseEfficiency(benchmark::State& state) {
     state.counters["FilesDeleted"] = static_cast<double>(num_deleted);
 }
 
-// =============================================================================
-// Register Benchmarks with Parameters
-// =============================================================================
-
-// Test 1: Fragmentation Overhead with different configurations
-// Parameters: strategy, block_size, num_gaps, alloc_size
+/**
+ * Benchmark Registration: Fragmentation Overhead
+ *
+ * Tests various configurations of block sizes, gap counts, and allocation sizes
+ * to measure fragmentation impact across different allocation strategies.
+ */
 BENCHMARK(BM_FragmentationOverhead)
     // Small block size (1KB), few gaps, small allocations
     ->Args({COMPIO_ALLOC_FIRST_FIT, 1024, 10, 500})
@@ -247,8 +250,12 @@ BENCHMARK(BM_FragmentationOverhead)
     ->Unit(benchmark::kMillisecond)
     ->Name("FragmentationOverhead");
 
-// Test 2: Space Reuse Efficiency with different configurations
-// Parameters: strategy, block_size, num_files, delete_percentage
+/**
+ * Benchmark Registration: Space Reuse Efficiency
+ *
+ * Tests various configurations of block sizes, file counts, and deletion percentages
+ * to measure how efficiently each allocation strategy reuses freed space.
+ */
 BENCHMARK(BM_SpaceReuseEfficiency)
     // Small blocks, few files, 30% deletion
     ->Args({COMPIO_ALLOC_FIRST_FIT, 1024, 30, 30})
