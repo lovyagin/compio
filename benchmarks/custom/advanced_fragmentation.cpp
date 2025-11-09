@@ -25,9 +25,9 @@
 #include "compio.h"
 #include "compio/compio_file.hpp"
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // Test Parameters Structure
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 struct FragmentationParams {
     // File size distribution (in blocks)
@@ -60,9 +60,9 @@ struct FragmentationParams {
     compio_allocation_strategy alloc_strategy;
 };
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // Data Generation Helpers
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 // Generate highly compressible data (repeated patterns)
 void generate_compressible_data(std::vector<uint8_t>& data, std::mt19937& gen) {
@@ -92,9 +92,9 @@ void generate_data(std::vector<uint8_t>& data, bool compressible, std::mt19937& 
     }
 }
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // File Metadata Tracking
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 enum FileSize { SMALL, MEDIUM, LARGE };
 
@@ -106,9 +106,9 @@ struct FileMetadata {
     bool is_deleted;
 };
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // Statistical Distributions
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 size_t sample_normal_distribution(double mean, double stddev, std::mt19937& gen, size_t min_val = 1) {
     std::normal_distribution<double> dist(mean, stddev);
@@ -119,13 +119,13 @@ size_t sample_normal_distribution(double mean, double stddev, std::mt19937& gen,
     return static_cast<size_t>(value);
 }
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // Fragmentation Test Runner
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 struct FragmentationResult {
     double overhead_percent;        // Wasted space percentage
-    double fragmentation_level;     // Fragmentation metric (0-100)
+    double fragmentation_level;     // Fragmentation score 0-100 (combines overhead and deletion rate)
     size_t initial_size;           // Archive size after initial writes
     size_t size_after_deletion;    // Archive size after deletions
     size_t final_size;             // Final archive size after rewrites
@@ -161,9 +161,9 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
 
     std::vector<FileMetadata> files;
 
-    // ========================================================================
+    // ------------------------------------------------------------------------
     // PHASE 1: Create initial files with mixed sizes and compressibility
-    // ========================================================================
+    // ------------------------------------------------------------------------
 
     for (int i = 0; i < params.total_files; i++) {
         FileMetadata meta;
@@ -215,9 +215,9 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
         fclose(fp);
     }
 
-    // ========================================================================
+    // ------------------------------------------------------------------------
     // PHASE 2: Strategic deletion to create fragmentation
-    // ========================================================================
+    // ------------------------------------------------------------------------
 
     std::vector<size_t> indices_to_delete;
 
@@ -271,9 +271,9 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
         fclose(fp);
     }
 
-    // ========================================================================
+    // ------------------------------------------------------------------------
     // PHASE 3: Write new files (potentially with different characteristics)
-    // ========================================================================
+    // ------------------------------------------------------------------------
 
     // Write files with opposite compressibility to create worst case
     int rewrite_count = 0;
@@ -328,9 +328,9 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
     return result;
 }
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // Parameter Grid Generation
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 std::vector<FragmentationParams> generate_parameter_grid() {
     std::vector<FragmentationParams> grid;
@@ -403,9 +403,9 @@ std::vector<FragmentationParams> generate_parameter_grid() {
     return grid;
 }
 
-// ============================================================================
+// ----------------------------------------------------------------------------
 // Statistics and Analysis
-// ============================================================================
+// ----------------------------------------------------------------------------
 
 struct StrategyStats {
     std::string name;
@@ -467,9 +467,9 @@ StrategyStats calculate_strategy_stats(
     return stats;
 }
 
-// ============================================================================
+// --------------------------------------------------------------------
 // CSV Output
-// ============================================================================
+// --------------------------------------------------------------------
 
 void save_results_to_csv(const std::vector<std::pair<FragmentationParams, FragmentationResult>>& results,
                          const std::string& filename) {
@@ -515,9 +515,9 @@ void save_results_to_csv(const std::vector<std::pair<FragmentationParams, Fragme
     ofs.close();
 }
 
-// ============================================================================
+// --------------------------------------------------------------------
 // Text Report Generation
-// ============================================================================
+// --------------------------------------------------------------------
 
 
 void generate_text_report(const std::vector<std::pair<FragmentationParams, FragmentationResult>>& results,
@@ -691,9 +691,9 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     ofs.close();
 }
 
-// ============================================================================
+// --------------------------------------------------------------------
 // Main
-// ============================================================================
+// --------------------------------------------------------------------
 
 int main(int argc, char* argv[]) {
     std::string output_prefix = "fragmentation_results";
@@ -742,11 +742,10 @@ int main(int argc, char* argv[]) {
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
 
     std::cout << "\n";
-    std::cout << "Saving results...\n";
-    std::cout << "  CSV file:    " << csv_file << "\n";
+    std::cout << "\nSaving results:\n";
+    std::cout << "  CSV: " << csv_file << "\n";
     save_results_to_csv(results, csv_file);
-
-    std::cout << "  Report file: " << report_file << "\n";
+    std::cout << "  TXT: " << report_file << "\n";
     generate_text_report(results, report_file);
 
     std::cout << "\nQUICK SUMMARY\n\n";
