@@ -24,3 +24,6 @@ add_executable(random_usage custom/random_usage.cpp)
 target_link_libraries(random_usage PRIVATE compio)
 target_include_directories(random_usage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+add_executable(advanced_fragmentation custom/advanced_fragmentation.cpp)
+target_link_libraries(advanced_fragmentation PRIVATE compio)
+target_include_directories(advanced_fragmentation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
