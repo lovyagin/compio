@@ -519,12 +519,6 @@ void save_results_to_csv(const std::vector<std::pair<FragmentationParams, Fragme
 // Text Report Generation
 // ============================================================================
 
-void print_line(char ch = '=', int width = 80) {
-    for (int i = 0; i < width; i++) {
-        std::cout << ch;
-    }
-    std::cout << "\n";
-}
 
 void generate_text_report(const std::vector<std::pair<FragmentationParams, FragmentationResult>>& results,
                          const std::string& filename) {
@@ -541,9 +535,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     std::vector<StrategyStats> all_stats;
 
     // Strategy Performance
-    ofs << "================================================================================\n";
-    ofs << "ALLOCATION STRATEGY PERFORMANCE\n";
-    ofs << "================================================================================\n\n";
+    ofs << "ALLOCATION STRATEGY PERFORMANCE\n\n";
 
     std::vector<compio_allocation_strategy> strategies = {
         COMPIO_ALLOC_FIRST_FIT,
@@ -569,9 +561,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     }
 
     // Ranking
-    ofs << "================================================================================\n";
-    ofs << "BEST STRATEGY RANKING (by average overhead)\n";
-    ofs << "================================================================================\n\n";
+    ofs << "\nBEST STRATEGY RANKING (by average overhead)\n\n";
 
     std::sort(all_stats.begin(), all_stats.end(),
               [](const StrategyStats& a, const StrategyStats& b) {
@@ -586,9 +576,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     ofs << "\n";
 
     // Block Size Impact
-    ofs << "================================================================================\n";
-    ofs << "BLOCK SIZE IMPACT\n";
-    ofs << "================================================================================\n\n";
+    ofs << "\nBLOCK SIZE IMPACT\n\n";
 
     std::map<size_t, std::vector<double>> block_size_overhead;
     std::map<size_t, std::vector<size_t>> block_size_wasted;
@@ -613,9 +601,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     }
 
     // Compression Impact
-    ofs << "================================================================================\n";
-    ofs << "COMPRESSION IMPACT\n";
-    ofs << "================================================================================\n\n";
+    ofs << "\nCOMPRESSION IMPACT\n\n";
 
     std::map<double, std::vector<double>> compress_overhead;
     std::map<double, std::vector<double>> compress_frag;
@@ -640,9 +626,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     }
 
     // Deletion Strategy Impact
-    ofs << "================================================================================\n";
-    ofs << "DELETION STRATEGY IMPACT\n";
-    ofs << "================================================================================\n\n";
+    ofs << "\nDELETION STRATEGY IMPACT\n\n";
 
     std::vector<double> middle_overheads, random_overheads;
     std::vector<double> middle_frags, random_frags;
@@ -674,9 +658,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     ofs << "  Average Fragmentation: " << calc_avg(random_frags) << "\n\n";
 
     // Key Findings
-    ofs << "================================================================================\n";
-    ofs << "KEY FINDINGS\n";
-    ofs << "================================================================================\n\n";
+    ofs << "\nKEY FINDINGS\n\n";
 
     if (!all_stats.empty()) {
         ofs << "1. Best performing strategy: " << all_stats[0].name
@@ -723,11 +705,7 @@ int main(int argc, char* argv[]) {
     std::string csv_file = output_prefix + ".csv";
     std::string report_file = output_prefix + "_report.txt";
 
-    std::cout << "\n";
-    print_line();
-    std::cout << "Fragmentation Testing Suite\n";
-    print_line();
-    std::cout << "\n";
+    std::cout << "\nFragmentation Testing Suite\n\n";
 
     std::cout << "Generating test grid...\n";
     auto param_grid = generate_parameter_grid();
@@ -755,7 +733,7 @@ int main(int argc, char* argv[]) {
         results.push_back({params, result});
 
         if (test_num % progress_step == 0 || test_num == static_cast<int>(param_grid.size())) {
-            std::cout << "OH: " << std::fixed << std::setprecision(1) << result.overhead_percent << "%, "
+            std::cout << "Overhead: " << std::fixed << std::setprecision(1) << result.overhead_percent << "%, "
                       << "Frag: " << result.fragmentation_level << "\n";
         }
     }
@@ -771,11 +749,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Report file: " << report_file << "\n";
     generate_text_report(results, report_file);
 
-    std::cout << "\n";
-    print_line();
-    std::cout << "QUICK SUMMARY\n";
-    print_line();
-    std::cout << "\n";
+    std::cout << "\nQUICK SUMMARY\n\n";
 
     // Quick summary
     std::map<std::string, double> strategy_avg;
@@ -803,10 +777,7 @@ int main(int argc, char* argv[]) {
     std::cout << "\nCompleted in " << duration.count() << " seconds\n";
     std::cout << "\nFull analysis available in:\n";
     std::cout << "  " << csv_file << "\n";
-    std::cout << "  " << report_file << "\n\n";
-
-    print_line();
-    std::cout << "\n";
+    std::cout << "  " << report_file << "\n";
 
     return 0;
 }
