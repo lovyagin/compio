@@ -124,6 +124,34 @@ struct tree_key_hash {
     size_t operator()(const tree_key &key) const { return key.hash ^ key.pos; }
 };
 
+inline bool operator==(const tree_val &x, const tree_val &y) {
+    return x.addr == y.addr && x.size == y.size;
+}
+
+inline bool operator<(const tree_val &x, const tree_val &y) {
+    if (x.addr == y.addr)
+        return x.size < y.size;
+    return x.addr < y.addr;
+}
+
+inline bool operator<=(const tree_val &x, const tree_val &y) {
+    if (x.addr == y.addr)
+        return x.size <= y.size;
+    return x.addr <= y.addr;
+}
+
+inline bool operator>=(const tree_val &x, const tree_val &y) {
+    if (x.addr == y.addr)
+        return x.size >= y.size;
+    return x.addr >= y.addr;
+}
+
+inline bool operator>(const tree_val &x, const tree_val &y) {
+    if (x.addr == y.addr)
+        return x.size > y.size;
+    return x.addr > y.addr;
+}
+
 } // namespace compio
 
 #endif // TREE_TYPES_H_

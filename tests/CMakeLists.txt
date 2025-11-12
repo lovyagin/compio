@@ -11,6 +11,9 @@ add_executable(compio_gtest
     src/test_compressor.cpp
     src/test_library.cpp
     src/test_file_removal.cpp
+    src/test_btree.cpp
+    src/test_btree_advanced.cpp
+    src/test_btree_edge_cases.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
