@@ -45,7 +45,7 @@ shared_node node_reader::create_node(uint64_t addr) {
 
 void node_reader::remove_node(const shared_node &node) {
     if (!cache.exists(node.addr())) {
-        // WARNING_PRINT("warning: trying to remove non-existing index node\n");
+        WARNING_PRINT("warning: trying to remove non-existing index node\n");
         return;
     }
     cache.remove(node.addr());
