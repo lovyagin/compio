@@ -104,7 +104,7 @@ void index_node::write_to(FILE *file, uint64_t addr) const {
     }
 }
 
-#define DEBUG_VAL (UINT64_MAX - 123)
+#define DEBUG_VAL (INT64_MAX - 123)
 
 void index_node::validate() const {
     assert(keys.size() == num_keys);
