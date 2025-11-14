@@ -13,17 +13,6 @@
 
 using namespace compio;
 
-// Helper function to check if a result vector contains a specific key
-inline bool contains_key(const std::vector<std::pair<tree_key, tree_val>>& result, const tree_key& key) {
-    return std::any_of(result.begin(), result.end(), 
-                      [&key](const auto& pair) { return pair.first == key; });
-}
-
-// Helper function to find a specific key-value pair in result
-inline auto find_key_value(const std::vector<std::pair<tree_key, tree_val>>& result, const tree_key& key) {
-    return std::find_if(result.begin(), result.end(), 
-                       [&key](const auto& pair) { return pair.first == key; });
-}
 
 class BTreeAdvancedTest : public ::testing::Test {
 protected:
@@ -97,9 +86,8 @@ protected:
 
     void verify_all_present(const std::vector<std::pair<tree_key, tree_val>>& data) {
         for (const auto& [key, val] : data) {
-            std::vector<std::pair<tree_key, tree_val>> result;
-            tree->get_range(key, key + 1, result);
-            ASSERT_TRUE(contains_key(result, key)) << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
+            auto result = tree->get(key);
+            ASSERT_TRUE(result.has_value()) << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
             // Note: We don't check value equality here because merge/borrow operations
             // might modify values during B-Tree restructuring. The key presence is
             // what's important for testing deletion correctness.
@@ -112,14 +100,13 @@ TEST_F(BTreeAdvancedTest, DeleteFromLeaf) {
     // Insert data that fits in single node
     auto inserted_data = insert_sequence(0, 3);
 
-    // Delete the second element (index 1)
+    // Delete second element (index 1)
     tree_key key_to_delete = inserted_data[1].first;
     tree->remove(key_to_delete);
 
     // Verify deletion
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key_to_delete, key_to_delete + 1, result);
-    EXPECT_TRUE(result.empty());
+    auto result = tree->get(key_to_delete);
+    EXPECT_FALSE(result.has_value());
 
     // Verify other elements still present
     std::vector<std::pair<tree_key, tree_val>> remaining_data = {inserted_data[0], inserted_data[2]};
@@ -193,11 +180,8 @@ TEST_F(BTreeAdvancedTest, CacheEviction) {
     auto test_data = create_sequential_data(20, 1, 0, 100);
     for (int i = 0; i < 20; i += 3) {
         const auto &[key, val] = test_data[i];
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found after cache eviction: pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found after cache eviction: pos=" << key.pos;
         // Note: Values might be modified during cache operations, so we only check key presence
     }
 }
@@ -214,12 +198,9 @@ TEST_F(BTreeAdvancedTest, CacheConsistencyAfterUpdate) {
     EXPECT_TRUE(updated);
 
     // Verify update is reflected
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second, new_val);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), new_val);
 }
 
 TEST_F(BTreeAdvancedTest, CacheConsistencyAfterDelete) {
@@ -232,9 +213,8 @@ TEST_F(BTreeAdvancedTest, CacheConsistencyAfterDelete) {
     tree->remove(key);
 
     // Verify deletion is reflected
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    EXPECT_TRUE(result.empty());
+    auto result = tree->get(key);
+    EXPECT_FALSE(result.has_value());
 }
 
 // Complex Range Query Tests
@@ -361,9 +341,9 @@ TEST_F(BTreeAdvancedTest, MixedOperationsStress) {
 
     // Verify remaining keys are still accessible
     for (const auto &key : inserted_keys) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
+        auto result = tree->get(key);
         // Note: Some keys might have been deleted, so we don't assert here
+        (void)result; // Suppress unused variable warning
     }
 }
 
@@ -388,9 +368,10 @@ TEST_F(BTreeAdvancedTest, ZeroSizeValues) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_FALSE(contains_key(result, key));
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value().addr, 1000);
+    EXPECT_EQ(result.value().size, 0);
 }
 
 TEST_F(BTreeAdvancedTest, LargeValues) {
@@ -399,12 +380,9 @@ TEST_F(BTreeAdvancedTest, LargeValues) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second.size, UINT64_MAX - 1000);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value().size, UINT64_MAX - 1000);
 }
 
 // Persistence with Complex Operations
@@ -420,27 +398,21 @@ TEST_F(BTreeAdvancedTest, PersistenceAfterComplexOperations) {
     for (int i = 0; i < 10; ++i) {
         if (i == 3) continue; // Skip deleted element
         
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(test_data[i].first, test_data[i].first + 1, result);
+        auto result = tree->get(test_data[i].first);
         
         if (i == 5) {
             // Verify update persisted
-            ASSERT_TRUE(contains_key(result, test_data[i].first));
-            auto it = find_key_value(result, test_data[i].first);
-            ASSERT_NE(it, result.end());
-            EXPECT_EQ(it->second.addr, 9999);
-            EXPECT_EQ(it->second.size, 8888);
+            ASSERT_TRUE(result.has_value());
+            EXPECT_EQ(result.value().addr, 9999);
+            EXPECT_EQ(result.value().size, 8888);
         } else {
             // Verify other elements persisted
-            ASSERT_TRUE(contains_key(result, test_data[i].first)) << "Key not found after reopen: index=" << i;
-            auto it = find_key_value(result, test_data[i].first);
-            ASSERT_NE(it, result.end());
-            EXPECT_EQ(it->second, test_data[i].second);
+            ASSERT_TRUE(result.has_value()) << "Key not found after reopen: index=" << i;
+            EXPECT_EQ(result.value(), test_data[i].second);
         }
     }
 
     // Verify deletion persisted
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(test_data[3].first, test_data[3].first + 1, result);
-    EXPECT_TRUE(result.empty());
+    auto result = tree->get(test_data[3].first);
+    EXPECT_FALSE(result.has_value());
 }

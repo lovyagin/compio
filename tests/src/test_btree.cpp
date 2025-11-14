@@ -13,17 +13,6 @@
 
 using namespace compio;
 
-// Helper function to check if a result vector contains a specific key
-inline bool contains_key(const std::vector<std::pair<tree_key, tree_val>>& result, const tree_key& key) {
-    return std::any_of(result.begin(), result.end(), 
-                      [&key](const auto& pair) { return pair.first == key; });
-}
-
-// Helper function to find a specific key-value pair in result
-inline auto find_key_value(const std::vector<std::pair<tree_key, tree_val>>& result, const tree_key& key) {
-    return std::find_if(result.begin(), result.end(), 
-                       [&key](const auto& pair) { return pair.first == key; });
-}
 
 class BTreeTest : public ::testing::Test {
 protected:
@@ -132,14 +121,10 @@ TEST_F(BTreeTest, SingleInsert) {
 
     tree->insert(key, val);
 
-    // Verify through range query
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first, key);
-    EXPECT_EQ(it->second, val);
+    // Verify through get
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val);
 }
 
 TEST_F(BTreeTest, MultipleInserts) {
@@ -153,12 +138,9 @@ TEST_F(BTreeTest, MultipleInserts) {
 
     // Verify all data is present
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -175,12 +157,9 @@ TEST_F(BTreeTest, UpdateExistingKey) {
     EXPECT_TRUE(update_result);
 
     // Verify update
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second, updated_val);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), updated_val);
 }
 
 TEST_F(BTreeTest, UpdateNonExistingKey) {
@@ -201,9 +180,8 @@ TEST_F(BTreeTest, RemoveExistingKey) {
     tree->remove(key);
 
     // Verify removal
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    EXPECT_TRUE(result.empty());
+    auto result = tree->get(key);
+    EXPECT_FALSE(result.has_value());
 }
 
 TEST_F(BTreeTest, RemoveNonExistingKey) {
@@ -293,12 +271,9 @@ TEST_F(BTreeTest, SortedInsertTriggersSplits) {
     // Verify all data is still accessible by checking a few blocks
     std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(20, 1, 0, 100);
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found after splits: pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found after splits: pos=" << key.pos;
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -311,12 +286,9 @@ TEST_F(BTreeTest, ReverseInsertTriggersSplits) {
 
     // Verify all data is still accessible
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found after reverse insert: pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found after reverse insert: pos=" << key.pos;
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -332,12 +304,9 @@ TEST_F(BTreeTest, RandomInsert) {
 
     // Verify all data is accessible
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found after random insert: pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found after random insert: pos=" << key.pos;
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -350,12 +319,9 @@ TEST_F(BTreeTest, SameHashDifferentPositions) {
 
     // Verify all are stored correctly
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found: pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found: pos=" << key.pos;
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -370,12 +336,9 @@ TEST_F(BTreeTest, SamePositionDifferentHashes) {
 
     // Verify all are stored correctly
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key)) << "Key not found: hash=" << key.hash;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value()) << "Key not found: hash=" << key.hash;
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -397,12 +360,9 @@ TEST_F(BTreeTest, LargeDataset) {
 
     for (int i = 0; i < 20; ++i) { // Check 20 random items
         const auto &[key, val] = test_data[i];
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key))
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value())
             << "Key not found in large dataset: hash=" << key.hash << ", pos=" << key.pos;
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        EXPECT_EQ(result.value(), val);
     }
 }

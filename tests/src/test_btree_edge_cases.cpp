@@ -13,18 +13,6 @@
 
 using namespace compio;
 
-// Helper function to check if a result vector contains a specific key
-inline bool contains_key(const std::vector<std::pair<tree_key, tree_val>>& result, const tree_key& key) {
-    return std::any_of(result.begin(), result.end(), 
-                      [&key](const auto& pair) { return pair.first == key; });
-}
-
-// Helper function to find a specific key-value pair in result
-inline auto find_key_value(const std::vector<std::pair<tree_key, tree_val>>& result, const tree_key& key) {
-    return std::find_if(result.begin(), result.end(), 
-                       [&key](const auto& pair) { return pair.first == key; });
-}
-
 class BTreeEdgeCasesTest : public ::testing::Test {
 protected:
     char filename[256];
@@ -118,12 +106,9 @@ TEST_F(BTreeEdgeCasesTest, UpdateDuplicateKey) {
     EXPECT_TRUE(tree->update(key, val3));
 
     // Verify final value
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second, val3);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val3);
 }
 
 // Zero and Negative-like Values
@@ -133,13 +118,9 @@ TEST_F(BTreeEdgeCasesTest, ZeroPositionKey) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first, key);
-    EXPECT_EQ(it->second, val);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val);
 }
 
 TEST_F(BTreeEdgeCasesTest, ZeroHashKey) {
@@ -148,13 +129,9 @@ TEST_F(BTreeEdgeCasesTest, ZeroHashKey) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first, key);
-    EXPECT_EQ(it->second, val);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val);
 }
 
 TEST_F(BTreeEdgeCasesTest, ZeroAddressValue) {
@@ -163,12 +140,9 @@ TEST_F(BTreeEdgeCasesTest, ZeroAddressValue) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second.addr, 0);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value().addr, 0);
 }
 
 // Maximum Values
@@ -178,12 +152,9 @@ TEST_F(BTreeEdgeCasesTest, MaximumHashKey) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first.hash, UINT64_MAX);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val);
 }
 
 TEST_F(BTreeEdgeCasesTest, MaximumPositionKey) {
@@ -192,13 +163,9 @@ TEST_F(BTreeEdgeCasesTest, MaximumPositionKey) {
 
     tree->insert(key, val);
 
-    // Use a range that doesn't cause overflow
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, make_key(1, UINT64_MAX), result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first.pos, UINT64_MAX - 1);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val);
 }
 
 TEST_F(BTreeEdgeCasesTest, MaximumAddressValue) {
@@ -207,12 +174,9 @@ TEST_F(BTreeEdgeCasesTest, MaximumAddressValue) {
 
     tree->insert(key, val);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second.addr, UINT64_MAX);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value().addr, UINT64_MAX);
 }
 
 // Range Query Edge Cases
@@ -241,10 +205,9 @@ TEST_F(BTreeEdgeCasesTest, RangeQuerySingleUnitRange) {
     std::vector<std::pair<tree_key, tree_val>> result;
     tree->get_range(key, key + 1, result);
 
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first, key);
+    EXPECT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0].first, key);
+    EXPECT_EQ(result[0].second, val);
 }
 
 TEST_F(BTreeEdgeCasesTest, RangeQueryMaximumRange) {
@@ -270,35 +233,25 @@ TEST_F(BTreeEdgeCasesTest, SingleNodeTree) {
     // Verify all operations work on single node
     auto test_data = create_sequential_data(4, 1, 0, 50);
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key));
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(result.value(), val);
     }
 
     // Remove from single node
     tree->remove(test_data[1].first); // Remove second element
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(test_data[1].first, test_data[1].first + 1, result);
-    EXPECT_TRUE(result.empty());
+    auto result = tree->get(test_data[1].first);
+    EXPECT_FALSE(result.has_value());
 
     // Verify others still exist
-    result.clear();
-    tree->get_range(test_data[0].first, test_data[0].first + 1, result);
-    ASSERT_TRUE(contains_key(result, test_data[0].first));
-    auto it0 = find_key_value(result, test_data[0].first);
-    ASSERT_NE(it0, result.end());
-    EXPECT_EQ(it0->second, test_data[0].second);
+    auto result0 = tree->get(test_data[0].first);
+    ASSERT_TRUE(result0.has_value());
+    EXPECT_EQ(result0.value(), test_data[0].second);
 
-    result.clear();
-    tree->get_range(test_data[2].first, test_data[2].first + 1, result);
-    ASSERT_TRUE(contains_key(result, test_data[2].first));
-    auto it2 = find_key_value(result, test_data[2].first);
-    ASSERT_NE(it2, result.end());
-    EXPECT_EQ(it2->second, test_data[2].second);
+    auto result2 = tree->get(test_data[2].first);
+    ASSERT_TRUE(result2.has_value());
+    EXPECT_EQ(result2.value(), test_data[2].second);
 }
 
 // Key Ordering Edge Cases
@@ -312,13 +265,9 @@ TEST_F(BTreeEdgeCasesTest, IdenticalHashSequentialPositions) {
 
     // Verify all are accessible and in correct order
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key));
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->first.pos, key.pos);
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -335,13 +284,9 @@ TEST_F(BTreeEdgeCasesTest, IdenticalPositionDifferentHashes) {
 
     // Verify all are accessible
     for (const auto &[key, val] : test_data) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key, key + 1, result);
-        ASSERT_TRUE(contains_key(result, key));
-        auto it = find_key_value(result, key);
-        ASSERT_NE(it, result.end());
-        EXPECT_EQ(it->first.hash, key.hash);
-        EXPECT_EQ(it->second, val);
+        auto result = tree->get(key);
+        ASSERT_TRUE(result.has_value());
+        EXPECT_EQ(result.value(), val);
     }
 }
 
@@ -360,13 +305,9 @@ TEST_F(BTreeEdgeCasesTest, SingleItemPersistence) {
     tree->insert(key, val);
 
     // Verify item persisted
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key, key + 1, result);
-    ASSERT_TRUE(contains_key(result, key));
-    auto it = find_key_value(result, key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->first, key);
-    EXPECT_EQ(it->second, val);
+    auto result = tree->get(key);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result.value(), val);
 }
 
 // Memory and Resource Edge Cases
@@ -411,23 +352,17 @@ TEST_F(BTreeEdgeCasesTest, OperationsAfterFailedUpdate) {
     EXPECT_FALSE(update_result);
 
     // Verify tree is still functional
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(key1, key1 + 1, result);
-    ASSERT_TRUE(contains_key(result, key1));
-    auto it1 = find_key_value(result, key1);
-    ASSERT_NE(it1, result.end());
-    EXPECT_EQ(it1->second, val);
+    auto result1 = tree->get(key1);
+    ASSERT_TRUE(result1.has_value());
+    EXPECT_EQ(result1.value(), val);
 
     // Insert the second key
     tree->insert(key2, val);
 
     // Verify both are present
-    result.clear();
-    tree->get_range(key2, key2 + 1, result);
-    ASSERT_TRUE(contains_key(result, key2));
-    auto it2 = find_key_value(result, key2);
-    ASSERT_NE(it2, result.end());
-    EXPECT_EQ(it2->second, val);
+    auto result2 = tree->get(key2);
+    ASSERT_TRUE(result2.has_value());
+    EXPECT_EQ(result2.value(), val);
 }
 
 TEST_F(BTreeEdgeCasesTest, RemoveFromEmptyTree) {
@@ -445,10 +380,7 @@ TEST_F(BTreeEdgeCasesTest, RemoveFromEmptyTree) {
     tree_key insert_key = make_key(1, 100);
     tree_val insert_val = make_val(1000, 100);
     tree->insert(insert_key, insert_val);
-    result.clear();
-    tree->get_range(insert_key, insert_key + 1, result);
-    ASSERT_TRUE(contains_key(result, insert_key));
-    auto it = find_key_value(result, insert_key);
-    ASSERT_NE(it, result.end());
-    EXPECT_EQ(it->second, insert_val);
+    auto insert_result = tree->get(insert_key);
+    ASSERT_TRUE(insert_result.has_value());
+    EXPECT_EQ(insert_result.value(), insert_val);
 }
