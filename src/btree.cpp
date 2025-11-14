@@ -72,7 +72,21 @@ shared_node btree::read_child(const shared_node &node, uint64_t idx) {
     assert(node->is_leaf == false);
     RO(node)->validate();
     assert(idx <= RO(node)->num_keys);
-    return read_node(node->children[idx]);
+    auto child = read_node(node->children[idx]);
+    const int64_t addition = RO(node)->key_additions[idx];
+    if (addition != 0) {
+        if (RO(child)->num_keys > 0) {
+            for (auto &key : child->keys) {
+                key = key + addition;
+            }
+        }
+        if (!RO(child)->is_leaf) {
+            for (auto &key_addition : child->key_additions) {
+                key_addition += addition;
+            }
+        }
+    }
+    return child;
 }
 
 shared_node btree::create_node() { return reader.create_node(allocate_node()); }
@@ -133,7 +147,7 @@ void btree::split_child(shared_node &parent, shared_node &child, const int index
     // parent->keys[index] = child->keys[degree - 1];
     // parent->values[index] = child->values[degree - 1];
     parent->children.insert(parent->children.begin() + index + 1, new_node.addr());
-    parent->key_additions.insert(parent->key_additions.begin() + index + 1, new_node.addr());
+    parent->key_additions.insert(parent->key_additions.begin() + index + 1, 0);
     parent->keys.insert(parent->keys.begin() + index, middle_key);
     parent->values.insert(parent->values.begin() + index, middle_value);
     parent->num_keys++;
@@ -319,8 +333,9 @@ void btree::insert(const tree_key &key, const tree_val &value) {
         auto new_root = create_node();
         new_root->is_leaf = false;
         new_root->children.resize(1);
-        new_root->key_additions.resize(1, 0);
+        new_root->key_additions.resize(1);
         new_root->children[0] = root.addr();
+        new_root->key_additions[0] = 0;
 
         split_child(new_root, root, 0);
         insert_nonfull(new_root, key, value);
