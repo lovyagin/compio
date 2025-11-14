@@ -91,6 +91,8 @@ struct index_node : public infile_object {
     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
     std::vector<tree_val> values;   /**< Storage blocks addresses in archive file */
     std::vector<uint64_t> children; /**< Children addresses in archive file */
+    std::vector<int64_t>
+        key_additions; /**< Additions for keys pos in children (used in segment operations) */
 
     int tree_degree; /**< B-Tree degree (not saved in file) */
 
@@ -115,7 +117,8 @@ struct index_node : public infile_object {
  */
 #define INDEX_NODE_SIZE(degree)                                                                    \
     (INDEX_NODE_METASIZE + sizeof(tree_key) * (2 * degree - 1) +                                   \
-     sizeof(tree_val) * (2 * degree - 1) + sizeof(uint64_t) * (2 * degree))
+     sizeof(tree_val) * (2 * degree - 1) + sizeof(uint64_t) * (2 * degree) +                       \
+     sizeof(int64_t) * (2 * degree))
 
 /**
  * @brief Block of (usually compressed) data

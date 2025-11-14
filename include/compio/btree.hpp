@@ -127,6 +127,7 @@ public:
     void free_node(const shared_node &node);
     shared_node create_node();
     shared_node read_node(uint64_t addr);
+    shared_node read_child(const shared_node &node, uint64_t idx);
     shared_node read_root();
 
     // for debug

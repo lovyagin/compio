@@ -66,6 +66,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
     values.resize(num_keys);
     if (!is_leaf) {
         children.resize(num_keys + 1);
+        key_additions.resize(num_keys + 1);
     }
 
     for (auto &key : keys) {
@@ -78,6 +79,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
     }
     if (!is_leaf) {
         lendian_fread(children.data(), sizeof(uint64_t), children.size(), file);
+        lendian_fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file);
     }
     validate();
 }
@@ -101,6 +103,7 @@ void index_node::write_to(FILE *file, uint64_t addr) const {
     }
     if (!is_leaf) {
         lendian_fwrite(children.data(), sizeof(uint64_t), children.size(), file);
+        lendian_fwrite(key_additions.data(), sizeof(int64_t), key_additions.size(), file);
     }
 }
 
@@ -119,8 +122,12 @@ void index_node::validate() const {
     }
     if (!is_leaf) {
         assert(children.size() == num_keys + 1);
+        assert(key_additions.size() == num_keys + 1);
         for (const auto &child : children) {
             assert(child != DEBUG_VAL);
+        }
+        for (const auto &key_addition : key_additions) {
+            assert(key_addition != DEBUG_VAL);
         }
     }
 }
@@ -156,11 +163,14 @@ index_node::index_node(int tree_degree)
       keys(2 * tree_degree - 1, tree_key{DEBUG_VAL, DEBUG_VAL}),
       values(2 * tree_degree - 1, tree_val{DEBUG_VAL, DEBUG_VAL}),
       children(2 * tree_degree, DEBUG_VAL),
+      key_additions(2 * tree_degree, DEBUG_VAL),
       tree_degree(tree_degree) {
     keys.clear();
     values.clear();
     children.clear();
-    children.resize(1, 0);
+    key_additions.clear();
+    children.resize(1, 0); // TODO: remove that resize, since is_leaf = true
+    key_additions.resize(1, 0);
 }
 
 storage_block::storage_block() : data(nullptr) {}
