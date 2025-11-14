@@ -86,6 +86,10 @@ shared_node btree::read_child(const shared_node &node, uint64_t idx) {
             }
         }
     }
+    if (archive->is_readonly()) {
+        // key_additions will be applied, but not written to file
+        child.unmodify();
+    }
     return child;
 }
 

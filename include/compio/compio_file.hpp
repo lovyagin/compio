@@ -35,6 +35,8 @@ struct compio_archive {
     compio_archive(FILE *file, uint8_t mode_b, const compio_config *config);
 
     compio::block_allocator *allocator;
+
+    bool is_readonly() const;
 };
 
 /**

@@ -64,6 +64,10 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
     // index = new btree(this);
 }
 
+bool compio_archive::is_readonly() const {
+    return mode_b & mode_bit::r;
+}
+
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
     uint8_t mode_b = parse_mode(mode);
     if (!mode_b) {
