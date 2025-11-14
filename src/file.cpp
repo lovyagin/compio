@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <cassert>
 
 #include "compio/debug_print.hpp"
 
@@ -61,35 +62,67 @@ void index_node::read_from(FILE *file, uint64_t addr) {
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(is_leaf, file);
     lendian_fread_member(num_keys, file);
-    keys.resize(2 * tree_degree - 1);
-    values.resize(2 * tree_degree - 1);
-    children.resize(2 * tree_degree);
-    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
-        lendian_fread_member(keys[i].hash, file);
-        lendian_fread_member(keys[i].pos, file);
+    keys.resize(num_keys);
+    values.resize(num_keys);
+    if (!is_leaf) {
+        children.resize(num_keys + 1);
     }
-    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
-        lendian_fread_member(values[i].addr, file);
-        lendian_fread_member(values[i].size, file);
+
+    for (auto &key : keys) {
+        lendian_fread_member(key.hash, file);
+        lendian_fread_member(key.pos, file);
     }
-    lendian_fread(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
+    for (auto &value : values) {
+        lendian_fread_member(value.addr, file);
+        lendian_fread_member(value.size, file);
+    }
+    if (!is_leaf) {
+        lendian_fread(children.data(), sizeof(uint64_t), children.size(), file);
+    }
+    validate();
 }
 
 void index_node::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][index_node]addr=%lu;size=%lu\n", addr, INDEX_NODE_SIZE(tree_degree));
+    validate();
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(is_leaf, file);
-    lendian_fwrite_member(num_keys, file);
-    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
-        lendian_fwrite_member(keys[i].hash, file);
-        lendian_fwrite_member(keys[i].pos, file);
+    const uint32_t actual_num_keys = keys.size();
+    assert(num_keys == actual_num_keys);
+    lendian_fwrite_member(actual_num_keys, file);
+    for (auto &key : keys) {
+        lendian_fwrite_member(key.hash, file);
+        lendian_fwrite_member(key.pos, file);
     }
-    for (int i = 0; i < 2 * tree_degree - 1; ++i) {
-        lendian_fwrite_member(values[i].addr, file);
-        lendian_fwrite_member(values[i].size, file);
+    for (auto &value : values) {
+        lendian_fwrite_member(value.addr, file);
+        lendian_fwrite_member(value.size, file);
     }
-    lendian_fwrite(children.data(), sizeof(uint64_t), 2 * tree_degree, file);
+    if (!is_leaf) {
+        lendian_fwrite(children.data(), sizeof(uint64_t), children.size(), file);
+    }
+}
+
+#define DEBUG_VAL (UINT64_MAX - 123)
+
+void index_node::validate() const {
+    assert(keys.size() == num_keys);
+    assert(values.size() == num_keys);
+    for (const auto &key : keys) {
+        assert(key.hash != DEBUG_VAL);
+        assert(key.pos != DEBUG_VAL);
+    }
+    for (const auto &value : values) {
+        assert(value.addr != DEBUG_VAL);
+        assert(value.size != DEBUG_VAL);
+    }
+    if (!is_leaf) {
+        assert(children.size() == num_keys + 1);
+        for (const auto &child : children) {
+            assert(child != DEBUG_VAL);
+        }
+    }
 }
 
 void storage_block::read_from(FILE *file, uint64_t addr) {
@@ -120,10 +153,15 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
 index_node::index_node(int tree_degree)
     : is_leaf(true),
       num_keys(0),
-      keys(2 * tree_degree - 1),
-      values(2 * tree_degree - 1),
-      children(2 * tree_degree),
-      tree_degree(tree_degree) {}
+      keys(2 * tree_degree - 1, tree_key{DEBUG_VAL, DEBUG_VAL}),
+      values(2 * tree_degree - 1, tree_val{DEBUG_VAL, DEBUG_VAL}),
+      children(2 * tree_degree, DEBUG_VAL),
+      tree_degree(tree_degree) {
+    keys.clear();
+    values.clear();
+    children.clear();
+    children.resize(1, 0);
+}
 
 storage_block::storage_block() : data(nullptr) {}
 

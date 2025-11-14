@@ -103,6 +103,7 @@ struct index_node : public infile_object {
 
     void read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr) const override;
+    void validate() const;
 };
 
 /**
