@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <optional>
 
 #include "compio/allocator.hpp"
 #include "compio/file.hpp"
@@ -107,7 +108,7 @@ public:
      * @param key
      * @return uint64_t
      */
-    uint64_t search_node(const tree_key &key);
+    std::optional<tree_val> get(const tree_key &key);
 
     void insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value);
     void split_child(shared_node &parent, shared_node &child, int index);

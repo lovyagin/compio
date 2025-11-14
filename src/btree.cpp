@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <cassert>
+#include <optional>
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
@@ -452,6 +453,35 @@ void btree::get_range_in_node(const shared_node &node, const tree_key &key_min,
 bool btree::update(const tree_key &key, const tree_val &new_value) {
     auto root = read_root();
     return update_in_node(root, key, new_value);
+}
+
+std::optional<tree_val> btree::get(const tree_key &key) {
+    auto current = read_root();
+    
+    while (true) {
+        RO(current)->validate();
+        
+        // If we found the key in current node, return its address
+        for (uint32_t i = 0; i < RO(current)->num_keys; ++i) {
+            if (RO(current)->keys[i] == key) {
+                return RO(current)->values[i];
+            }
+        }
+        
+        // If this is a leaf node and we haven't found the key, return 0
+        if (RO(current)->is_leaf) {
+            return std::nullopt;
+        }
+        
+        // Find the appropriate child to search
+        uint32_t child_index = 0;
+        while (child_index < RO(current)->num_keys && key > RO(current)->keys[child_index]) {
+            child_index++;
+        }
+        
+        // Read the child node and continue search
+        current = read_node(RO(current)->children[child_index]);
+    }
 }
 
 bool btree::update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value) {
