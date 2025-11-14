@@ -61,8 +61,9 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
                       size * nmemb, ret * size);
     }
 
-    if (ferror(stream)) {
-        WARNING_PRINT("warning: ferror returned non-zero in lendian_fwrite\n");
+    int error = ferror(stream);
+    if (error) {
+        WARNING_PRINT("warning: ferror returned non-zero (%d, errno=%d) in lendian_fwrite\n", error, errno);
     }
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     n_written_bytes += ret;
@@ -106,8 +107,9 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
                       size * nmemb, ret * size);
     }
 
-    if (ferror(stream)) {
-        WARNING_PRINT("warning: ferror returned non-zero in lendian_fread\n");
+    int error = ferror(stream);
+    if (error) {
+        WARNING_PRINT("warning: ferror returned non-zero (%d, errno=%d) in lendian_fread\n", error, errno);
     }
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     n_read_bytes += ret;
