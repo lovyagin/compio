@@ -68,11 +68,11 @@ shared_node btree::read_node(uint64_t addr) {
     return node;
 }
 
-shared_node btree::read_child(const shared_node &node, uint64_t idx) {
-    assert(node->is_leaf == false);
+shared_node btree::read_child(shared_node &node, uint64_t idx) {
+    assert(RO(node)->is_leaf == false);
     RO(node)->validate();
     assert(idx <= RO(node)->num_keys);
-    auto child = read_node(node->children[idx]);
+    auto child = read_node(RO(node)->children[idx]);
     const int64_t addition = RO(node)->key_additions[idx];
     if (addition != 0) {
         if (RO(child)->num_keys > 0) {
@@ -85,9 +85,11 @@ shared_node btree::read_child(const shared_node &node, uint64_t idx) {
                 key_addition += addition;
             }
         }
+        node->key_additions[idx] = 0;
     }
     if (archive->is_readonly()) {
         // key_additions will be applied, but not written to file
+        node.unmodify();
         child.unmodify();
     }
     return child;
@@ -326,7 +328,7 @@ std::pair<tree_key, tree_val> btree::find_min_in_node(const shared_node &node) {
     RO(node)->validate();
     auto current = node;
     while (!RO(current)->is_leaf) {
-        current = read_child(RO(current), 0);
+        current = read_child(current, 0);
     }
     return {RO(current)->keys[0], RO(current)->values[0]};
 }
@@ -454,10 +456,11 @@ void btree::get_range(const tree_key &key_min, const tree_key &key_max,
                       std::vector<std::pair<tree_key, tree_val>> &result) {
     if (key_max <= key_min)
         return;
-    get_range_in_node(read_root(), key_min, key_max, result);
+    auto root = read_root();
+    get_range_in_node(root, key_min, key_max, result);
 }
 
-void btree::get_range_in_node(const shared_node &node, const tree_key &key_min,
+void btree::get_range_in_node(shared_node &node, const tree_key &key_min,
                               const tree_key &key_max,
                               std::vector<std::pair<tree_key, tree_val>> &result) {
     const int num_keys = RO(node)->num_keys;
@@ -488,12 +491,67 @@ void btree::get_range_in_node(const shared_node &node, const tree_key &key_min,
     }
 }
 
+void btree::add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound,
+                                 const tree_key &upper_bound) {
+    RO(node)->validate();
+    const int num_keys = RO(node)->num_keys;
+    if (num_keys == 0)
+        return;
+    const bool is_leaf = RO(node)->is_leaf;
+
+    int idx = 0;
+
+    // skip keys that are before lower_bound
+    while (idx < num_keys && RO(node)->keys[idx] < lower_bound) {
+        ++idx;
+    }
+
+    if (!is_leaf) {
+        // this child is in range
+        auto child = read_child(node, idx);
+        add_to_range_in_node(child, value, lower_bound, upper_bound);
+    }
+
+    // iterate through keys, that are in range
+    while (idx < num_keys && RO(node)->keys[idx] <= upper_bound) {
+        node->keys[idx] = node->keys[idx] + value;
+        if (!is_leaf) {
+            // if next key is in range
+            if (idx + 1 < num_keys && RO(node)->keys[idx + 1] <= upper_bound) {
+                // then child #idx+1 is also in range
+                node->key_additions[idx + 1] += value;
+            } else {
+                // otherwise, child #idx+1 is partially in range
+                auto child = read_child(node, idx + 1);
+                add_to_range_in_node(child, value, lower_bound, upper_bound);
+                break;
+            }
+        }
+        ++idx;
+    }
+
+    RO(node)->validate();
+}
+
+void btree::add_to_range(int64_t value, const tree_key &lower_bound, const tree_key &upper_bound) {
+    if (lower_bound > upper_bound) {
+        WARNING_PRINT("warning: passed invalid range into btree::add_to_range "
+                      "(lower_bound={%lu,%lu} > {%lu,%lu}=upper_bound)\n",
+                      lower_bound.hash, lower_bound.pos, upper_bound.hash, upper_bound.pos);
+        return;
+    }
+
+    auto root = read_root();
+    add_to_range_in_node(root, value, lower_bound, upper_bound);
+}
+
 bool btree::update(const tree_key &key, const tree_val &new_value) {
     auto root = read_root();
     return update_in_node(root, key, new_value);
 }
 
 std::optional<tree_val> btree::get(const tree_key &key) {
+    // TODO: rewrite this function accurately (one keys traverse)
     auto current = read_root();
     
     while (true) {
@@ -549,7 +607,7 @@ bool btree::update_in_node(shared_node &node, const tree_key &key, const tree_va
     return false;
 }
 
-static void print_btree_(btree *tree, const shared_node node, int depth = 0) {
+static void print_btree_(btree *tree, shared_node node, int depth = 0) {
     for (std::size_t i = 0; i <= node->num_keys; ++i) {
         if (!node->is_leaf) {
             print_btree_(tree, tree->read_child(node, i), depth + 1);
@@ -560,8 +618,8 @@ static void print_btree_(btree *tree, const shared_node node, int depth = 0) {
             auto val = node->values[i];
             UNUSED(key);
             UNUSED(val);
-            DEBUG_PRINT("%s{%lu} -> {%lu, %lu}\n", std::string(depth * 2, ' ').c_str(), key.pos,
-                        val.addr, val.size);
+            DEBUG_PRINT("%s{%lu, %lu} -> {%lu, %lu}\n", std::string(depth * 2, ' ').c_str(),
+                        key.hash, key.pos, val.addr, val.size);
         }
     }
 }

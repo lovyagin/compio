@@ -110,6 +110,17 @@ public:
      */
     std::optional<tree_val> get(const tree_key &key);
 
+    /**
+     * @brief Add value to all keys in the specified range
+     * 
+     * Adds a value to all keys within [lower_bound, upper_bound]
+     * 
+     * @param value Value to add to keys
+     * @param lower_bound Lower bound of range (inclusive)
+     * @param upper_bound Upper bound of range (inclusive)
+     */
+    void add_to_range(int64_t value, const tree_key &lower_bound, const tree_key &upper_bound);
+
     void insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value);
     void split_child(shared_node &parent, shared_node &child, int index);
     void merge_children(shared_node &parent, int idx);
@@ -118,16 +129,17 @@ public:
     std::pair<tree_key, tree_val> find_max_in_node(const shared_node &node);
     std::pair<tree_key, tree_val> find_min_in_node(const shared_node &node);
     void remove_node(shared_node &node, const tree_key &key);
-    void get_range_in_node(const shared_node &node, const tree_key &key_min,
+    void get_range_in_node(shared_node &node, const tree_key &key_min,
                            const tree_key &key_max,
                            std::vector<std::pair<tree_key, tree_val>> &result);
     bool update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value);
+    void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound, const tree_key &upper_bound);
 
     uint64_t allocate_node() const;
     void free_node(const shared_node &node);
     shared_node create_node();
     shared_node read_node(uint64_t addr);
-    shared_node read_child(const shared_node &node, uint64_t idx);
+    shared_node read_child(shared_node &node, uint64_t idx);
     shared_node read_root();
 
     // for debug

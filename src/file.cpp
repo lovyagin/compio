@@ -127,7 +127,6 @@ void index_node::validate() const {
             assert(child != DEBUG_VAL);
         }
         for (const auto &key_addition : key_additions) {
-            assert(key_addition == 0);
             assert(key_addition != DEBUG_VAL);
         }
     }
