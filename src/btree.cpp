@@ -170,29 +170,24 @@ void btree::merge_children(shared_node &parent, const int idx) {
 
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     RO(node)->validate();
-    size_t i = RO(node)->num_keys;
+    std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
+                      RO(node)->keys.begin();
     if (RO(node)->is_leaf) {
-        node->keys.resize(node->keys.size() + 1);
-        node->values.resize(node->values.size() + 1);
-        while (i > 0 && key < node->keys[i - 1]) {
-            node->keys[i] = node->keys[i - 1];
-            node->values[i] = node->values[i - 1];
-            i--;
+        if (RO(node)->keys[idx] == key) {
+            WARNING_PRINT("warning: trying to insert already existing key\n");
+            return;
         }
-        node->keys[i] = key;
-        node->values[i] = value;
+        node->keys.insert(node->keys.begin() + idx, key);
+        node->values.insert(node->values.begin() + idx, value);
         node->num_keys++;
         node->validate();
     } else {
-        while (i > 0 && key < RO(node)->keys[i - 1]) {
-            i--;
-        }
-        auto child = read_child(node, i);
+        auto child = read_child(node, idx);
         if (RO(child)->num_keys == (2 * degree - 1)) {
-            split_child(node, child, i);
-            if (key > node->keys[i]) {
-                i++;
-                child = read_child(node, i);
+            split_child(node, child, idx);
+            if (key > node->keys[idx]) {
+                idx++;
+                child = read_child(node, idx);
             }
         }
         insert_nonfull(child, key, value);

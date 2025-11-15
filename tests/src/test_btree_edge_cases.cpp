@@ -75,23 +75,13 @@ TEST_F(BTreeEdgeCasesTest, InsertDuplicateKey) {
     tree_val val1 = make_val(1000, 100);
     tree_val val2 = make_val(2000, 200);
 
-    // Insert same key twice
     tree->insert(key, val1);
-    tree->insert(key, val2); // Current implementation allows duplicates
+    tree->insert(key, val2);
 
-    // Verify both entries exist (current implementation allows duplicates)
     std::vector<std::pair<tree_key, tree_val>> result;
     tree->get_range(key, key + 1, result);
-    EXPECT_EQ(result.size(), 2);
-
-    // Both values should be present
-    bool found_val1 = false, found_val2 = false;
-    for (const auto &[k, v] : result) {
-        if (v == val1) found_val1 = true;
-        if (v == val2) found_val2 = true;
-    }
-    EXPECT_TRUE(found_val1);
-    EXPECT_TRUE(found_val2);
+    EXPECT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0].second, val1);
 }
 
 TEST_F(BTreeEdgeCasesTest, UpdateDuplicateKey) {
@@ -316,8 +306,7 @@ TEST_F(BTreeEdgeCasesTest, RapidInsertDelete) {
     std::vector<tree_key> inserted_keys;
     
     for (int i = 0; i < 100; ++i) {
-        // Use sequential blocks to avoid overlap
-        uint64_t pos = (i % 10) * 100; // Reuse positions but with enough spacing
+        uint64_t pos = i * 100; 
         tree_key key = make_key(1, pos);
         tree_val val = make_val(1000 + i, 50 + i);
 
