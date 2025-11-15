@@ -24,7 +24,7 @@ protected:
         generate_tmp_fn(filename, sizeof(filename));
 
         compio_build_default_config(&config);
-        config.b_tree_degree = 3; // Small degree for more splits/merges
+        config.b_tree_degree = 3;
         config.cache_size__nodes = 10;
         config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
 
@@ -41,23 +41,20 @@ protected:
         remove(filename);
     }
 
-    // Helper functions for creating test data
     tree_key make_key(uint64_t hash, uint64_t pos) { return {hash, pos}; }
 
     tree_val make_val(uint64_t addr, uint64_t size) { return {addr, size}; }
 
-    // Helper function to create sequential blocks (valid B-Tree data)
     void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0,
                                   uint64_t base_size = 100) {
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
-            uint64_t block_size = base_size + (i % 10); // Vary size slightly for realism
+            uint64_t block_size = base_size + (i % 10);
             tree->insert(make_key(hash, current_pos), make_val(1000 + i * 100, block_size));
             current_pos += block_size;
         }
     }
 
-    // Helper function to create test data with sequential blocks
     std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1,
                                                                       uint64_t start_pos = 0,
                                                                       uint64_t base_size = 100) {
@@ -71,14 +68,12 @@ protected:
         return data;
     }
 
-    // Insert test data
     void insert_test_data(const std::vector<std::pair<tree_key, tree_val>> &data) {
         for (const auto &[key, val] : data) {
             tree->insert(key, val);
         }
     }
 
-    // Verify range query results
     void verify_range(const tree_key &key_min, const tree_key &key_max,
                       const std::vector<std::pair<tree_key, tree_val>> &expected) {
         std::vector<std::pair<tree_key, tree_val>> result;
@@ -87,7 +82,6 @@ protected:
         ASSERT_EQ(result.size(), expected.size())
             << "Range query returned " << result.size() << " items, expected " << expected.size();
 
-        // Sort both vectors for comparison since order isn't guaranteed
         auto sorted_result = result;
         auto sorted_expected = expected;
         std::sort(sorted_result.begin(), sorted_result.end());
@@ -102,17 +96,13 @@ protected:
     }
 };
 
-// Basic Operations Tests
 TEST_F(BTreeTest, EmptyTreeOperations) {
-    // Test operations on empty tree
     std::vector<std::pair<tree_key, tree_val>> result;
     tree->get_range(make_key(0, 0), make_key(100, 100), result);
     EXPECT_TRUE(result.empty());
 
-    // Try to remove from empty tree (should not crash)
     tree->remove(make_key(1, 1));
 
-    // Try to update non-existent key
     tree->update(make_key(1, 1), make_val(100, 200));
 }
 
@@ -122,7 +112,6 @@ TEST_F(BTreeTest, SingleInsert) {
 
     tree->insert(key, val);
 
-    // Verify through get
     auto result = tree->get(key);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result.value(), val);
@@ -137,7 +126,6 @@ TEST_F(BTreeTest, MultipleInserts) {
 
     insert_test_data(test_data);
 
-    // Verify all data is present
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
         ASSERT_TRUE(result.has_value())
@@ -151,13 +139,10 @@ TEST_F(BTreeTest, UpdateExistingKey) {
     tree_val original_val = make_val(1000, 100);
     tree_val updated_val = make_val(2000, 200);
 
-    // Insert original value
     tree->insert(key, original_val);
 
-    // Update to new value
     tree->update(key, updated_val);
 
-    // Verify update
     auto result = tree->get(key);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result.value(), updated_val);
@@ -174,11 +159,9 @@ TEST_F(BTreeTest, RemoveExistingKey) {
     tree_key key = make_key(1, 100);
     tree_val val = make_val(1000, 100);
 
-    // Insert then remove
     tree->insert(key, val);
     tree->remove(key);
 
-    // Verify removal
     auto result = tree->get(key);
     EXPECT_FALSE(result.has_value());
 }
@@ -186,26 +169,22 @@ TEST_F(BTreeTest, RemoveExistingKey) {
 TEST_F(BTreeTest, RemoveNonExistingKey) {
     tree_key key = make_key(1, 100);
 
-    // Remove without inserting (should not crash)
     tree->remove(key);
 
-    // Verify tree is still empty
     std::vector<std::pair<tree_key, tree_val>> result;
     tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX), result);
     EXPECT_TRUE(result.empty());
 }
 
-// Range Query Tests
 TEST_F(BTreeTest, BasicRangeQuery) {
     std::vector<std::pair<tree_key, tree_val>> test_data = {
-        {make_key(1, 100), make_val(1000, 100)},  // covers [100, 200)
-        {make_key(1, 200), make_val(1100, 150)},  // covers [200, 350)
-        {make_key(1, 350), make_val(1250, 200)},  // covers [350, 550)
-        {make_key(1, 550), make_val(1450, 120)}}; // covers [550, 670)
+        {make_key(1, 100), make_val(1000, 100)},
+        {make_key(1, 200), make_val(1100, 150)},
+        {make_key(1, 350), make_val(1250, 200)},
+        {make_key(1, 550), make_val(1450, 120)}};
 
     insert_test_data(test_data);
 
-    // Query range [150, 400) - should intersect with keys at 100, 200, and 350
     tree_key min_key = make_key(1, 150);
     tree_key max_key = make_key(1, 400);
 
@@ -224,7 +203,6 @@ TEST_F(BTreeTest, RangeQueryDifferentHashes) {
 
     insert_test_data(test_data);
 
-    // Query across multiple hashes
     tree_key min_key = make_key(2, 0);
     tree_key max_key = make_key(3, UINT64_MAX);
 
@@ -236,14 +214,10 @@ TEST_F(BTreeTest, RangeQueryDifferentHashes) {
 
 TEST_F(BTreeTest, EmptyRangeQuery) {
     std::vector<std::pair<tree_key, tree_val>> test_data = {
-        {make_key(1, 100), make_val(1000, 100)},  // covers [100, 200)
-        {make_key(1, 200), make_val(1100, 150)}}; // covers [200, 350)
+        {make_key(1, 100), make_val(1000, 100)}, {make_key(1, 200), make_val(1100, 150)}};
 
     insert_test_data(test_data);
 
-    // Query range that doesn't intersect with any key intervals
-    // Key at 100 covers [100, 200), key at 200 covers [200, 350)
-    // Range [350, 400) should not intersect with either
     tree_key min_key = make_key(1, 350);
     tree_key max_key = make_key(1, 400);
 
@@ -253,7 +227,6 @@ TEST_F(BTreeTest, EmptyRangeQuery) {
 }
 
 TEST_F(BTreeTest, InvalidRangeQuery) {
-    // Query where max <= min (should return empty)
     tree_key min_key = make_key(1, 200);
     tree_key max_key = make_key(1, 100);
 
@@ -262,12 +235,9 @@ TEST_F(BTreeTest, InvalidRangeQuery) {
     EXPECT_TRUE(result.empty());
 }
 
-// Tree Structure Tests
 TEST_F(BTreeTest, SortedInsertTriggersSplits) {
-    // Insert many sequential blocks to trigger splits
     insert_sequential_blocks(20, 1, 0, 100);
 
-    // Verify all data is still accessible by checking a few blocks
     std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(20, 1, 0, 100);
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
@@ -277,13 +247,11 @@ TEST_F(BTreeTest, SortedInsertTriggersSplits) {
 }
 
 TEST_F(BTreeTest, ReverseInsertTriggersSplits) {
-    // Insert sequential blocks in reverse order (still valid, just different insertion order)
     std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(20, 1, 0, 100);
     std::reverse(test_data.begin(), test_data.end());
 
     insert_test_data(test_data);
 
-    // Verify all data is still accessible
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
         ASSERT_TRUE(result.has_value()) << "Key not found after reverse insert: pos=" << key.pos;
@@ -292,7 +260,6 @@ TEST_F(BTreeTest, ReverseInsertTriggersSplits) {
 }
 
 TEST_F(BTreeTest, RandomInsert) {
-    // Insert sequential blocks in random order
     std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(30, 1, 0, 100);
 
     std::random_device rd;
@@ -301,7 +268,6 @@ TEST_F(BTreeTest, RandomInsert) {
 
     insert_test_data(test_data);
 
-    // Verify all data is accessible
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
         ASSERT_TRUE(result.has_value()) << "Key not found after random insert: pos=" << key.pos;
@@ -309,15 +275,12 @@ TEST_F(BTreeTest, RandomInsert) {
     }
 }
 
-// Edge Cases
 TEST_F(BTreeTest, SameHashDifferentPositions) {
-    // Multiple keys with same hash but sequential positions (valid blocks)
     std::vector<std::pair<tree_key, tree_val>> test_data =
         create_sequential_data(3, 0x12345678, 100, 100);
 
     insert_test_data(test_data);
 
-    // Verify all are stored correctly
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
         ASSERT_TRUE(result.has_value()) << "Key not found: pos=" << key.pos;
@@ -326,7 +289,6 @@ TEST_F(BTreeTest, SameHashDifferentPositions) {
 }
 
 TEST_F(BTreeTest, SamePositionDifferentHashes) {
-    // Keys with same position but different hashes (valid - different files)
     std::vector<std::pair<tree_key, tree_val>> test_data = {
         {make_key(1, 100), make_val(1000, 100)},
         {make_key(2, 100), make_val(1100, 150)},
@@ -334,7 +296,6 @@ TEST_F(BTreeTest, SamePositionDifferentHashes) {
 
     insert_test_data(test_data);
 
-    // Verify all are stored correctly
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
         ASSERT_TRUE(result.has_value()) << "Key not found: hash=" << key.hash;
@@ -343,7 +304,6 @@ TEST_F(BTreeTest, SamePositionDifferentHashes) {
 }
 
 TEST_F(BTreeTest, LargeDataset) {
-    // Test with larger dataset to stress the tree - use sequential blocks per hash
     std::vector<std::pair<tree_key, tree_val>> test_data;
 
     for (int hash = 1; hash <= 10; ++hash) {
@@ -353,12 +313,11 @@ TEST_F(BTreeTest, LargeDataset) {
 
     insert_test_data(test_data);
 
-    // Verify random subset
     std::random_device rd;
     std::mt19937 g(rd());
     std::shuffle(test_data.begin(), test_data.end(), g);
 
-    for (int i = 0; i < 20; ++i) { // Check 20 random items
+    for (int i = 0; i < 20; ++i) {
         const auto &[key, val] = test_data[i];
         auto result = tree->get(key);
         ASSERT_TRUE(result.has_value())
