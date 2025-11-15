@@ -57,7 +57,7 @@ struct btree {
     std::optional<tree_val> get(const tree_key &key);
     void add_in_range(int64_t addition, const tree_key &key_min,
                                   const tree_key &key_max);
-    void print_btree();
+    void print();
     void clear_cache();
 
 private:
@@ -78,7 +78,7 @@ private:
     bool update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value);
     void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &key_min,
                               const tree_key &key_max);
-    void print_btree_in_node(shared_node node, int depth);
+    void print_in_node(shared_node node, int depth);
 
     uint64_t allocate_node() const;
     void free_node(const shared_node &node);
