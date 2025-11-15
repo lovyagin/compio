@@ -112,9 +112,9 @@ public:
 
     /**
      * @brief Add value to all keys in the specified range
-     * 
+     *
      * Adds a value to all keys within [lower_bound, upper_bound]
-     * 
+     *
      * @param value Value to add to keys
      * @param lower_bound Lower bound of range (inclusive)
      * @param upper_bound Upper bound of range (inclusive)
@@ -129,11 +129,11 @@ public:
     std::pair<tree_key, tree_val> find_max_in_node(const shared_node &node);
     std::pair<tree_key, tree_val> find_min_in_node(const shared_node &node);
     void remove_node(shared_node &node, const tree_key &key);
-    void get_range_in_node(shared_node &node, const tree_key &key_min,
-                           const tree_key &key_max,
+    void get_range_in_node(shared_node &node, const tree_key &key_min, const tree_key &key_max,
                            std::vector<std::pair<tree_key, tree_val>> &result);
     bool update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value);
-    void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound, const tree_key &upper_bound);
+    void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound,
+                              const tree_key &upper_bound);
 
     uint64_t allocate_node() const;
     void free_node(const shared_node &node);

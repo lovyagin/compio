@@ -769,11 +769,13 @@ void block_allocator::perform_defragmentation() {
 
     fflush(archive_->file);
 
-    blocks_manager_ =
-        free_blocks_manager(readonly(archive_->header, header)->file_size ? &readonly(archive_->header, header)->file_size : nullptr);
+    blocks_manager_ = free_blocks_manager(readonly(archive_->header, header)->file_size
+                                              ? &readonly(archive_->header, header)->file_size
+                                              : nullptr);
 
     if (new_offset < readonly(archive_->header, header)->file_size) {
-        blocks_manager_.add_free_block(new_offset, readonly(archive_->header, header)->file_size - new_offset);
+        blocks_manager_.add_free_block(new_offset,
+                                       readonly(archive_->header, header)->file_size - new_offset);
     } else {
         archive_->header->file_size = new_offset;
     }

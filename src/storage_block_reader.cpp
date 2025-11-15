@@ -100,7 +100,7 @@ block::~block() {
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
-        index->update(key, {new_addr, dec_size}); 
+        index->update(key, {new_addr, dec_size});
     } else if (is_valid && is_removed && addr != 0) {
         allocator->deallocate(addr, c_size);
     }
@@ -145,7 +145,7 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     }
     auto b = std::make_shared<block>(file, allocator, index, compressor, key, size, true);
     cache.put(key, b);
-    
+
     // adding element to btree, but without file address (we didn't allocate memory block yet)
     // block::~block will update this element in btree with new address
     index->insert(key, {0, size});

@@ -47,7 +47,9 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
                 buffer[8 * i + 7] = input[4 * i];
             }
         } else {
-            WARNING_PRINT("warning: lendian_fwrite possible size values are 1, 2, 4, 8 (%lu was passed)\n", size);
+            WARNING_PRINT(
+                "warning: lendian_fwrite possible size values are 1, 2, 4, 8 (%lu was passed)\n",
+                size);
         }
         ret = fwrite((void *)buffer, size, nmemb, stream);
         delete buffer;
@@ -63,7 +65,8 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
 
     int error = ferror(stream);
     if (error) {
-        WARNING_PRINT("warning: ferror returned non-zero (%d, errno=%d) in lendian_fwrite\n", error, errno);
+        WARNING_PRINT("warning: ferror returned non-zero (%d, errno=%d) in lendian_fwrite\n", error,
+                      errno);
     }
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     n_written_bytes += ret;
@@ -94,7 +97,9 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
                     std::swap(output[8 * i + 3], output[8 * i + 4]);
                 }
             } else {
-                WARNING_PRINT("warning: lendian_fread possible size values are 1, 2, 4, 8 (%lu was passed)\n", size);
+                WARNING_PRINT(
+                    "warning: lendian_fread possible size values are 1, 2, 4, 8 (%lu was passed)\n",
+                    size);
             }
         }
     } else {
@@ -109,7 +114,8 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
 
     int error = ferror(stream);
     if (error) {
-        WARNING_PRINT("warning: ferror returned non-zero (%d, errno=%d) in lendian_fread\n", error, errno);
+        WARNING_PRINT("warning: ferror returned non-zero (%d, errno=%d) in lendian_fread\n", error,
+                      errno);
     }
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
     n_read_bytes += ret;

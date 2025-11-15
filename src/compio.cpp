@@ -64,9 +64,7 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
     // index = new btree(this);
 }
 
-bool compio_archive::is_readonly() const {
-    return mode_b & mode_bit::r;
-}
+bool compio_archive::is_readonly() const { return mode_b & mode_bit::r; }
 
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
     uint8_t mode_b = parse_mode(mode);
@@ -103,7 +101,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     is_new_file = is_file_empty(file);
     if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
-    } else if (readonly(archive->header, header)->compression_type != c->compressor.compression_type) {
+    } else if (readonly(archive->header, header)->compression_type !=
+               c->compressor.compression_type) {
         // compression type mismatch
         errno = EINVAL;
         WARNING_PRINT("warning: compression type mismatch while opening archive\n");

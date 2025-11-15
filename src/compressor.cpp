@@ -287,31 +287,30 @@ void compio_build_brotli_compressor(compio_compressor *result) {
  */
 void compio_build_compressor_by_type(compio_compressor *result, compio_compression_type type) {
     switch (type) {
-        case COMPIO_COMPRESS_DUMMY:
-            compio_build_dummy_compressor(result);
-            break;
-        case COMPIO_COMPRESS_ZLIB:
-            compio_build_zlib_compressor(result);
-            break;
-        case COMPIO_COMPRESS_LZ4:
-            compio_build_lz4_compressor(result);
-            break;
-        case COMPIO_COMPRESS_ZSTD:
-            compio_build_zstd_compressor(result);
-            break;
-        case COMPIO_COMPRESS_BROTLI:
-            compio_build_brotli_compressor(result);
-            break;
-        case COMPIO_COMPRESS_CUSTOM:
-            // For custom compressor, we cannot auto-initialize
-            // User must provide their own implementation
-            compio_build_dummy_compressor(result);
-            result->compression_type = COMPIO_COMPRESS_CUSTOM;
-            break;
-        default:
-            // Fallback to dummy
-            compio_build_dummy_compressor(result);
-            break;
+    case COMPIO_COMPRESS_DUMMY:
+        compio_build_dummy_compressor(result);
+        break;
+    case COMPIO_COMPRESS_ZLIB:
+        compio_build_zlib_compressor(result);
+        break;
+    case COMPIO_COMPRESS_LZ4:
+        compio_build_lz4_compressor(result);
+        break;
+    case COMPIO_COMPRESS_ZSTD:
+        compio_build_zstd_compressor(result);
+        break;
+    case COMPIO_COMPRESS_BROTLI:
+        compio_build_brotli_compressor(result);
+        break;
+    case COMPIO_COMPRESS_CUSTOM:
+        // For custom compressor, we cannot auto-initialize
+        // User must provide their own implementation
+        compio_build_dummy_compressor(result);
+        result->compression_type = COMPIO_COMPRESS_CUSTOM;
+        break;
+    default:
+        // Fallback to dummy
+        compio_build_dummy_compressor(result);
+        break;
     }
 }
-

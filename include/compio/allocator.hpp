@@ -213,7 +213,7 @@ private:
     free_block *tail_;                           /**< Tail of free blocks list */
     free_block *last_alloc_;                     /**< Last allocation position for NEXT_FIT */
     uint64_t total_free_;                        /**< Total free space in bytes */
-    const uint64_t *file_size_;                        /**< Reference to total file size */
+    const uint64_t *file_size_;                  /**< Reference to total file size */
     uint8_t cached_fragmentation_;               /**< Cached fragmentation level */
     mutable bool recently_defragmented_ = false; /**< Flag for recent defragmentation */
 

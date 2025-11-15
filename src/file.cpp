@@ -1,10 +1,10 @@
 #include "compio/file.hpp"
 
+#include <cassert>
 #include <cinttypes>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-#include <cassert>
 
 #include "compio/debug_print.hpp"
 

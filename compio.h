@@ -33,13 +33,14 @@ extern "C" {
  */
 typedef enum {
     /**
-     * @brief Custom compression (use it, when you're using your custom compress/decompress algorithm;
-     * note, that if you want to use archive, created with custom compression, in different program,
-     * you'll need to provide the exact same compressor, and set compression_type to custom)
+     * @brief Custom compression (use it, when you're using your custom compress/decompress
+     * algorithm; note, that if you want to use archive, created with custom compression, in
+     * different program, you'll need to provide the exact same compressor, and set compression_type
+     * to custom)
      *
      */
     COMPIO_COMPRESS_CUSTOM = 0,
-    COMPIO_COMPRESS_DUMMY = 1,  /**< No compression (dummy) */
+    COMPIO_COMPRESS_DUMMY = 1, /**< No compression (dummy) */
     COMPIO_COMPRESS_ZLIB = 2,  /**< ZLIB compression */
     COMPIO_COMPRESS_LZ4 = 3,   /**< LZ4 compression */
     COMPIO_COMPRESS_ZSTD = 4,  /**< Zstandard compression */
@@ -168,12 +169,12 @@ void compio_build_default_config(compio_config *result);
 
 /**
  * @brief Get compression type from header of existing archive
- * 
+ *
  * @param fp path to archive file
  * @param t pointer t compression_type object
  * @return int
  */
-int compio_get_compression_type(const char *fp, compio_compression_type* t);
+int compio_get_compression_type(const char *fp, compio_compression_type *t);
 
 /**
  * @brief Opened archive
