@@ -27,17 +27,63 @@ using shared_node = smart_infile_object<index_node>;
 /**
  * @brief Struct for reading nodes from memory with caching
  *
+ * Provides cached access to B-Tree nodes stored in file, using LRU cache
+ * to improve performance by avoiding repeated file I/O operations.
  */
 struct node_reader {
+    /**
+     * @brief Construct a new node reader object
+     *
+     * @param file Pointer to the file handle for reading/writing nodes
+     * @param tree_degree The degree of the B-Tree (branching factor)
+     * @param max_size Maximum number of nodes to cache
+     */
     node_reader(FILE *file, int tree_degree, int max_size);
+
+    /**
+     * @brief Read a node from the specified address
+     *
+     * Retrieves a node from the given file address, using cache if available.
+     * If not cached, reads from file and adds to cache.
+     *
+     * @param addr File address of the node to read
+     * @return shared_node Smart pointer to the read node
+     */
     shared_node read_node(uint64_t addr);
+
+    /**
+     * @brief Create a new node at the specified address
+     *
+     * Creates a new empty node at the given file address and adds it to cache.
+     *
+     * @param addr File address where the node should be created
+     * @return shared_node Smart pointer to the created node
+     */
     shared_node create_node(uint64_t addr);
+
+    /**
+     * @brief Remove a node from the cache
+     *
+     * Removes the specified node from the LRU cache. The node remains
+     * valid until all smart_infile_object references are destroyed.
+     *
+     * @param node Smart pointer to the node to remove from cache
+     */
     void remove_node(const shared_node &node);
+
+    /**
+     * @brief Clear all nodes from the cache
+     *
+     * Empties the LRU cache, removing all cached nodes.
+     */
     void clear_cache();
 
 private:
+    /** @brief The degree of the B-Tree (branching factor) */
     int tree_degree;
+    /** @brief File handle for reading/writing nodes */
     FILE *file;
+    /** @brief LRU cache for storing frequently accessed nodes */
     cache::lru_cache<uint64_t, shared_node> cache;
 };
 
@@ -46,46 +92,312 @@ private:
  * archive file, with access by their start position. B-Tree nodes
  * are stored in archive file.
  *
+ * Provides efficient key-value storage and retrieval for compressed block
+ * addresses within archive files. Supports standard B-Tree operations including
+ * insertion, deletion, range queries, and key updates.
  */
 struct btree {
+    /**
+     * @brief Construct a new btree object
+     *
+     * Initializes a B-Tree for the given archive. Creates root node if
+     * the archive is empty (index_root == 0).
+     *
+     * @param archive Pointer to the archive this B-Tree belongs to
+     */
     btree(compio_archive *archive);
+
+    /**
+     * @brief Insert a key-value pair into the B-Tree
+     *
+     * Inserts the specified key and value into the B-Tree. If the key
+     * already exists, prints a warning and does not overwrite.
+     *
+     * @param key The key to insert
+     * @param value The value associated with the key
+     */
     void insert(const tree_key &key, const tree_val &value);
+
+    /**
+     * @brief Remove a key-value pair from the B-Tree
+     *
+     * Removes the specified key and its associated value from the B-Tree.
+     * If the key doesn't exist, prints a warning.
+     *
+     * @param key The key to remove
+     */
     void remove(const tree_key &key);
+
+    /**
+     * @brief Get all key-value pairs within the specified range
+     *
+     * Retrieves all key-value pairs where keys fall within the range
+     * [key_min, key_max). Results are appended to the provided vector.
+     *
+     * @param key_min Minimum key (inclusive)
+     * @param key_max Maximum key (inclusive)
+     * @param result Vector to store the resulting key-value pairs
+     */
     void get_range(const tree_key &key_min, const tree_key &key_max,
                    std::vector<std::pair<tree_key, tree_val>> &result);
+
+    /**
+     * @brief Update the value associated with an existing key
+     *
+     * Updates the value for the specified key. If the key doesn't exist,
+     * prints a warning and no update is performed.
+     *
+     * @param key The key whose value should be updated
+     * @param new_value The new value to associate with the key
+     */
     void update(const tree_key &key, const tree_val &new_value);
+
+    /**
+     * @brief Get the value associated with a specific key
+     *
+     * Retrieves the value for the specified key. If the key doesn't exist,
+     * returns std::nullopt.
+     *
+     * @param key The key to look up
+     * @return std::optional<tree_val> The associated value, or nullopt if not found
+     */
     std::optional<tree_val> get(const tree_key &key);
-    void add_in_range(int64_t addition, const tree_key &key_min,
-                                  const tree_key &key_max);
+
+    /**
+     * @brief Add a value to .pos field of all keys within the specified range
+     *
+     * Adds the specified addition value to .pos field of all keys that fall within
+     * the range [key_min, key_max].
+     *
+     * @param addition The value to add to each key in range
+     * @param key_min Minimum key (inclusive)
+     * @param key_max Maximum key (inclusive)
+     */
+    void add_in_range(int64_t addition, const tree_key &key_min, const tree_key &key_max);
+
+    /**
+     * @brief Print the B-Tree structure for debugging
+     *
+     * Outputs the entire B-Tree structure to debug output, showing
+     * the hierarchical relationship between nodes and their key-value pairs.
+     */
     void print();
+
+    /**
+     * @brief Clear the node cache
+     *
+     * Clears all cached nodes, forcing subsequent operations to read
+     * from file. Useful for memory management or consistency operations.
+     */
     void clear_cache();
 
 private:
+    /** @brief The degree of the B-Tree (branching factor) */
     uint64_t degree;
+    /** @brief Pointer to the archive this B-Tree belongs to */
     compio_archive *archive;
+    /** @brief Node reader for cached file access */
     node_reader reader;
 
+    /**
+     * @brief Insert into a node that is guaranteed not to be full
+     *
+     * Recursive helper for inserting into a non-full node. Handles
+     * both leaf and internal node cases.
+     *
+     * @param node The node to insert into (must not be full)
+     * @param key The key to insert
+     * @param value The value to insert
+     */
     void insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value);
+
+    /**
+     * @brief Split a full child node
+     *
+     * Splits a full child node into two nodes, moving the middle key
+     * up to the parent. Used during insertion when nodes become full.
+     *
+     * @param parent The parent node containing the child to split
+     * @param child The full child node to split
+     * @param index The index of the child in the parent's children array
+     */
     void split_child(shared_node &parent, shared_node &child, int index);
+
+    /**
+     * @brief Merge two sibling child nodes
+     *
+     * Merges two adjacent child nodes along with the separating key
+     * from the parent. Used during deletion when nodes become too small.
+     *
+     * @param parent The parent node containing the children to merge
+     * @param idx The index of the first child to merge (merges idx and idx+1)
+     */
     void merge_children(shared_node &parent, int idx);
+
+    /**
+     * @brief Borrow a key from the previous sibling
+     *
+     * Borrows a key-value pair from the left sibling to maintain
+     * B-Tree properties during deletion operations.
+     *
+     * @param parent The parent node containing the children
+     * @param idx The index of the child that needs to borrow
+     */
     void borrow_from_prev(shared_node &parent, int idx);
+
+    /**
+     * @brief Borrow a key from the next sibling
+     *
+     * Borrows a key-value pair from the right sibling to maintain
+     * B-Tree properties during deletion operations.
+     *
+     * @param parent The parent node containing the children
+     * @param idx The index of the child that needs to borrow
+     */
     void borrow_from_next(shared_node &parent, int idx);
+
+    /**
+     * @brief Find the maximum key-value pair in a subtree
+     *
+     * Traverses to the rightmost leaf to find the maximum key
+     * and its associated value in the given subtree.
+     *
+     * @param node The root of the subtree to search
+     * @return std::pair<tree_key, tree_val> The maximum key-value pair
+     */
     std::pair<tree_key, tree_val> find_max_in_node(shared_node node);
+
+    /**
+     * @brief Find the minimum key-value pair in a subtree
+     *
+     * Traverses to the leftmost leaf to find the minimum key
+     * and its associated value in the given subtree.
+     *
+     * @param node The root of the subtree to search
+     * @return std::pair<tree_key, tree_val> The minimum key-value pair
+     */
     std::pair<tree_key, tree_val> find_min_in_node(shared_node node);
-    
+
+    /**
+     * @brief Recursive helper for removing a key
+     *
+     * Recursively removes the specified key from the B-Tree,
+     * handling all necessary rebalancing operations.
+     *
+     * @param node The current node being processed
+     * @param key The key to remove
+     */
     void _remove(shared_node &node, const tree_key &key);
+
+    /**
+     * @brief Recursive helper for range queries
+     *
+     * Recursively collects all key-value pairs within the specified range
+     * from the subtree rooted at the given node.
+     *
+     * @param node The current node being processed
+     * @param key_min Minimum key (inclusive)
+     * @param key_max Maximum key (inclusive)
+     * @param result Vector to store the resulting key-value pairs
+     */
     void _get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
-                           std::vector<std::pair<tree_key, tree_val>> &result);
+                    std::vector<std::pair<tree_key, tree_val>> &result);
+
+    /**
+     * @brief Recursive helper for updating a key-value pair
+     *
+     * Recursively searches for and updates the value associated with
+     * the specified key in the subtree rooted at the given node.
+     *
+     * @param node The current node being processed
+     * @param key The key whose value should be updated
+     * @param new_value The new value to associate with the key
+     * @return true if the key was found and updated, false otherwise
+     */
     bool _update(shared_node &node, const tree_key &key, const tree_val &new_value);
+
+    /**
+     * @brief Recursive helper for adding values to keys in range
+     *
+     * Recursively adds the specified value to all keys within the range
+     * in the subtree rooted at the given node.
+     *
+     * @param node The current node being processed
+     * @param value The value to add to each key in range
+     * @param key_min Minimum key (inclusive)
+     * @param key_max Maximum key (inclusive)
+     */
     void _add_to_range(shared_node &node, int64_t value, const tree_key &key_min,
-                              const tree_key &key_max);
+                       const tree_key &key_max);
+
+    /**
+     * @brief Recursive helper for printing the B-Tree
+     *
+     * Recursively prints the subtree rooted at the given node with
+     * proper indentation to show the hierarchical structure.
+     *
+     * @param node The current node to print
+     * @param depth The current depth in the tree (for indentation)
+     */
     void _print(shared_node node, int depth);
 
+    /**
+     * @brief Allocate space for a new node in the archive
+     *
+     * Allocates the required space for a B-Tree node in the archive's
+     * allocator and returns the file address.
+     *
+     * @return uint64_t The file address where the node should be stored
+     */
     uint64_t allocate_node();
+
+    /**
+     * @brief Free the space occupied by a node
+     *
+     * Deallocates the space used by the node and removes it from cache.
+     *
+     * @param node Smart pointer to the node to free
+     */
     void free_node(const shared_node &node);
+
+    /**
+     * @brief Create a new node with allocated space
+     *
+     * Allocates space for a new node and creates it at that address.
+     *
+     * @return shared_node Smart pointer to the created node
+     */
     shared_node create_node();
+
+    /**
+     * @brief Read a node from the specified address
+     *
+     * Reads a node from the given file address using the node_reader.
+     *
+     * @param addr File address of the node to read
+     * @return shared_node Smart pointer to the read node
+     */
     shared_node read_node(uint64_t addr);
+
+    /**
+     * @brief Read a child node by index
+     *
+     * Reads the child node at the specified index from the parent,
+     * applying any pending key additions.
+     *
+     * @param node The parent node
+     * @param idx The index of the child to read
+     * @return shared_node Smart pointer to the child node
+     */
     shared_node read_child(shared_node &node, uint64_t idx);
+
+    /**
+     * @brief Read the root node of the B-Tree
+     *
+     * Reads and returns the root node from the archive header.
+     *
+     * @return shared_node Smart pointer to the root node
+     */
     shared_node read_root();
 };
 
