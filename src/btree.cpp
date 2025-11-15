@@ -276,10 +276,8 @@ void btree::insert(const tree_key &key, const tree_val &value) {
     if (RO(root)->num_keys == (2 * degree - 1)) {
         auto new_root = create_node();
         new_root->is_leaf = false;
-        new_root->children.resize(1);
-        new_root->key_additions.resize(1);
-        new_root->children[0] = root.addr();
-        new_root->key_additions[0] = 0;
+        new_root->children.push_back(root.addr());
+        new_root->key_additions.push_back(0);
 
         split_child(new_root, root, 0);
         insert_nonfull(new_root, key, value);

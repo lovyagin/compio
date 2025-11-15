@@ -169,8 +169,6 @@ index_node::index_node(int tree_degree)
     values.clear();
     children.clear();
     key_additions.clear();
-    children.resize(1, 0); // TODO: remove that resize, since is_leaf = true
-    key_additions.resize(1, 0);
 }
 
 storage_block::storage_block() : data(nullptr) {}
