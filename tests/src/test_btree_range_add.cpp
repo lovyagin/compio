@@ -684,6 +684,8 @@ TEST_P(BTreeRangeAddRandomizedTest, RandomizedRangeAddOperations) {
             validate_random_keys(original_data, params.num_checked_keys);
         }
     }
+
+    validate_random_keys(original_data, params.num_checked_keys);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -693,7 +695,10 @@ INSTANTIATE_TEST_SUITE_P(
         RandomizedRangeAddTestParams{10, 100, 1.0, 10},
         RandomizedRangeAddTestParams{100, 1000, 1.0, 100},
         RandomizedRangeAddTestParams{100, 1000, 0.1, 10},
-        RandomizedRangeAddTestParams{1000, 500, 0.1, 50},
-        RandomizedRangeAddTestParams{1000, 500, 1.0, 5000}
+        RandomizedRangeAddTestParams{1000, 250, 1.0, 1000},
+        RandomizedRangeAddTestParams{1000, 250, 0.0, 1000},
+        RandomizedRangeAddTestParams{1000, 250, 0.1, 10},
+        RandomizedRangeAddTestParams{2000, 100, 1.0, 2000},
+        RandomizedRangeAddTestParams{2000, 100, 0.0, 2000}
     )
 );
