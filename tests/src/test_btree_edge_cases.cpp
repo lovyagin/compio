@@ -47,7 +47,8 @@ protected:
     tree_val make_val(uint64_t addr, uint64_t size) { return {addr, size}; }
 
     // Helper function to create sequential blocks (valid B-Tree data)
-    void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0, uint64_t base_size = 100) {
+    void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0,
+                                  uint64_t base_size = 100) {
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
             uint64_t block_size = base_size + (i % 10); // Vary size slightly for realism
@@ -57,7 +58,9 @@ protected:
     }
 
     // Helper function to create test data with sequential blocks
-    std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1, uint64_t start_pos = 0, uint64_t base_size = 100) {
+    std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1,
+                                                                      uint64_t start_pos = 0,
+                                                                      uint64_t base_size = 100) {
         std::vector<std::pair<tree_key, tree_val>> data;
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
@@ -182,7 +185,7 @@ TEST_F(BTreeEdgeCasesTest, RangeQueryExactMatch) {
 
     // Behavior depends on implementation - should be empty or include the key
     // This test documents the current behavior
-    EXPECT_TRUE(result.empty() || result.size() == 1);
+    EXPECT_TRUE(result.size() == 1);
 }
 
 TEST_F(BTreeEdgeCasesTest, RangeQuerySingleUnitRange) {
@@ -248,7 +251,7 @@ TEST_F(BTreeEdgeCasesTest, SingleNodeTree) {
 TEST_F(BTreeEdgeCasesTest, IdenticalHashSequentialPositions) {
     // Insert keys with same hash but sequential positions (valid blocks)
     auto test_data = create_sequential_data(10, 0x12345678, 0, 50);
-    
+
     for (const auto &[key, val] : test_data) {
         tree->insert(key, val);
     }
@@ -280,33 +283,13 @@ TEST_F(BTreeEdgeCasesTest, IdenticalPositionDifferentHashes) {
     }
 }
 
-// Persistence Edge Cases
-TEST_F(BTreeEdgeCasesTest, EmptyTreePersistence) {
-    // Verify tree is still empty
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX), result);
-    EXPECT_TRUE(result.empty());
-}
-
-TEST_F(BTreeEdgeCasesTest, SingleItemPersistence) {
-    // Insert single item
-    tree_key key = make_key(1, 100);
-    tree_val val = make_val(1000, 100);
-    tree->insert(key, val);
-
-    // Verify item persisted
-    auto result = tree->get(key);
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result.value(), val);
-}
-
 // Memory and Resource Edge Cases
 TEST_F(BTreeEdgeCasesTest, RapidInsertDelete) {
     // Rapid insert/delete operations to stress memory management
     std::vector<tree_key> inserted_keys;
-    
+
     for (int i = 0; i < 100; ++i) {
-        uint64_t pos = i * 100; 
+        uint64_t pos = i * 100;
         tree_key key = make_key(1, pos);
         tree_val val = make_val(1000 + i, 50 + i);
 

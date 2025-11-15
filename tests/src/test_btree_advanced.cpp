@@ -13,7 +13,6 @@
 
 using namespace compio;
 
-
 class BTreeAdvancedTest : public ::testing::Test {
 protected:
     char filename[256];
@@ -48,7 +47,8 @@ protected:
     tree_val make_val(uint64_t addr, uint64_t size) { return {addr, size}; }
 
     // Helper function to create sequential blocks (valid B-Tree data)
-    void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0, uint64_t base_size = 100) {
+    void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0,
+                                  uint64_t base_size = 100) {
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
             uint64_t block_size = base_size + (i % 10); // Vary size slightly for realism
@@ -58,7 +58,9 @@ protected:
     }
 
     // Helper function to create test data with sequential blocks
-    std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1, uint64_t start_pos = 0, uint64_t base_size = 100) {
+    std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1,
+                                                                      uint64_t start_pos = 0,
+                                                                      uint64_t base_size = 100) {
         std::vector<std::pair<tree_key, tree_val>> data;
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
@@ -69,7 +71,8 @@ protected:
         return data;
     }
 
-    std::vector<std::pair<tree_key, tree_val>> insert_sequence(int start, int end, uint64_t hash = 1) {
+    std::vector<std::pair<tree_key, tree_val>> insert_sequence(int start, int end,
+                                                               uint64_t hash = 1) {
         // Create sequential blocks instead of overlapping ones
         std::vector<std::pair<tree_key, tree_val>> inserted_data;
         uint64_t current_pos = start * 100; // Use larger spacing to avoid overlap
@@ -84,13 +87,15 @@ protected:
         return inserted_data;
     }
 
-    void verify_all_present(const std::vector<std::pair<tree_key, tree_val>>& data) {
-        for (const auto& [key, val] : data) {
+    void verify_all_present(const std::vector<std::pair<tree_key, tree_val>> &data) {
+        for (const auto &[key, val] : data) {
             auto result = tree->get(key);
-            ASSERT_TRUE(result.has_value()) << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
-            // Note: We don't check value equality here because merge/borrow operations
-            // might modify values during B-Tree restructuring. The key presence is
-            // what's important for testing deletion correctness.
+            ASSERT_TRUE(result.has_value())
+                << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
+            EXPECT_EQ(result.value(), val)
+                << "Incorrect value: addr=" << val.addr << ", size=" << val.size
+                << " (found addr=" << result.value().addr << ", size=" << result.value().size
+                << ")";
         }
     }
 };
@@ -109,7 +114,8 @@ TEST_F(BTreeAdvancedTest, DeleteFromLeaf) {
     EXPECT_FALSE(result.has_value());
 
     // Verify other elements still present
-    std::vector<std::pair<tree_key, tree_val>> remaining_data = {inserted_data[0], inserted_data[2]};
+    std::vector<std::pair<tree_key, tree_val>> remaining_data = {inserted_data[0],
+                                                                 inserted_data[2]};
     verify_all_present(remaining_data);
 }
 
@@ -146,9 +152,8 @@ TEST_F(BTreeAdvancedTest, DeleteTriggersBorrow) {
     // Verify tree is still valid - check remaining elements
     // Elements at indices 0, 2, 4, 5, 6, 7 should remain
     std::vector<std::pair<tree_key, tree_val>> remaining_data = {
-        inserted_data[0], inserted_data[2], inserted_data[4], 
-        inserted_data[5], inserted_data[6], inserted_data[7]
-    };
+        inserted_data[0], inserted_data[2], inserted_data[4],
+        inserted_data[5], inserted_data[6], inserted_data[7]};
     verify_all_present(remaining_data);
 }
 
@@ -226,7 +231,7 @@ TEST_F(BTreeAdvancedTest, ComplexRangeQueries) {
         {make_key(2, 50), make_val(1450, 120)},   // covers [50, 170)
         {make_key(2, 170), make_val(1570, 80)},   // covers [170, 250)
         {make_key(3, 150), make_val(1650, 90)},   // covers [150, 240)
-        {make_key(3, 240), make_val(1740, 110)}};  // covers [240, 350)
+        {make_key(3, 240), make_val(1740, 110)}}; // covers [240, 350)
 
     for (const auto &[key, val] : test_data) {
         tree->insert(key, val);
@@ -245,7 +250,8 @@ TEST_F(BTreeAdvancedTest, ComplexRangeQueries) {
     EXPECT_EQ(result.size(), 5);
 
     // Verify specific items are included
-    bool found_1_200 = false, found_1_350 = false, found_2_50 = false, found_2_170 = false, found_3_150 = false;
+    bool found_1_200 = false, found_1_350 = false, found_2_50 = false, found_2_170 = false,
+         found_3_150 = false;
     for (const auto &[key, val] : result) {
         if (key.hash == 1 && key.pos == 200)
             found_1_200 = true;
@@ -268,9 +274,9 @@ TEST_F(BTreeAdvancedTest, ComplexRangeQueries) {
 
 TEST_F(BTreeAdvancedTest, RangeQueryWithGaps) {
     // Insert data with gaps using sequential blocks
-    auto first_batch = create_sequential_data(5, 1, 0, 50);   // 0, 50, 101, 153, 206
+    auto first_batch = create_sequential_data(5, 1, 0, 50);    // 0, 50, 101, 153, 206
     auto second_batch = create_sequential_data(3, 1, 500, 60); // 500, 561, 623
-    
+
     for (const auto &item : first_batch) {
         tree->insert(item.first, item.second);
     }
@@ -388,17 +394,18 @@ TEST_F(BTreeAdvancedTest, LargeValues) {
 TEST_F(BTreeAdvancedTest, PersistenceAfterComplexOperations) {
     // Perform complex operations with sequential blocks
     insert_sequential_blocks(10, 1, 0, 100);
-    
+
     auto test_data = create_sequential_data(10, 1, 0, 100);
-    tree->remove(test_data[3].first); // Remove 4th element
+    tree->remove(test_data[3].first);                       // Remove 4th element
     tree->update(test_data[5].first, make_val(9999, 8888)); // Update 6th element
 
     // Verify state persisted correctly
     for (int i = 0; i < 10; ++i) {
-        if (i == 3) continue; // Skip deleted element
-        
+        if (i == 3)
+            continue; // Skip deleted element
+
         auto result = tree->get(test_data[i].first);
-        
+
         if (i == 5) {
             // Verify update persisted
             ASSERT_TRUE(result.has_value());

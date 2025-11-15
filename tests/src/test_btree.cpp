@@ -13,7 +13,6 @@
 
 using namespace compio;
 
-
 class BTreeTest : public ::testing::Test {
 protected:
     char filename[256];
@@ -48,7 +47,8 @@ protected:
     tree_val make_val(uint64_t addr, uint64_t size) { return {addr, size}; }
 
     // Helper function to create sequential blocks (valid B-Tree data)
-    void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0, uint64_t base_size = 100) {
+    void insert_sequential_blocks(int count, uint64_t hash = 1, uint64_t start_pos = 0,
+                                  uint64_t base_size = 100) {
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
             uint64_t block_size = base_size + (i % 10); // Vary size slightly for realism
@@ -58,7 +58,9 @@ protected:
     }
 
     // Helper function to create test data with sequential blocks
-    std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1, uint64_t start_pos = 0, uint64_t base_size = 100) {
+    std::vector<std::pair<tree_key, tree_val>> create_sequential_data(int count, uint64_t hash = 1,
+                                                                      uint64_t start_pos = 0,
+                                                                      uint64_t base_size = 100) {
         std::vector<std::pair<tree_key, tree_val>> data;
         uint64_t current_pos = start_pos;
         for (int i = 0; i < count; ++i) {
@@ -138,7 +140,8 @@ TEST_F(BTreeTest, MultipleInserts) {
     // Verify all data is present
     for (const auto &[key, val] : test_data) {
         auto result = tree->get(key);
-        ASSERT_TRUE(result.has_value()) << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
+        ASSERT_TRUE(result.has_value())
+            << "Key not found: hash=" << key.hash << ", pos=" << key.pos;
         EXPECT_EQ(result.value(), val);
     }
 }
@@ -277,7 +280,7 @@ TEST_F(BTreeTest, ReverseInsertTriggersSplits) {
     // Insert sequential blocks in reverse order (still valid, just different insertion order)
     std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(20, 1, 0, 100);
     std::reverse(test_data.begin(), test_data.end());
-    
+
     insert_test_data(test_data);
 
     // Verify all data is still accessible
@@ -291,7 +294,7 @@ TEST_F(BTreeTest, ReverseInsertTriggersSplits) {
 TEST_F(BTreeTest, RandomInsert) {
     // Insert sequential blocks in random order
     std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(30, 1, 0, 100);
-    
+
     std::random_device rd;
     std::mt19937 g(rd());
     std::shuffle(test_data.begin(), test_data.end(), g);
@@ -309,7 +312,8 @@ TEST_F(BTreeTest, RandomInsert) {
 // Edge Cases
 TEST_F(BTreeTest, SameHashDifferentPositions) {
     // Multiple keys with same hash but sequential positions (valid blocks)
-    std::vector<std::pair<tree_key, tree_val>> test_data = create_sequential_data(3, 0x12345678, 100, 100);
+    std::vector<std::pair<tree_key, tree_val>> test_data =
+        create_sequential_data(3, 0x12345678, 100, 100);
 
     insert_test_data(test_data);
 
@@ -341,7 +345,7 @@ TEST_F(BTreeTest, SamePositionDifferentHashes) {
 TEST_F(BTreeTest, LargeDataset) {
     // Test with larger dataset to stress the tree - use sequential blocks per hash
     std::vector<std::pair<tree_key, tree_val>> test_data;
-    
+
     for (int hash = 1; hash <= 10; ++hash) {
         auto hash_data = create_sequential_data(10, hash, 0, 50);
         test_data.insert(test_data.end(), hash_data.begin(), hash_data.end());
