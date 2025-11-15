@@ -409,32 +409,32 @@ void btree::get_range_in_node(shared_node &node, const tree_key &key_min, const 
     }
 }
 
-void btree::add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound,
-                                 const tree_key &upper_bound) {
+void btree::add_to_range_in_node(shared_node &node, int64_t addition, const tree_key &key_min,
+                                 const tree_key &key_max) {
     if (RO(node)->num_keys == 0)
         return;
 
-    std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), lower_bound) -
+    std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key_min) -
                       RO(node)->keys.begin();
 
     if (!RO(node)->is_leaf) {
         // this child is in range
         auto child = read_child(node, idx);
-        add_to_range_in_node(child, value, lower_bound, upper_bound);
+        add_to_range_in_node(child, addition, key_min, key_max);
     }
 
     // iterate through keys, that are in range
-    while (idx < RO(node)->num_keys && RO(node)->keys[idx] <= upper_bound) {
-        node->keys[idx] = node->keys[idx] + value;
+    while (idx < RO(node)->num_keys && RO(node)->keys[idx] <= key_max) {
+        node->keys[idx] = node->keys[idx] + addition;
         if (!RO(node)->is_leaf) {
             // if next key is in range
-            if (idx + 1 < RO(node)->num_keys && RO(node)->keys[idx + 1] <= upper_bound) {
+            if (idx + 1 < RO(node)->num_keys && RO(node)->keys[idx + 1] <= key_max) {
                 // then child #idx+1 is also in range
-                node->key_additions[idx + 1] += value;
+                node->key_additions[idx + 1] += addition;
             } else {
                 // otherwise, child #idx+1 is partially in range
                 auto child = read_child(node, idx + 1);
-                add_to_range_in_node(child, value, lower_bound, upper_bound);
+                add_to_range_in_node(child, addition, key_min, key_max);
                 break;
             }
         }
@@ -444,16 +444,17 @@ void btree::add_to_range_in_node(shared_node &node, int64_t value, const tree_ke
     RO(node)->validate();
 }
 
-void btree::add_to_range(int64_t value, const tree_key &lower_bound, const tree_key &upper_bound) {
-    if (lower_bound > upper_bound) {
-        WARNING_PRINT("warning: passed invalid range into btree::add_to_range "
-                      "(lower_bound={%lu,%lu} > {%lu,%lu}=upper_bound)\n",
-                      lower_bound.hash, lower_bound.pos, upper_bound.hash, upper_bound.pos);
+void btree::add_in_range(int64_t addition, const tree_key &key_min,
+                                     const tree_key &key_max) {
+    if (key_min > key_max) {
+        WARNING_PRINT("warning: passed invalid range into btree::add_pos_to_keys_in_range "
+                      "(key_min={%lu,%lu} > {%lu,%lu}=key_max)\n",
+                      key_min.hash, key_min.pos, key_max.hash, key_max.pos);
         return;
     }
 
     auto root = read_root();
-    add_to_range_in_node(root, value, lower_bound, upper_bound);
+    add_to_range_in_node(root, addition, key_min, key_max);
 }
 
 void btree::update(const tree_key &key, const tree_val &new_value) {

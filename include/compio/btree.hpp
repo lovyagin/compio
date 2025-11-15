@@ -51,10 +51,12 @@ struct btree {
     btree(compio_archive *archive);
     void insert(const tree_key &key, const tree_val &value);
     void remove(const tree_key &key);
-    void get_range(const tree_key &key_min, const tree_key &key_max, std::vector<std::pair<tree_key, tree_val>> &result);
+    void get_range(const tree_key &key_min, const tree_key &key_max,
+                   std::vector<std::pair<tree_key, tree_val>> &result);
     void update(const tree_key &key, const tree_val &new_value);
     std::optional<tree_val> get(const tree_key &key);
-    void add_to_range(int64_t value, const tree_key &lower_bound, const tree_key &upper_bound);
+    void add_in_range(int64_t addition, const tree_key &key_min,
+                                  const tree_key &key_max);
     void print_btree();
     void clear_cache();
 
@@ -71,9 +73,11 @@ private:
     std::pair<tree_key, tree_val> find_max_in_node(shared_node node);
     std::pair<tree_key, tree_val> find_min_in_node(shared_node node);
     void remove_node(shared_node &node, const tree_key &key);
-    void get_range_in_node(shared_node &node, const tree_key &key_min, const tree_key &key_max, std::vector<std::pair<tree_key, tree_val>> &result);
+    void get_range_in_node(shared_node &node, const tree_key &key_min, const tree_key &key_max,
+                           std::vector<std::pair<tree_key, tree_val>> &result);
     bool update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value);
-    void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound, const tree_key &upper_bound);
+    void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &key_min,
+                              const tree_key &key_max);
     void print_btree_in_node(shared_node node, int depth);
 
     uint64_t allocate_node() const;
