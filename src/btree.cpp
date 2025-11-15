@@ -102,83 +102,53 @@ void btree::insert(const tree_key &key, const tree_val &value) {
     }
 }
 
+void btree::_remove_in_node(shared_node &node, uint64_t idx) {
+    if (RO(node)->is_leaf) {
+        node->keys.erase(node->keys.begin() + idx);
+        node->values.erase(node->values.begin() + idx);
+        node->num_keys--;
+        node->validate();
+    } else {
+        auto child = read_child(node, idx);
+        auto successor = read_child(node, idx + 1);
+        if (RO(child)->num_keys >= degree) {
+            const auto [p_key, p_val] = find_max_in_node(child);
+            node->keys[idx] = p_key;
+            node->values[idx] = p_val;
+            _remove(child, p_key);
+        } else if (RO(successor)->num_keys >= degree) {
+            const auto [s_key, s_val] = find_min_in_node(successor);
+            node->keys[idx] = s_key;
+            node->values[idx] = s_val;
+            _remove(successor, s_key);
+        } else {
+            const tree_key key = RO(node)->keys[idx];
+            merge_children(node, idx);
+            _remove(child, key);
+        }
+    }
+}
+
 void btree::_remove(shared_node &node, const tree_key &key) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
 
     if (idx < RO(node)->num_keys && key == RO(node)->keys[idx]) {
-        if (RO(node)->is_leaf) {
-            node->keys.erase(node->keys.begin() + idx);
-            node->values.erase(node->values.begin() + idx);
-            node->num_keys--;
-            node->validate();
-        } else {
-            auto child = read_child(node, idx);
-            auto successor = read_child(node, idx + 1);
-            if (RO(child)->num_keys >= degree) {
-                const auto [p_key, p_val] = find_max_in_node(child);
-                node->keys[idx] = p_key;
-                node->values[idx] = p_val;
-                _remove(child, p_key);
-            } else if (RO(successor)->num_keys >= degree) {
-                const auto [s_key, s_val] = find_min_in_node(successor);
-                node->keys[idx] = s_key;
-                node->values[idx] = s_val;
-                _remove(successor, s_key);
-            } else {
-                merge_children(node, idx);
-                _remove(child, key);
-            }
-        }
+        _remove_in_node(node, idx);
     } else {
         if (RO(node)->is_leaf) {
             WARNING_PRINT("warning: called btree::remove() with non-existent key\n");
             return;
         }
+
         auto child = read_child(node, idx);
         if (RO(child)->num_keys < degree) {
-            // Check if we can borrow from predecessor (only if idx > 0)
-            if (idx != 0) {
-                const auto predecessor = read_child(node, idx - 1);
-                if (RO(predecessor)->num_keys >= degree) {
-                    borrow_from_prev(node, idx);
-                    child = read_child(node, idx);
-                    _remove(child, key);
-                    return;
-                }
-            }
-
-            // Check if we can borrow from successor (only if idx < num_keys)
-            if (idx != RO(node)->num_keys) {
-                const auto successor = read_child(node, idx + 1);
-                if (RO(successor)->num_keys >= degree) {
-                    borrow_from_next(node, idx);
-                    child = read_child(node, idx);
-                    _remove(child, key);
-                    return;
-                }
-            }
-
-            // Need to merge
-            if (idx != RO(node)->num_keys) {
-                merge_children(node, idx);
-            } else if (idx > 0) {
-                // Only merge with previous child if idx > 0
-                merge_children(node, idx - 1);
-            } else {
-                // idx == 0 and idx == num_keys means this is the only child
-                // This shouldn't happen in a valid B-tree, but handle gracefully
-                WARNING_PRINT("warning: trying to remove key from empty node in b-tree::_remove\n");
+            child = populate_child(node, idx);
+            if (!child.ptr()) {
                 return;
             }
         }
 
-        // After potential merge, recalculate child position
-        if (idx > RO(node)->num_keys) {
-            idx = RO(node)->num_keys;
-        }
-
-        child = read_child(node, idx);
         _remove(child, key);
     }
 }
@@ -468,6 +438,37 @@ void btree::borrow_from_next(shared_node &parent, const uint64_t idx) {
     }
     sibling->num_keys--;
     sibling->validate();
+}
+
+shared_node btree::populate_child(shared_node &node, uint64_t idx) {
+    if (RO(node)->num_keys == 0) {
+        WARNING_PRINT("warning: called btree::populate_child on node with one child\n");
+        return {};
+    }
+
+    if (idx > 0) {
+        auto predecessor = read_child(node, idx - 1);
+        if (RO(predecessor)->num_keys >= degree) {
+            borrow_from_prev(node, idx);
+            return read_child(node, idx);
+        }
+    }
+
+    if (idx < RO(node)->num_keys) {
+        auto successor = read_child(node, idx + 1);
+        if (RO(successor)->num_keys >= degree) {
+            borrow_from_next(node, idx);
+            return read_child(node, idx);
+        }
+    }
+
+    if (idx < RO(node)->num_keys) {
+        merge_children(node, idx);
+        return read_child(node, idx);
+    } else {
+        merge_children(node, idx - 1);
+        return read_child(node, idx - 1);
+    }
 }
 
 std::pair<tree_key, tree_val> btree::find_max_in_node(shared_node node) {

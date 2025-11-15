@@ -269,6 +269,18 @@ private:
     void borrow_from_next(shared_node &parent, uint64_t idx);
 
     /**
+     * @brief Populate child with keys either by borrowing or merging
+     *
+     * Tries to populate child by borrowing from predecessor, then from successor, otherwise merges
+     * with one of them
+     *
+     * @param node The parent node containing child
+     * @param idx Index of child to populate
+     * @return shared_node Smart pointer to populated child, or nullptr if it's the only child
+     */
+    shared_node populate_child(shared_node &node, uint64_t idx);
+
+    /**
      * @brief Find the maximum key-value pair in a subtree
      *
      * Traverses to the rightmost leaf to find the maximum key
@@ -289,6 +301,17 @@ private:
      * @return std::pair<tree_key, tree_val> The minimum key-value pair
      */
     std::pair<tree_key, tree_val> find_min_in_node(shared_node node);
+
+    /**
+     * @brief Helper for removing a key, that exists in current node
+     *
+     * Removes key from current node if it's leaf, otherwise takes neighbouring new_key from one of
+     * two children, and recursively removes new_key from that child
+     *
+     * @param node The current node being processed
+     * @param idx Index of key to remove
+     */
+    void _remove_in_node(shared_node &node, uint64_t idx);
 
     /**
      * @brief Recursive helper for removing a key
