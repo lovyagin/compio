@@ -118,10 +118,7 @@ void btree::split_child(shared_node &parent, shared_node &child, const int index
     new_node->num_keys = degree - 1;
     new_node->keys.insert(new_node->keys.end(), child->keys.begin() + degree, child->keys.end());
     new_node->values.insert(new_node->values.end(), child->values.begin() + degree, child->values.end());
-    // for (uint64_t j = 0; j < degree - 1; j++) {
-    //     new_node->keys[j] = child->keys[j + degree];
-    //     new_node->values[j] = child->values[j + degree];
-    // }
+
     if (!child->is_leaf) {
         new_node->children.resize(degree);
         new_node->key_additions.resize(degree);
@@ -142,16 +139,6 @@ void btree::split_child(shared_node &parent, shared_node &child, const int index
     child->key_additions.resize(degree);
     child->validate();
 
-    // for (long j = parent->num_keys; j > index; j--) {
-    //     parent->children[j + 1] = parent->children[j];
-    // }
-    // parent->children[index + 1] = new_node.addr();
-    // for (long j = parent->num_keys; j > index; j--) {
-    //     parent->keys[j] = parent->keys[j - 1];
-    //     parent->values[j] = parent->values[j - 1];
-    // }
-    // parent->keys[index] = child->keys[degree - 1];
-    // parent->values[index] = child->values[degree - 1];
     parent->children.insert(parent->children.begin() + index + 1, new_node.addr());
     parent->key_additions.insert(parent->key_additions.begin() + index + 1, 0);
     parent->keys.insert(parent->keys.begin() + index, middle_key);
@@ -165,30 +152,17 @@ void btree::merge_children(shared_node &parent, const int idx) {
     auto child = read_child(parent, idx);
     auto sibling = read_child(parent, idx + 1);
 
-    // child->keys[degree - 1] = parent->keys[idx];
-    // for (size_t i = 0; i < sibling->num_keys; ++i) {
-    //     child->keys[i + degree] = sibling->keys[i];
-    //     child->values[i + degree] = sibling->values[i];
-    // }
     child->num_keys += sibling->num_keys + 1;
     child->keys.push_back(parent->keys[idx]);
     child->values.push_back(parent->values[idx]);
     child->keys.insert(child->keys.end(), sibling->keys.begin(), sibling->keys.end());
     child->values.insert(child->values.end(), sibling->values.begin(), sibling->values.end());
     if (!child->is_leaf) {
-        // for (size_t i = 0; i <= sibling->num_keys; ++i) {
-        //     child->children[i + degree] = sibling->children[i];
-        // }
         child->children.insert(child->children.end(), sibling->children.begin(), sibling->children.end());
         child->key_additions.insert(child->key_additions.end(), sibling->key_additions.begin(), sibling->key_additions.end());
     }
     child->validate();
 
-    // for (size_t i = idx + 1; i < parent->num_keys; ++i) {
-    //     parent->keys[i - 1] = parent->keys[i];
-    //     parent->values[i - 1] = parent->values[i];
-    //     parent->children[i] = parent->children[i + 1];
-    // }
     parent->keys.erase(parent->keys.begin() + idx);
     parent->values.erase(parent->values.begin() + idx);
     parent->children.erase(parent->children.begin() + idx + 1);
@@ -237,16 +211,9 @@ void btree::borrow_from_prev(shared_node &parent, const int idx) {
     auto sibling = read_child(parent, idx - 1);
     assert(child->is_leaf == sibling->is_leaf);
     
-    // for (size_t i = child->num_keys; i > 0; --i) {
-    //     child->keys[i] = child->keys[i - 1];
-    //     child->values[i] = child->values[i - 1];
-    // }
     child->keys.insert(child->keys.begin(), parent->keys[idx - 1]);
     child->values.insert(child->values.begin(), parent->values[idx - 1]);
     if (!child->is_leaf) {
-        // for (size_t i = child->num_keys + 1; i > 0; --i) {
-        //     child->children[i] = child->children[i - 1];
-        // }
         child->children.insert(child->children.begin(), sibling->children.back());
         child->key_additions.insert(child->key_additions.begin(), sibling->key_additions.back());
     }
@@ -265,12 +232,6 @@ void btree::borrow_from_prev(shared_node &parent, const int idx) {
     }
     sibling->num_keys--;
     sibling->validate();
-    // child->keys[0] = parent->keys[idx - 1];
-    // if (!child->is_leaf) {
-    //     child->children[0] = sibling->children[sibling->num_keys];
-    // }
-    // parent->keys[idx - 1] = sibling->keys[sibling->num_keys - 1];
-    // child->values[0] = sibling->values[sibling->num_keys - 1];
 }
 
 void btree::borrow_from_next(shared_node &parent, const int idx) {
@@ -279,12 +240,9 @@ void btree::borrow_from_next(shared_node &parent, const int idx) {
     auto sibling = read_child(parent, idx + 1);
     assert(child->is_leaf == sibling->is_leaf);
 
-    // child->keys[child->num_keys] = parent->keys[idx];
-    // child->values[child->num_keys] = parent->values[idx];
     child->keys.push_back(parent->keys[idx]);
     child->values.push_back(parent->values[idx]);
     if (!child->is_leaf) {
-        // child->children[child->num_keys + 1] = sibling->children[0];
         child->children.push_back(sibling->children[0]);
         child->key_additions.push_back(sibling->key_additions[0]);
     }
@@ -303,16 +261,6 @@ void btree::borrow_from_next(shared_node &parent, const int idx) {
     }
     sibling->num_keys--;
     sibling->validate();
-    // for (size_t i = 1; i < sibling->num_keys; ++i) {
-    //     sibling->keys[i - 1] = sibling->keys[i];
-    //     sibling->values[i - 1] = sibling->values[i];
-    // }
-    // if (!sibling->is_leaf) {
-    //     for (size_t i = 1; i <= sibling->num_keys; ++i) {
-    //         sibling->children[i - 1] = sibling->children[i];
-    //     }
-    // }
-
 }
 
 std::pair<tree_key, tree_val> btree::find_max_in_node(const shared_node &node) {
@@ -362,10 +310,6 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
 
     if (idx < RO(node)->num_keys && key == RO(node)->keys[idx]) {
         if (RO(node)->is_leaf) {
-            // for (size_t i = idx + 1; i < RO(node)->num_keys; i++) {
-            //     node->keys[i - 1] = RO(node)->keys[i];
-            //     node->values[i - 1] = RO(node)->values[i];
-            // }
             node->keys.erase(node->keys.begin() + idx);
             node->values.erase(node->values.begin() + idx);
             node->num_keys--;
