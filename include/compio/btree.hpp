@@ -72,15 +72,16 @@ private:
     void borrow_from_next(shared_node &parent, int idx);
     std::pair<tree_key, tree_val> find_max_in_node(shared_node node);
     std::pair<tree_key, tree_val> find_min_in_node(shared_node node);
-    void remove_node(shared_node &node, const tree_key &key);
-    void get_range_in_node(shared_node &node, const tree_key &key_min, const tree_key &key_max,
+    
+    void _remove(shared_node &node, const tree_key &key);
+    void _get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
                            std::vector<std::pair<tree_key, tree_val>> &result);
-    bool update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value);
-    void add_to_range_in_node(shared_node &node, int64_t value, const tree_key &key_min,
+    bool _update(shared_node &node, const tree_key &key, const tree_val &new_value);
+    void _add_to_range(shared_node &node, int64_t value, const tree_key &key_min,
                               const tree_key &key_max);
-    void print_in_node(shared_node node, int depth);
+    void _print(shared_node node, int depth);
 
-    uint64_t allocate_node() const;
+    uint64_t allocate_node();
     void free_node(const shared_node &node);
     shared_node create_node();
     shared_node read_node(uint64_t addr);
