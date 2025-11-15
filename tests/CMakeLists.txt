@@ -14,6 +14,7 @@ add_executable(compio_gtest
     src/test_btree.cpp
     src/test_btree_advanced.cpp
     src/test_btree_edge_cases.cpp
+    src/test_btree_range_add.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
