@@ -20,19 +20,12 @@ node_reader::node_reader(FILE *file, int tree_degree, int max_size)
 
 shared_node node_reader::read_node(uint64_t addr) {
     if (!cache.exists(addr)) {
-        // cache miss
-
-        // TODO: new smart_infile_object constructor for this type of case (infile_object without
-        // default constructor)
         auto result = shared_node(file, addr, new index_node(tree_degree));
         result.read();     // read from file (because constructor with obj& does not read)
         result.unmodify(); // constructor with obj& sets modified=true
-
         cache.put(addr, result);
-
         return result;
     } else {
-        // cache hit
         return cache.get(addr);
     }
 }
@@ -127,9 +120,6 @@ void btree::split_child(shared_node &parent, shared_node &child, const int index
                   new_node->children.begin());
         std::copy(child->key_additions.begin() + degree, child->key_additions.end(),
                   new_node->key_additions.begin());
-        // for (uint64_t j = 0; j < degree; j++) {
-        //     new_node->children[j] = child->children[j + degree];
-        // }
     }
     new_node->validate();
 
