@@ -497,32 +497,22 @@ bool btree::update(const tree_key &key, const tree_val &new_value) {
 }
 
 std::optional<tree_val> btree::get(const tree_key &key) {
-    // TODO: rewrite this function accurately (one keys traverse)
     auto current = read_root();
 
     while (true) {
         RO(current)->validate();
 
-        // If we found the key in current node, return its address
-        for (uint32_t i = 0; i < RO(current)->num_keys; ++i) {
-            if (RO(current)->keys[i] == key) {
-                return RO(current)->values[i];
-            }
-        }
+        std::size_t idx =
+            std::lower_bound(RO(current)->keys.begin(), RO(current)->keys.end(), key) -
+            RO(current)->keys.begin();
 
-        // If this is a leaf node and we haven't found the key, return 0
-        if (RO(current)->is_leaf) {
+        if (idx < RO(current)->num_keys && RO(current)->keys[idx] == key) {
+            return RO(current)->values[idx];
+        } else if (!RO(current)->is_leaf) {
+            current = read_child(current, idx);
+        } else {
             return std::nullopt;
         }
-
-        // Find the appropriate child to search
-        uint32_t child_index = 0;
-        while (child_index < RO(current)->num_keys && key > RO(current)->keys[child_index]) {
-            child_index++;
-        }
-
-        // Read the child node and continue search
-        current = read_child(current, child_index);
     }
 }
 
