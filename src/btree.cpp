@@ -506,10 +506,10 @@ bool btree::update_in_node(shared_node &node, const tree_key &key, const tree_va
     return false;
 }
 
-static void print_btree_(btree *tree, shared_node node, int depth = 0) {
+void btree::print_btree_in_node(shared_node node, int depth) {
     for (std::size_t i = 0; i <= node->num_keys; ++i) {
         if (!node->is_leaf) {
-            print_btree_(tree, tree->read_child(node, i), depth + 1);
+            print_btree_in_node(read_child(node, i), depth + 1);
         }
 
         if (i < node->num_keys) {
@@ -523,4 +523,6 @@ static void print_btree_(btree *tree, shared_node node, int depth = 0) {
     }
 }
 
-void btree::print_btree() { print_btree_(this, read_root()); }
+void btree::clear_cache() { reader.clear_cache(); }
+
+void btree::print_btree() { print_btree_in_node(read_root(), 0); }

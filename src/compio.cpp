@@ -474,7 +474,7 @@ end:
 
 void compio_flush(compio_archive *archive) {
     archive->block_reader->clear_cache();
-    archive->index->reader.clear_cache();
+    archive->index->clear_cache();
 }
 
 namespace compio {
