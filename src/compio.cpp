@@ -116,7 +116,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_allocator;
     }
 
-    archive->index = new btree(archive);
+    archive->index = new btree(c->b_tree_degree, mode_b & mode_bit::r, archive->header,
+                               archive->allocator, file, c->cache_size__nodes);
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto no_index;
@@ -271,20 +272,25 @@ int compio_close_archive(compio_archive *archive) {
     // 3) delete allocator
     delete archive->allocator;
 
-    // 4) flush header
+    // 4) delete btree (it actually depends on allocator, but allocator also depends on index,
+    // however they don't call each other in their destructors, so their destruction order does not
+    // matter)
+    delete archive->index;
+
+    // 5) flush header
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
 
-    // 5) finally we close the file
+    // 6) finally we close the file (block_reader, allocator and index are all deleted, so no
+    // fwrites will be called after this)
     if (fclose(archive->file)) {
         WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
         return -2;
     }
     DEBUG_PRINT("[cca]: closed file\n");
 
-    // 6) and delete remaining structures
-    delete archive->index;
+    // 7) and delete archive structure
     delete archive;
 
     return COMPIO_SUCCESS;

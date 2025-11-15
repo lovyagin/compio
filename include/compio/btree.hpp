@@ -100,12 +100,19 @@ struct btree {
     /**
      * @brief Construct a new btree object
      *
-     * Initializes a B-Tree for the given archive. Creates root node if
-     * the archive is empty (index_root == 0).
+     * Initializes a B-Tree. Creates root node if archive is new (archive_header->index_root == 0).
      *
-     * @param archive Pointer to the archive this B-Tree belongs to
+     *
+     * @param degree The B-Tree degree (branching factor)
+     * @param is_readonly Is compio_archive opened with readonly (should we propagate key_additions
+     * and save them to file or not)
+     * @param archive_header Smart pointer to header to set and get root address
+     * @param allocator Pointer to allocator to allocate memory for index_nodes
+     * @param file File handle for reading/writing B-Tree nodes
+     * @param cache_size Maximum number of nodes to cache for performance optimization
      */
-    btree(compio_archive *archive);
+    btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
+          block_allocator *allocator, FILE *file, int cache_size);
 
     /**
      * @brief Insert a key-value pair into the B-Tree
@@ -194,8 +201,13 @@ struct btree {
 private:
     /** @brief The degree of the B-Tree (branching factor) */
     uint64_t degree;
-    /** @brief Pointer to the archive this B-Tree belongs to */
-    compio_archive *archive;
+    /** @brief Is compio_archive opened with readonly (should we propagate key_additions and save
+     * them to file or not) */
+    bool is_readonly;
+    /** @brief Smart pointer to header to set and get root address */
+    smart_infile_object<header> archive_header;
+    /** @brief Pointer to allocator to allocate memory for index_nodes */
+    block_allocator *allocator;
     /** @brief Node reader for cached file access */
     node_reader reader;
 

@@ -46,15 +46,18 @@ void node_reader::remove_node(const shared_node &node) {
 
 void node_reader::clear_cache() { cache.clear(); }
 
-btree::btree(compio_archive *archive_)
-    : degree(archive_->config->b_tree_degree),
-      archive(archive_),
-      reader(archive_->file, degree, archive_->config->cache_size__nodes) {
-    if (readonly(archive_->header, header)->index_root != 0)
+btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
+             block_allocator *allocator, FILE *file, int cache_size)
+    : degree(degree),
+      is_readonly(is_readonly),
+      archive_header(archive_header),
+      allocator(allocator),
+      reader(file, degree, cache_size) {
+    if (readonly(archive_header, header)->index_root != 0)
         return;
 
     shared_node root = create_node();
-    archive_->header->index_root = root.addr();
+    archive_header->index_root = root.addr();
 }
 
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
@@ -93,7 +96,7 @@ void btree::insert(const tree_key &key, const tree_val &value) {
         split_child(new_root, root, 0);
         insert_nonfull(new_root, key, value);
         new_root->validate();
-        archive->header->index_root = new_root.addr();
+        archive_header->index_root = new_root.addr();
     } else {
         insert_nonfull(root, key, value);
     }
@@ -184,7 +187,7 @@ void btree::remove(const tree_key &key) {
     auto root = read_root();
     _remove(root, key);
     if (root->num_keys == 0 && !root->is_leaf) {
-        archive->header->index_root = root->children[0];
+        archive_header->index_root = root->children[0];
         free_node(root);
     }
 }
@@ -481,11 +484,11 @@ std::pair<tree_key, tree_val> btree::find_min_in_node(shared_node node) {
     return {RO(node)->keys[0], RO(node)->values[0]};
 }
 
-uint64_t btree::allocate_node() { return archive->allocator->allocate(INDEX_NODE_SIZE(degree)); }
+uint64_t btree::allocate_node() { return allocator->allocate(INDEX_NODE_SIZE(degree)); }
 
 void btree::free_node(const shared_node &node) {
     reader.remove_node(node);
-    archive->allocator->deallocate(node.addr(), INDEX_NODE_SIZE(degree));
+    allocator->deallocate(node.addr(), INDEX_NODE_SIZE(degree));
 }
 
 shared_node btree::create_node() { return reader.create_node(allocate_node()); }
@@ -514,7 +517,7 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
         }
         node->key_additions[idx] = 0;
     }
-    if (archive->is_readonly()) {
+    if (is_readonly) {
         // key_additions will be applied, but not written to file
         node.unmodify();
         child.unmodify();
@@ -522,4 +525,4 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
     return child;
 }
 
-shared_node btree::read_root() { return read_node(readonly(archive->header, header)->index_root); }
+shared_node btree::read_root() { return read_node(readonly(archive_header, header)->index_root); }
