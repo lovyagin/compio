@@ -179,13 +179,10 @@ TEST_F(BTreeEdgeCasesTest, RangeQueryExactMatch) {
 
     tree->insert(key, val);
 
-    // Query exact range
     std::vector<std::pair<tree_key, tree_val>> result;
     tree->get_range(key, key, result);
 
-    // Behavior depends on implementation - should be empty or include the key
-    // This test documents the current behavior
-    EXPECT_TRUE(result.size() == 1);
+    EXPECT_TRUE(result.empty());
 }
 
 TEST_F(BTreeEdgeCasesTest, RangeQuerySingleUnitRange) {
