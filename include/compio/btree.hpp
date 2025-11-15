@@ -38,7 +38,7 @@ struct node_reader {
      * @param tree_degree The degree of the B-Tree (branching factor)
      * @param max_size Maximum number of nodes to cache
      */
-    node_reader(FILE *file, int tree_degree, int max_size);
+    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size);
 
     /**
      * @brief Read a node from the specified address
@@ -80,7 +80,7 @@ struct node_reader {
 
 private:
     /** @brief The degree of the B-Tree (branching factor) */
-    int tree_degree;
+    uint64_t tree_degree;
     /** @brief File handle for reading/writing nodes */
     FILE *file;
     /** @brief LRU cache for storing frequently accessed nodes */
@@ -112,7 +112,7 @@ struct btree {
      * @param cache_size Maximum number of nodes to cache for performance optimization
      */
     btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
-          block_allocator *allocator, FILE *file, int cache_size);
+          block_allocator *allocator, FILE *file, uint64_t cache_size);
 
     /**
      * @brief Insert a key-value pair into the B-Tree
@@ -233,7 +233,7 @@ private:
      * @param child The full child node to split
      * @param index The index of the child in the parent's children array
      */
-    void split_child(shared_node &parent, shared_node &child, int index);
+    void split_child(shared_node &parent, shared_node &child, uint64_t idx);
 
     /**
      * @brief Merge two sibling child nodes
@@ -244,7 +244,7 @@ private:
      * @param parent The parent node containing the children to merge
      * @param idx The index of the first child to merge (merges idx and idx+1)
      */
-    void merge_children(shared_node &parent, int idx);
+    void merge_children(shared_node &parent, uint64_t idx);
 
     /**
      * @brief Borrow a key from the previous sibling
@@ -255,7 +255,7 @@ private:
      * @param parent The parent node containing the children
      * @param idx The index of the child that needs to borrow
      */
-    void borrow_from_prev(shared_node &parent, int idx);
+    void borrow_from_prev(shared_node &parent, uint64_t idx);
 
     /**
      * @brief Borrow a key from the next sibling
@@ -266,7 +266,7 @@ private:
      * @param parent The parent node containing the children
      * @param idx The index of the child that needs to borrow
      */
-    void borrow_from_next(shared_node &parent, int idx);
+    void borrow_from_next(shared_node &parent, uint64_t idx);
 
     /**
      * @brief Find the maximum key-value pair in a subtree
@@ -351,7 +351,7 @@ private:
      * @param node The current node to print
      * @param depth The current depth in the tree (for indentation)
      */
-    void _print(shared_node node, int depth);
+    void _print(shared_node node, uint64_t depth);
 
     /**
      * @brief Allocate space for a new node in the archive

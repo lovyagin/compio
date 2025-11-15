@@ -13,7 +13,7 @@ using namespace compio;
 
 #define RO(x) readonly(x, index_node)
 
-node_reader::node_reader(FILE *file, int tree_degree, int max_size)
+node_reader::node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size)
     : tree_degree(tree_degree),
       file(file),
       cache(max_size) {}
@@ -47,7 +47,7 @@ void node_reader::remove_node(const shared_node &node) {
 void node_reader::clear_cache() { cache.clear(); }
 
 btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
-             block_allocator *allocator, FILE *file, int cache_size)
+             block_allocator *allocator, FILE *file, uint64_t cache_size)
     : degree(degree),
       is_readonly(is_readonly),
       archive_header(archive_header),
@@ -234,7 +234,7 @@ void btree::get_range(const tree_key &key_min, const tree_key &key_max,
 }
 
 bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_value) {
-    for (uint64_t i = 0; i < RO(node)->num_keys; ++i) {
+    for (std::size_t i = 0; i < RO(node)->num_keys; ++i) {
         auto current_key = RO(node)->keys[i];
         if (current_key >= key) {
             if (current_key == key) {
@@ -330,7 +330,7 @@ void btree::add_in_range(int64_t addition, const tree_key &key_min, const tree_k
     _add_to_range(root, addition, key_min, key_max);
 }
 
-void btree::_print(shared_node node, int depth) {
+void btree::_print(shared_node node, uint64_t depth) {
     for (std::size_t i = 0; i <= node->num_keys; ++i) {
         if (!node->is_leaf) {
             _print(read_child(node, i), depth + 1);
@@ -351,7 +351,7 @@ void btree::print() { _print(read_root(), 0); }
 
 void btree::clear_cache() { reader.clear_cache(); }
 
-void btree::split_child(shared_node &parent, shared_node &child, const int index) {
+void btree::split_child(shared_node &parent, shared_node &child, const uint64_t idx) {
     auto new_node = create_node();
 
     new_node->is_leaf = child->is_leaf;
@@ -379,15 +379,15 @@ void btree::split_child(shared_node &parent, shared_node &child, const int index
     child->key_additions.resize(degree);
     child->validate();
 
-    parent->children.insert(parent->children.begin() + index + 1, new_node.addr());
-    parent->key_additions.insert(parent->key_additions.begin() + index + 1, 0);
-    parent->keys.insert(parent->keys.begin() + index, middle_key);
-    parent->values.insert(parent->values.begin() + index, middle_value);
+    parent->children.insert(parent->children.begin() + idx + 1, new_node.addr());
+    parent->key_additions.insert(parent->key_additions.begin() + idx + 1, 0);
+    parent->keys.insert(parent->keys.begin() + idx, middle_key);
+    parent->values.insert(parent->values.begin() + idx, middle_value);
     parent->num_keys++;
     parent->validate();
 }
 
-void btree::merge_children(shared_node &parent, const int idx) {
+void btree::merge_children(shared_node &parent, const uint64_t idx) {
     auto child = read_child(parent, idx);
     auto sibling = read_child(parent, idx + 1);
 
@@ -414,7 +414,7 @@ void btree::merge_children(shared_node &parent, const int idx) {
     free_node(sibling);
 }
 
-void btree::borrow_from_prev(shared_node &parent, const int idx) {
+void btree::borrow_from_prev(shared_node &parent, const uint64_t idx) {
     auto child = read_child(parent, idx);
     auto sibling = read_child(parent, idx - 1);
     assert(child->is_leaf == sibling->is_leaf);
@@ -442,7 +442,7 @@ void btree::borrow_from_prev(shared_node &parent, const int idx) {
     sibling->validate();
 }
 
-void btree::borrow_from_next(shared_node &parent, const int idx) {
+void btree::borrow_from_next(shared_node &parent, const uint64_t idx) {
     auto child = read_child(parent, idx);
     auto sibling = read_child(parent, idx + 1);
     assert(child->is_leaf == sibling->is_leaf);
