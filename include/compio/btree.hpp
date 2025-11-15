@@ -125,8 +125,8 @@ public:
     void merge_children(shared_node &parent, int idx);
     void borrow_from_prev(shared_node &parent, int idx);
     void borrow_from_next(shared_node &parent, int idx);
-    std::pair<tree_key, tree_val> find_max_in_node(const shared_node &node);
-    std::pair<tree_key, tree_val> find_min_in_node(const shared_node &node);
+    std::pair<tree_key, tree_val> find_max_in_node(shared_node node);
+    std::pair<tree_key, tree_val> find_min_in_node(shared_node node);
     void remove_node(shared_node &node, const tree_key &key);
     void get_range_in_node(shared_node &node, const tree_key &key_min, const tree_key &key_max,
                            std::vector<std::pair<tree_key, tree_val>> &result);

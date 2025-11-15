@@ -246,20 +246,18 @@ void btree::borrow_from_next(shared_node &parent, const int idx) {
     sibling->validate();
 }
 
-std::pair<tree_key, tree_val> btree::find_max_in_node(const shared_node &node) {
-    auto current = node;
-    while (!RO(current)->is_leaf) {
-        current = read_child(current, RO(current)->num_keys);
+std::pair<tree_key, tree_val> btree::find_max_in_node(shared_node node) {
+    while (!RO(node)->is_leaf) {
+        node = read_child(node, RO(node)->num_keys);
     }
-    return {RO(current)->keys.back(), RO(current)->values.back()};
+    return {RO(node)->keys.back(), RO(node)->values.back()};
 }
 
-std::pair<tree_key, tree_val> btree::find_min_in_node(const shared_node &node) {
-    auto current = node;
-    while (!RO(current)->is_leaf) {
-        current = read_child(current, 0);
+std::pair<tree_key, tree_val> btree::find_min_in_node(shared_node node) {
+    while (!RO(node)->is_leaf) {
+        node = read_child(node, 0);
     }
-    return {RO(current)->keys[0], RO(current)->values[0]};
+    return {RO(node)->keys[0], RO(node)->values[0]};
 }
 
 void btree::insert(const tree_key &key, const tree_val &value) {
