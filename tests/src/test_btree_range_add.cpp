@@ -519,3 +519,181 @@ TEST_F(BTreeRangeAddTest, RangeAddWithMinimumMaximumKeys) {
     ASSERT_TRUE(new_max_result.has_value());
     EXPECT_EQ(new_max_result.value(), original_data[1].second);
 }
+
+struct RandomizedRangeAddTestParams {
+    int num_keys;
+    int n_iterations;
+    double check_probability;
+    int num_checked_keys;
+};
+
+class BTreeRangeAddRandomizedTest : public ::testing::TestWithParam<RandomizedRangeAddTestParams> {
+protected:
+    char filename[256];
+    compio_archive *archive;
+    btree *tree;
+    compio_config config;
+    std::mt19937 rng;
+
+    void SetUp() override {
+        generate_tmp_fn(filename, sizeof(filename));
+
+        compio_build_default_config(&config);
+        config.b_tree_degree = 3;
+        config.cache_size__nodes = 5000;
+        config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+
+        archive = compio_open_archive(filename, "w+", &config);
+        ASSERT_NE(archive, nullptr);
+        tree = archive->index;
+        ASSERT_NE(tree, nullptr);
+        
+        rng = std::mt19937(42);
+    }
+
+    void TearDown() override {
+        if (archive) {
+            compio_close_archive(archive);
+        }
+        remove(filename);
+    }
+
+    tree_key make_key(uint64_t hash, uint64_t pos) { return {hash, pos}; }
+
+    tree_val make_val(uint64_t addr, uint64_t size) { return {addr, size}; }
+
+    std::vector<std::pair<tree_key, tree_val>> create_sequential_keys_with_gaps(int count, uint64_t hash = 42, uint64_t start_pos = 1000, uint64_t gap_size = 500) {
+        std::vector<std::pair<tree_key, tree_val>> data;
+        uint64_t current_pos = start_pos;
+        std::uniform_int_distribution<uint64_t> val_dist(0, UINT64_MAX);
+        
+        for (int i = 0; i < count; ++i) {
+            data.push_back({make_key(hash, current_pos), make_val(val_dist(rng), val_dist(rng))});
+            current_pos += gap_size;
+        }
+        return data;
+    }
+
+    int64_t generate_addition(const std::vector<std::pair<tree_key, tree_val>>& data, tree_key lower_bound, tree_key upper_bound) {
+        std::size_t idx = 0;
+        while (idx < data.size() && data[idx].first < lower_bound) {
+            ++idx;
+        }
+
+        int64_t min_addition;
+        if (idx == 0) {
+            min_addition = -data[idx].first.pos;
+        } else {
+            min_addition = data[idx - 1].first.pos - data[idx].first.pos + 1;
+        }
+
+        while (idx < data.size() && data[idx].first <= upper_bound) {
+            ++idx;
+        }
+
+        int64_t max_addition;
+        if (idx == data.size() || idx == 0) {
+            max_addition = 100;
+        } else {
+            max_addition = data[idx].first.pos - data[idx - 1].first.pos - 1;
+        }
+
+        // std::cout << "data: ";
+        // for (const auto &key_val : data) {
+        //     std::cout << key_val.first.pos << ", ";
+        // }
+        // std::cout << std::endl;
+
+        // std::cout << "min_addition: " << min_addition << std::endl;
+        // std::cout << "max_addition: " << max_addition << std::endl;
+
+        if (min_addition > max_addition) {
+            throw std::runtime_error("failed to generate addition");
+        }
+
+        std::uniform_int_distribution<int64_t> addition_dist(min_addition, max_addition);
+        return addition_dist(rng);
+    }
+
+    void validate_random_keys(const std::vector<std::pair<tree_key, tree_val>>& data, int num_to_check) {
+        if (data.empty() || num_to_check <= 0) return;
+        
+        std::uniform_int_distribution<int> dist(0, data.size() - 1);
+        
+        for (int i = 0; i < std::min(num_to_check, static_cast<int>(data.size())); ++i) {
+            int idx = dist(rng);
+            const auto& [expected_key, expected_val] = data[idx];
+            
+            auto result = tree->get(expected_key);
+            ASSERT_TRUE(result.has_value()) 
+                << "Expected key not found: hash=" << expected_key.hash << ", pos=" << expected_key.pos;
+            EXPECT_EQ(result.value(), expected_val)
+                << "Value mismatch for key: hash=" << expected_key.hash << ", pos=" << expected_key.pos;
+        }
+    }
+
+    void update_points(std::vector<std::pair<tree_key, tree_val>>& data, tree_key lower_bound, tree_key upper_bound, int64_t value) {
+        std::size_t idx = 0;
+        while (idx < data.size() && data[idx].first < lower_bound) {
+            ++idx;
+        }
+
+        while (idx < data.size() && data[idx].first <= upper_bound) {
+            data[idx].first = data[idx].first + value;
+            ++idx;
+        }
+
+        for (std::size_t i = 1; i < data.size(); ++i) {
+            if (data[i].first <= data[i - 1].first) {
+                throw std::runtime_error("keys not sorted after update_points");
+            }
+        }
+    }
+};
+
+TEST_P(BTreeRangeAddRandomizedTest, RandomizedRangeAddOperations) {
+    auto params = GetParam();
+    
+    auto original_data = create_sequential_keys_with_gaps(params.num_keys);
+    
+    std::vector<std::pair<tree_key, tree_val>> shuffled_data = original_data;
+    std::shuffle(shuffled_data.begin(), shuffled_data.end(), rng);
+    
+    for (const auto& [key, val] : shuffled_data) {
+        tree->insert(key, val);
+    }
+    
+    std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
+
+    for (int iteration = 0; iteration < params.n_iterations; ++iteration) {
+        std::uniform_int_distribution<int> range_dist(0, original_data.size() - 1);
+        tree_key lower_bound = original_data[range_dist(rng)].first;
+        tree_key upper_bound = original_data[range_dist(rng)].first;
+        
+        if (lower_bound > upper_bound) {
+            std::swap(lower_bound, upper_bound);
+        }
+        
+        int64_t addition = generate_addition(original_data, lower_bound, upper_bound);
+        
+        tree->add_to_range(addition, lower_bound, upper_bound);
+        
+        update_points(original_data, lower_bound, upper_bound, addition);
+        
+        if (prob_dist(rng) < params.check_probability) {
+            validate_random_keys(original_data, params.num_checked_keys);
+        }
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    BTreeRandomizedAddRange,
+    BTreeRangeAddRandomizedTest,
+    ::testing::Values(
+        RandomizedRangeAddTestParams{10, 100, 1.0, 10},
+        RandomizedRangeAddTestParams{100, 1000, 1.0, 100},
+        RandomizedRangeAddTestParams{100, 1000, 0.1, 10},
+        RandomizedRangeAddTestParams{1000, 500, 0.1, 50},
+        RandomizedRangeAddTestParams{1000, 500, 1.0, 5000}
+    )
+);
