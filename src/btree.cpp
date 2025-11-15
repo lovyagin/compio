@@ -374,39 +374,39 @@ void btree::remove_node(shared_node &node, const tree_key &key) {
 void btree::remove(const tree_key &key) {
     auto root = read_root();
     remove_node(root, key);
-    if (RO(root)->num_keys == 0) {
-        if (!RO(root)->is_leaf) {
-            archive->header->index_root = RO(root)->children[0];
-            free_node(root);
-        }
+    if (root->num_keys == 0 && !root->is_leaf) {
+        archive->header->index_root = root->children[0];
+        free_node(root);
     }
 }
 
 void btree::get_range(const tree_key &key_min, const tree_key &key_max,
                       std::vector<std::pair<tree_key, tree_val>> &result) {
-    if (key_max <= key_min)
+    if (key_max <= key_min) {
+        WARNING_PRINT("warning: btree::get_range received invalid range bounds (key_min={%lu,%lu} "
+                      ">= {%lu,%lu}=key_max)\n",
+                      key_min.hash, key_min.pos, key_max.hash, key_max.pos);
         return;
+    }
     auto root = read_root();
     get_range_in_node(root, key_min, key_max, result);
 }
 
 void btree::get_range_in_node(shared_node &node, const tree_key &key_min, const tree_key &key_max,
                               std::vector<std::pair<tree_key, tree_val>> &result) {
-    const int num_keys = RO(node)->num_keys;
-    if (num_keys == 0)
+    if (RO(node)->num_keys == 0)
         return;
-    const bool is_leaf = RO(node)->is_leaf;
 
     tree_key start{0, 0};
     tree_key end = RO(node)->keys[0];
 
-    for (int i = 0; i <= num_keys; ++i) {
-        if (!is_leaf && (key_min < end) && (key_max > start)) {
+    for (std::size_t i = 0; i <= RO(node)->num_keys; ++i) {
+        if (!RO(node)->is_leaf && (key_min < end) && (key_max > start)) {
             auto child = read_child(node, i);
             get_range_in_node(child, key_min, key_max, result);
         }
 
-        if (i < num_keys) {
+        if (i < RO(node)->num_keys) {
             start = RO(node)->keys[i];
             end.pos = start.pos + RO(node)->values[i].size;
             end.hash = start.hash;
@@ -415,7 +415,8 @@ void btree::get_range_in_node(shared_node &node, const tree_key &key_min, const 
                 result.emplace_back(start, RO(node)->values[i]);
             }
             start = end;
-            end = (i < num_keys - 1) ? RO(node)->keys[i + 1] : tree_key{UINT64_MAX, UINT64_MAX};
+            end = (i < RO(node)->num_keys - 1) ? RO(node)->keys[i + 1]
+                                               : tree_key{UINT64_MAX, UINT64_MAX};
         }
     }
 }
@@ -423,30 +424,24 @@ void btree::get_range_in_node(shared_node &node, const tree_key &key_min, const 
 void btree::add_to_range_in_node(shared_node &node, int64_t value, const tree_key &lower_bound,
                                  const tree_key &upper_bound) {
     RO(node)->validate();
-    const int num_keys = RO(node)->num_keys;
-    if (num_keys == 0)
+    if (RO(node)->num_keys == 0)
         return;
-    const bool is_leaf = RO(node)->is_leaf;
 
-    int idx = 0;
+    std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), lower_bound) -
+                      RO(node)->keys.begin();
 
-    // skip keys that are before lower_bound
-    while (idx < num_keys && RO(node)->keys[idx] < lower_bound) {
-        ++idx;
-    }
-
-    if (!is_leaf) {
+    if (!RO(node)->is_leaf) {
         // this child is in range
         auto child = read_child(node, idx);
         add_to_range_in_node(child, value, lower_bound, upper_bound);
     }
 
     // iterate through keys, that are in range
-    while (idx < num_keys && RO(node)->keys[idx] <= upper_bound) {
+    while (idx < RO(node)->num_keys && RO(node)->keys[idx] <= upper_bound) {
         node->keys[idx] = node->keys[idx] + value;
-        if (!is_leaf) {
+        if (!RO(node)->is_leaf) {
             // if next key is in range
-            if (idx + 1 < num_keys && RO(node)->keys[idx + 1] <= upper_bound) {
+            if (idx + 1 < RO(node)->num_keys && RO(node)->keys[idx + 1] <= upper_bound) {
                 // then child #idx+1 is also in range
                 node->key_additions[idx + 1] += value;
             } else {
@@ -500,16 +495,14 @@ std::optional<tree_val> btree::get(const tree_key &key) {
 }
 
 bool btree::update_in_node(shared_node &node, const tree_key &key, const tree_val &new_value) {
-    const auto num_keys = RO(node)->num_keys;
-    const auto is_leaf = RO(node)->is_leaf;
-    for (uint64_t i = 0; i < num_keys; ++i) {
+    for (uint64_t i = 0; i < RO(node)->num_keys; ++i) {
         auto current_key = RO(node)->keys[i];
         if (current_key >= key) {
             if (current_key == key) {
                 node->values[i] = new_value;
                 return true;
             }
-            if (!is_leaf) {
+            if (!RO(node)->is_leaf) {
                 auto child = read_child(node, i);
                 return update_in_node(child, key, new_value);
             } else {
@@ -519,8 +512,8 @@ bool btree::update_in_node(shared_node &node, const tree_key &key, const tree_va
             return false;
         }
     }
-    if (!is_leaf) {
-        auto child = read_child(node, num_keys);
+    if (!RO(node)->is_leaf) {
+        auto child = read_child(node, RO(node)->num_keys);
         return update_in_node(child, key, new_value);
     }
     return false;
