@@ -94,9 +94,8 @@ public:
      *
      * @param key
      * @param new_value
-     * @return true on success
      */
-    bool update(const tree_key &key, const tree_val &new_value);
+    void update(const tree_key &key, const tree_val &new_value);
 
     // private:
     uint64_t degree;

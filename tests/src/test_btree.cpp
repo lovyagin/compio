@@ -111,8 +111,7 @@ TEST_F(BTreeTest, EmptyTreeOperations) {
     tree->remove(make_key(1, 1));
 
     // Try to update non-existent key
-    bool updated = tree->update(make_key(1, 1), make_val(100, 200));
-    EXPECT_FALSE(updated);
+    tree->update(make_key(1, 1), make_val(100, 200));
 }
 
 TEST_F(BTreeTest, SingleInsert) {
@@ -153,8 +152,7 @@ TEST_F(BTreeTest, UpdateExistingKey) {
     tree->insert(key, original_val);
 
     // Update to new value
-    bool update_result = tree->update(key, updated_val);
-    EXPECT_TRUE(update_result);
+    tree->update(key, updated_val);
 
     // Verify update
     auto result = tree->get(key);
@@ -166,9 +164,7 @@ TEST_F(BTreeTest, UpdateNonExistingKey) {
     tree_key key = make_key(1, 100);
     tree_val val = make_val(1000, 100);
 
-    // Try to update without inserting first
-    bool update_result = tree->update(key, val);
-    EXPECT_FALSE(update_result);
+    tree->update(key, val);
 }
 
 TEST_F(BTreeTest, RemoveExistingKey) {

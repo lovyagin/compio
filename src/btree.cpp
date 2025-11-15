@@ -469,9 +469,11 @@ void btree::add_to_range(int64_t value, const tree_key &lower_bound, const tree_
     add_to_range_in_node(root, value, lower_bound, upper_bound);
 }
 
-bool btree::update(const tree_key &key, const tree_val &new_value) {
+void btree::update(const tree_key &key, const tree_val &new_value) {
     auto root = read_root();
-    return update_in_node(root, key, new_value);
+    if (!update_in_node(root, key, new_value)) {
+        WARNING_PRINT("warning: trying to update non-existing key\n");
+    }
 }
 
 std::optional<tree_val> btree::get(const tree_key &key) {

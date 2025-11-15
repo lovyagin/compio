@@ -194,8 +194,7 @@ TEST_F(BTreeAdvancedTest, CacheConsistencyAfterUpdate) {
     auto test_data = create_sequential_data(5, 1, 0, 100);
     tree_key key = test_data[2].first; // Third element
     tree_val new_val = make_val(9999, 8888);
-    bool updated = tree->update(key, new_val);
-    EXPECT_TRUE(updated);
+    tree->update(key, new_val);
 
     // Verify update is reflected
     auto result = tree->get(key);

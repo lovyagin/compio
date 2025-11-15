@@ -450,8 +450,7 @@ TEST_F(BTreeRangeAddTest, RangeAddPreservesTreeStructure) {
     if (!range_result.empty()) {
         tree_key test_key = range_result[0].first;
         tree_val new_val = make_val(9999, 8888);
-        bool updated = tree->update(test_key, new_val);
-        EXPECT_TRUE(updated);
+        tree->update(test_key, new_val);
         
         auto verify_update = tree->get(test_key);
         ASSERT_TRUE(verify_update.has_value());

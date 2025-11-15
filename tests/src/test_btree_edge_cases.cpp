@@ -92,8 +92,8 @@ TEST_F(BTreeEdgeCasesTest, UpdateDuplicateKey) {
 
     // Insert key, then update multiple times
     tree->insert(key, val1);
-    EXPECT_TRUE(tree->update(key, val2));
-    EXPECT_TRUE(tree->update(key, val3));
+    tree->update(key, val2);
+    tree->update(key, val3);
 
     // Verify final value
     auto result = tree->get(key);
@@ -336,9 +336,7 @@ TEST_F(BTreeEdgeCasesTest, OperationsAfterFailedUpdate) {
     // Insert one key
     tree->insert(key1, val);
 
-    // Try to update non-existent key (should fail)
-    bool update_result = tree->update(key2, val);
-    EXPECT_FALSE(update_result);
+    tree->update(key2, val);
 
     // Verify tree is still functional
     auto result1 = tree->get(key1);
