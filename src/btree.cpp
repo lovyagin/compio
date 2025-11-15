@@ -307,11 +307,8 @@ void btree::insert(const tree_key &key, const tree_val &value) {
 
 void btree::remove_node(shared_node &node, const tree_key &key) {
     RO(node)->validate();
-    // TODO: use upper_bound
-    size_t idx = 0;
-    while (idx < RO(node)->num_keys && key > RO(node)->keys[idx]) {
-        idx++;
-    }
+    std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
+                      RO(node)->keys.begin();
 
     if (idx < RO(node)->num_keys && key == RO(node)->keys[idx]) {
         if (RO(node)->is_leaf) {
