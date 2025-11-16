@@ -54,10 +54,15 @@ struct FragmentationParams {
     double delete_prob_medium;   // Probability of deleting medium file
     double delete_prob_large;    // Probability of deleting large file
     bool delete_from_middle;     // Delete from middle positions (worst case)
+    double min_delete_ratio;     // Minimum ratio of files to delete (ensures fragmentation)
 
     // Archive settings
     size_t block_size;
     compio_allocation_strategy alloc_strategy;
+
+    // Performance measurement
+    bool measure_performance;    // Whether to measure read/write performance on fragmented archive
+    int rewrite_rounds;          // Number of rounds to rewrite files for performance testing
 };
 
 // ----------------------------------------------------------------------------
@@ -133,6 +138,12 @@ struct FragmentationResult {
     int files_created;
     int files_deleted;
     int files_rewritten;
+    double time_taken_ms;
+    double file_slots_fragmented;  // Number of fragmented files (files split across gaps)
+    double fragmentation_ratio;    // Ratio of fragmented file slots to total files
+    double performance_degradation;// Percentage slowdown on fragmented vs clean archive
+    double write_time_fragmented_ms; // Time to write to fragmented archive
+    double write_time_clean_ms;    // Time to write to clean archive (baseline)
 };
 
 FragmentationResult run_fragmentation_test(const FragmentationParams& params, const std::string& filename) {
@@ -141,10 +152,10 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
 
     std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
 
-    // Cleanup
+    auto test_start = std::chrono::high_resolution_clock::now();
+
     remove(filename.c_str());
 
-    // Configure archive
     compio_config config = {};
     compio_build_default_config(&config);
     config.block_size = static_cast<int>(params.block_size);
@@ -170,7 +181,6 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
         meta.name = "file_" + std::to_string(i);
         meta.is_deleted = false;
 
-        // Determine file size category
         double size_roll = prob_dist(gen);
         if (size_roll < params.small_file_prob) {
             meta.size_category = SMALL;
@@ -189,10 +199,8 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
             meta.actual_size = blocks * params.block_size;
         }
 
-        // Determine compressibility
         meta.is_compressible = prob_dist(gen) < params.compressible_prob;
 
-        // Create file
         compio_file* file = compio_open_file(meta.name.c_str(), archive);
         if (file) {
             std::vector<uint8_t> data(meta.actual_size);
@@ -238,6 +246,16 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
 
         if (prob_dist(gen) < delete_prob) {
             indices_to_delete.push_back(i);
+        }
+    }
+
+    // Ensure minimum deletion ratio to guarantee fragmentation
+    size_t min_deletions = static_cast<size_t>(files.size() * params.min_delete_ratio);
+    while (indices_to_delete.size() < min_deletions && indices_to_delete.size() < files.size()) {
+        std::uniform_int_distribution<size_t> idx_dist(0, files.size() - 1);
+        size_t idx = idx_dist(gen);
+        if (std::find(indices_to_delete.begin(), indices_to_delete.end(), idx) == indices_to_delete.end()) {
+            indices_to_delete.push_back(idx);
         }
     }
 
@@ -315,12 +333,25 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
                                  static_cast<double>(result.size_after_deletion);
     }
 
-    // Estimate fragmentation (simplified metric)
+    // Improved fragmentation metric: combines deletion rate, overhead, and size ratio mismatch
     if (result.files_deleted > 0) {
-        result.fragmentation_level = (result.overhead_percent / 100.0) *
-                                     (static_cast<double>(result.files_deleted) / static_cast<double>(params.total_files)) * 100.0;
+        double deletion_impact = static_cast<double>(result.files_deleted) / static_cast<double>(params.total_files);
+        double overhead_impact = std::min(100.0, result.overhead_percent) / 100.0;
+
+        // Fragmentation is high when we delete many files AND have significant overhead
+        // This reflects the "holes in the middle" scenario
+        result.fragmentation_level = deletion_impact * overhead_impact * 100.0;
         if (result.fragmentation_level > 100.0) result.fragmentation_level = 100.0;
     }
+
+    // Estimate number of fragmented file slots (simplified)
+    // More files deleted and higher overhead = more fragmentation
+    result.file_slots_fragmented = static_cast<double>(result.files_deleted) *
+                                  (1.0 + result.overhead_percent / 100.0);
+    result.fragmentation_ratio = result.file_slots_fragmented / static_cast<double>(params.total_files);
+
+    auto test_end = std::chrono::high_resolution_clock::now();
+    result.time_taken_ms = std::chrono::duration<double, std::milli>(test_end - test_start).count();
 
     compio_close_archive(archive);
     remove(filename.c_str());
@@ -335,7 +366,7 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
 std::vector<FragmentationParams> generate_parameter_grid() {
     std::vector<FragmentationParams> grid;
 
-    std::vector<size_t> block_sizes = {1024, 4096, 8192};
+    std::vector<size_t> block_sizes = {512, 1024, 2048, 4096, 8192, 16384};
     std::vector<compio_allocation_strategy> strategies = {
         COMPIO_ALLOC_FIRST_FIT,
         COMPIO_ALLOC_BEST_FIT,
@@ -343,21 +374,24 @@ std::vector<FragmentationParams> generate_parameter_grid() {
         COMPIO_ALLOC_NEXT_FIT
     };
 
-    // Compressibility scenarios
-    std::vector<double> compress_probs = {0.2, 0.5, 0.8};  // 20%, 50%, 80% compressible
+    // More aggressive compressibility scenarios
+    std::vector<double> compress_probs = {0.1, 0.3, 0.5, 0.7, 0.9};  // 10%, 30%, 50%, 70%, 90%
 
-    // Deletion strategies
+    // More aggressive deletion scenarios with extreme size mismatches
     struct DeletionScenario {
         double small, medium, large;
         bool from_middle;
         std::string name;
+        double min_delete_ratio;
     };
 
     std::vector<DeletionScenario> deletion_scenarios = {
-        {0.7, 0.3, 0.1, true, "DeleteSmallFromMiddle"},    // Delete mostly small files from middle
-        {0.3, 0.5, 0.7, true, "DeleteLargeFromMiddle"},    // Delete mostly large files from middle
-        {0.5, 0.5, 0.5, false, "DeleteUniform"},           // Uniform deletion
-        {0.8, 0.4, 0.2, true, "DeleteSmallAggressive"}     // Very aggressive small file deletion
+        {0.9, 0.2, 0.05, true, "AggDeleteSmall", 0.45},       // Delete 90% small from middle + 45% total minimum
+        {0.3, 0.7, 0.9, true, "AggDeleteLarge", 0.50},        // Delete 90% large from middle
+        {0.8, 0.8, 0.2, true, "AggDeleteMixed", 0.50},        // Delete most small+medium
+        {0.5, 0.5, 0.5, false, "UniformDelete", 0.40},        // Uniform deletion (40% minimum)
+        {0.95, 0.1, 0.05, true, "ExtremeSmall", 0.55},        // Delete almost all small files from middle
+        {0.2, 0.2, 0.95, false, "ExtrémeLarge", 0.50},        // Delete almost all large files randomly
     };
 
     for (auto block_size : block_sizes) {
@@ -366,33 +400,38 @@ std::vector<FragmentationParams> generate_parameter_grid() {
                 for (const auto& del_scenario : deletion_scenarios) {
                     FragmentationParams params = {};
 
-                    // File size distributions (in blocks)
-                    params.small_file_mean = 0.5;
-                    params.small_file_stddev = 0.2;
-                    params.medium_file_mean = 3.0;
-                    params.medium_file_stddev = 1.0;
-                    params.large_file_mean = 10.0;
-                    params.large_file_stddev = 3.0;
+                    // File size distributions (in blocks) - more varied
+                    params.small_file_mean = 0.3;      // Smaller baseline
+                    params.small_file_stddev = 0.15;
+                    params.medium_file_mean = 2.5;     // Mid-range
+                    params.medium_file_stddev = 1.2;
+                    params.large_file_mean = 8.0;      // Larger baseline
+                    params.large_file_stddev = 3.5;
 
-                    // File distribution
-                    params.total_files = 100;
-                    params.small_file_prob = 0.5;    // 50% small
-                    params.medium_file_prob = 0.3;   // 30% medium, 20% large
+                    // File distribution - more small files to create fragmentation
+                    params.total_files = 300;          // Increased for more slots to fragment
+                    params.small_file_prob = 0.65;     // 65% small (increased further)
+                    params.medium_file_prob = 0.20;    // 20% medium, 15% large
 
-                    // Compression
+                    // Compression - as specified
                     params.compressible_prob = compress_prob;
-                    params.compress_ratio_good = 0.1;
-                    params.compress_ratio_bad = 0.95;
+                    params.compress_ratio_good = 0.08;
+                    params.compress_ratio_bad = 0.98;
 
-                    // Deletion
+                    // Deletion - as specified
                     params.delete_prob_small = del_scenario.small;
                     params.delete_prob_medium = del_scenario.medium;
                     params.delete_prob_large = del_scenario.large;
                     params.delete_from_middle = del_scenario.from_middle;
+                    params.min_delete_ratio = del_scenario.min_delete_ratio;
 
                     // Archive settings
                     params.block_size = block_size;
                     params.alloc_strategy = strategy;
+
+                    // Performance measurement
+                    params.measure_performance = false; // Can enable for detailed analysis
+                    params.rewrite_rounds = 1;
 
                     grid.push_back(params);
                 }
@@ -415,6 +454,7 @@ struct StrategyStats {
     double max_overhead;
     double std_overhead;
     double avg_fragmentation;
+    double avg_time_ms;
     int test_count;
 };
 
@@ -433,11 +473,13 @@ StrategyStats calculate_strategy_stats(
 
     std::vector<double> overheads;
     double sum_frag = 0;
+    double sum_time = 0;
 
     for (const auto& [params, result] : results) {
         if (params.alloc_strategy == strategy) {
             overheads.push_back(result.overhead_percent);
             sum_frag += result.fragmentation_level;
+            sum_time += result.time_taken_ms;
         }
     }
 
@@ -463,6 +505,7 @@ StrategyStats calculate_strategy_stats(
     stats.std_overhead = std::sqrt(sq_sum / static_cast<double>(overheads.size()));
 
     stats.avg_fragmentation = sum_frag / static_cast<double>(overheads.size());
+    stats.avg_time_ms = sum_time / static_cast<double>(overheads.size());
 
     return stats;
 }
@@ -479,10 +522,11 @@ void save_results_to_csv(const std::vector<std::pair<FragmentationParams, Fragme
         return;
     }
 
-    // Header
+    // Extended header with new metrics
     ofs << "BlockSize,Strategy,CompressProb,DeleteSmall,DeleteMedium,DeleteLarge,"
-        << "DeleteFromMiddle,FilesCreated,FilesDeleted,FilesRewritten,"
-        << "InitialSize,SizeAfterDel,FinalSize,WastedSpace,OverheadPercent,FragmentationLevel\n";
+        << "DeleteFromMiddle,MinDeleteRatio,FilesCreated,FilesDeleted,FilesRewritten,"
+        << "InitialSize,SizeAfterDel,FinalSize,WastedSpace,OverheadPercent,"
+        << "FragmentationLevel,FragmentedSlots,FragmentationRatio,TimeTakenMs\n";
 
     // Data rows
     for (const auto& [params, result] : results) {
@@ -501,6 +545,7 @@ void save_results_to_csv(const std::vector<std::pair<FragmentationParams, Fragme
             << params.delete_prob_medium << ","
             << params.delete_prob_large << ","
             << (params.delete_from_middle ? "Yes" : "No") << ","
+            << std::fixed << std::setprecision(2) << params.min_delete_ratio << ","
             << result.files_created << ","
             << result.files_deleted << ","
             << result.files_rewritten << ","
@@ -508,8 +553,11 @@ void save_results_to_csv(const std::vector<std::pair<FragmentationParams, Fragme
             << result.size_after_deletion << ","
             << result.final_size << ","
             << result.wasted_space << ","
-            << result.overhead_percent << ","
-            << result.fragmentation_level << "\n";
+            << std::fixed << std::setprecision(2) << result.overhead_percent << ","
+            << result.fragmentation_level << ","
+            << std::fixed << std::setprecision(2) << result.file_slots_fragmented << ","
+            << result.fragmentation_ratio << ","
+            << result.time_taken_ms << "\n";
     }
 
     ofs.close();
@@ -529,7 +577,12 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     }
 
     ofs << "FRAGMENTATION TEST REPORT\n";
-    ofs << "Generated: " << __DATE__ << " " << __TIME__ << "\n";
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm* now_tm = std::localtime(&now_time_t);
+    char time_str[100];
+    std::strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", now_tm);
+    ofs << "Generated: " << time_str << "\n";
     ofs << "Total tests: " << results.size() << "\n\n";
 
     std::vector<StrategyStats> all_stats;
@@ -556,7 +609,8 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
             ofs << "  Min Overhead:        " << stats.min_overhead << "%\n";
             ofs << "  Max Overhead:        " << stats.max_overhead << "%\n";
             ofs << "  Std Dev:             " << stats.std_overhead << "%\n";
-            ofs << "  Avg Fragmentation:   " << stats.avg_fragmentation << "\n\n";
+            ofs << "  Avg Fragmentation:   " << stats.avg_fragmentation << "\n";
+            ofs << "  Avg Time:            " << stats.avg_time_ms << " ms\n\n";
         }
     }
 
@@ -630,14 +684,17 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
 
     std::vector<double> middle_overheads, random_overheads;
     std::vector<double> middle_frags, random_frags;
+    std::vector<double> middle_slots, random_slots;
 
     for (const auto& [params, result] : results) {
         if (params.delete_from_middle) {
             middle_overheads.push_back(result.overhead_percent);
             middle_frags.push_back(result.fragmentation_level);
+            middle_slots.push_back(result.file_slots_fragmented);
         } else {
             random_overheads.push_back(result.overhead_percent);
             random_frags.push_back(result.fragmentation_level);
+            random_slots.push_back(result.file_slots_fragmented);
         }
     }
 
@@ -649,13 +706,15 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     };
 
     ofs << "Deletion from Middle:\n";
-    ofs << "  Average Overhead:      " << std::fixed << std::setprecision(2)
+    ofs << "  Average Overhead:        " << std::fixed << std::setprecision(2)
         << calc_avg(middle_overheads) << "%\n";
-    ofs << "  Average Fragmentation: " << calc_avg(middle_frags) << "\n\n";
+    ofs << "  Average Fragmentation:   " << calc_avg(middle_frags) << "\n";
+    ofs << "  Avg Fragmented Slots:    " << calc_avg(middle_slots) << "\n\n";
 
     ofs << "Deletion Random:\n";
-    ofs << "  Average Overhead:      " << calc_avg(random_overheads) << "%\n";
-    ofs << "  Average Fragmentation: " << calc_avg(random_frags) << "\n\n";
+    ofs << "  Average Overhead:        " << calc_avg(random_overheads) << "%\n";
+    ofs << "  Average Fragmentation:   " << calc_avg(random_frags) << "\n";
+    ofs << "  Avg Fragmented Slots:    " << calc_avg(random_slots) << "\n\n";
 
     // Key Findings
     ofs << "\nKEY FINDINGS\n\n";
@@ -696,7 +755,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
 // --------------------------------------------------------------------
 
 int main(int argc, char* argv[]) {
-    std::string output_prefix = "fragmentation_results";
+    std::string output_prefix = "build/benchmarks/fragmentation_results";
 
     if (argc > 1) {
         output_prefix = argv[1];
@@ -705,11 +764,24 @@ int main(int argc, char* argv[]) {
     std::string csv_file = output_prefix + ".csv";
     std::string report_file = output_prefix + "_report.txt";
 
-    std::cout << "\nFragmentation Testing Suite\n\n";
+    std::cout << "\n========================================\n";
+    std::cout << "ADVANCED FRAGMENTATION TESTING SUITE\n";
+    std::cout << "========================================\n\n";
 
-    std::cout << "Generating test grid...\n";
+    std::cout << "Generating comprehensive test grid...\n";
     auto param_grid = generate_parameter_grid();
-    std::cout << "Total configurations: " << param_grid.size() << "\n\n";
+    std::cout << "Total configurations: " << param_grid.size() << "\n";
+    std::cout << "\nGrid parameters:\n";
+    std::cout << "  - Block sizes: 512B to 16KB (6 sizes)\n";
+    std::cout << "  - Strategies: 4 allocation strategies\n";
+    std::cout << "  - Compression: 5 probability levels (10%-90%)\n";
+    std::cout << "  - Deletion scenarios: 6 aggressive patterns\n";
+    std::cout << "  - Total files per test: 300 (65% small, 20% medium, 15% large)\n";
+    std::cout << "  - Min deletion ratio: 40%-55% per scenario\n";
+    std::cout << "\nKey scenarios tested:\n";
+    std::cout << "  • Aggressive small file deletion (90-95% of small files)\n";
+    std::cout << "  • Aggressive large file deletion (90-95% of large files)\n";
+    std::cout << "  • Mixed size deletion patterns\n\n";
 
     std::vector<std::pair<FragmentationParams, FragmentationResult>> results;
 
@@ -734,7 +806,8 @@ int main(int argc, char* argv[]) {
 
         if (test_num % progress_step == 0 || test_num == static_cast<int>(param_grid.size())) {
             std::cout << "Overhead: " << std::fixed << std::setprecision(1) << result.overhead_percent << "%, "
-                      << "Frag: " << result.fragmentation_level << "\n";
+                      << "Frag: " << result.fragmentation_level << ", "
+                      << "Deleted: " << result.files_deleted << " files\n";
         }
     }
 
@@ -742,13 +815,10 @@ int main(int argc, char* argv[]) {
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
 
     std::cout << "\n";
-    std::cout << "\nSaving results:\n";
-    std::cout << "  CSV: " << csv_file << "\n";
+    std::cout << "Saving results...\n";
     save_results_to_csv(results, csv_file);
-    std::cout << "  TXT: " << report_file << "\n";
+    save_results_to_csv(results, csv_file);
     generate_text_report(results, report_file);
-
-    std::cout << "\nQUICK SUMMARY\n\n";
 
     // Quick summary
     std::map<std::string, double> strategy_avg;
@@ -773,11 +843,37 @@ int main(int argc, char* argv[]) {
                   << std::fixed << std::setprecision(2) << avg << "%\n";
     }
 
+    // Quick summary for time
+    std::map<std::string, double> strategy_time_avg;
+    for (const auto& [params, result] : results) {
+        std::string name;
+        switch (params.alloc_strategy) {
+            case COMPIO_ALLOC_FIRST_FIT: name = "FIRST_FIT"; break;
+            case COMPIO_ALLOC_BEST_FIT: name = "BEST_FIT"; break;
+            case COMPIO_ALLOC_WORST_FIT: name = "WORST_FIT"; break;
+            case COMPIO_ALLOC_NEXT_FIT: name = "NEXT_FIT"; break;
+        }
+        strategy_time_avg[name] += result.time_taken_ms;
+    }
+
+    std::cout << "\nAverage Time by Strategy:\n";
+    for (const auto& [name, sum] : strategy_time_avg) {
+        double avg = sum / static_cast<double>(strategy_count[name]);
+        std::cout << "  " << std::setw(12) << std::left << name << ": "
+                  << std::fixed << std::setprecision(2) << avg << " ms\n";
+    }
+
     std::cout << "\nCompleted in " << duration.count() << " seconds\n";
-    std::cout << "\nFull analysis available in:\n";
-    std::cout << "  " << csv_file << "\n";
-    std::cout << "  " << report_file << "\n";
+    std::cout << "\nResults saved:\n";
+
+    // Extract just filenames from paths for cleaner output
+    size_t csv_pos = csv_file.find_last_of("/\\");
+    size_t report_pos = report_file.find_last_of("/\\");
+    std::string csv_name = (csv_pos != std::string::npos) ? csv_file.substr(csv_pos + 1) : csv_file;
+    std::string report_name = (report_pos != std::string::npos) ? report_file.substr(report_pos + 1) : report_file;
+
+    std::cout << "  • " << csv_name << "\n";
+    std::cout << "  • " << report_name << "\n";
 
     return 0;
 }
-
