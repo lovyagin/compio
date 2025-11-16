@@ -712,7 +712,7 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
 // --------------------------------------------------------------------
 
 int main(int argc, char* argv[]) {
-    std::string output_prefix = "fragmentation_results";
+    std::string output_prefix = "build/benchmarks/fragmentation_results";
 
     if (argc > 1) {
         output_prefix = argv[1];
