@@ -13,7 +13,6 @@ int main() {
 
     compio_build_default_config(&config);
     config.cache_size__blocks = 32;
-    config.cache_size__compression = 32;
 
     std::size_t file_size = 1 << 18;
     std::size_t n_operations = 1 << 12;

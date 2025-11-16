@@ -19,7 +19,6 @@ void compio_build_default_config(compio_config *result) {
     result->block_size = 4096;
     result->cache_size__nodes = 128;
     result->cache_size__blocks = 16;
-    result->cache_size__compression = 16;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
 }

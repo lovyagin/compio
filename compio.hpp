@@ -60,11 +60,6 @@ public:
         return *this;
     }
 
-    Config& set_cache_compression(int size) {
-        config_.cache_size__compression = size;
-        return *this;
-    }
-
     Config& set_allocation_strategy(compio_allocation_strategy strategy) {
         config_.allocation_strategy = strategy;
         return *this;

@@ -150,9 +150,8 @@ typedef struct {
     int b_tree_degree; /**< B-Tree branching factor (typically 3-10) */
     int block_size;    /**< Block size for splitting files (in bytes) */
 
-    int cache_size__nodes;       /**< Maximum B-tree nodes kept in memory */
-    int cache_size__blocks;      /**< Maximum storage blocks kept in memory */
-    int cache_size__compression; /**< Maximum uncompressed blocks kept in memory */
+    int cache_size__nodes;  /**< Maximum B-tree nodes kept in memory */
+    int cache_size__blocks; /**< Maximum storage blocks kept in memory */
 
     compio_allocation_strategy allocation_strategy; /**< Free block selection strategy */
     bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */

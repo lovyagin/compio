@@ -75,7 +75,6 @@ config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
 config.cache_size__nodes = 128;                     // B-tree node cache
 config.cache_size__blocks = 16;                     // Storage block cache
-config.cache_size__compression = 16;                // Decompression cache
 config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT; // Allocation strategy
 config.fragmentation_threshold = 30;                // Defrag threshold (%)
 config.fill_holes_with_zeros = false;               // Zero-fill freed blocks
