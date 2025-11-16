@@ -133,6 +133,7 @@ struct FragmentationResult {
     int files_created;
     int files_deleted;
     int files_rewritten;
+    double time_taken_ms;
 };
 
 FragmentationResult run_fragmentation_test(const FragmentationParams& params, const std::string& filename) {
@@ -140,6 +141,8 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
     std::mt19937 gen(42);
 
     std::uniform_real_distribution<double> prob_dist(0.0, 1.0);
+
+    auto test_start = std::chrono::high_resolution_clock::now();
 
     // Cleanup
     remove(filename.c_str());
@@ -322,6 +325,9 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
         if (result.fragmentation_level > 100.0) result.fragmentation_level = 100.0;
     }
 
+    auto test_end = std::chrono::high_resolution_clock::now();
+    result.time_taken_ms = std::chrono::duration<double, std::milli>(test_end - test_start).count();
+
     compio_close_archive(archive);
     remove(filename.c_str());
 
@@ -415,6 +421,7 @@ struct StrategyStats {
     double max_overhead;
     double std_overhead;
     double avg_fragmentation;
+    double avg_time_ms;
     int test_count;
 };
 
@@ -433,11 +440,13 @@ StrategyStats calculate_strategy_stats(
 
     std::vector<double> overheads;
     double sum_frag = 0;
+    double sum_time = 0;
 
     for (const auto& [params, result] : results) {
         if (params.alloc_strategy == strategy) {
             overheads.push_back(result.overhead_percent);
             sum_frag += result.fragmentation_level;
+            sum_time += result.time_taken_ms;
         }
     }
 
@@ -463,6 +472,7 @@ StrategyStats calculate_strategy_stats(
     stats.std_overhead = std::sqrt(sq_sum / static_cast<double>(overheads.size()));
 
     stats.avg_fragmentation = sum_frag / static_cast<double>(overheads.size());
+    stats.avg_time_ms = sum_time / static_cast<double>(overheads.size());
 
     return stats;
 }
@@ -529,7 +539,12 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
     }
 
     ofs << "FRAGMENTATION TEST REPORT\n";
-    ofs << "Generated: " << __DATE__ << " " << __TIME__ << "\n";
+    auto now = std::chrono::system_clock::now();
+    auto now_time_t = std::chrono::system_clock::to_time_t(now);
+    std::tm* now_tm = std::localtime(&now_time_t);
+    char time_str[100];
+    std::strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", now_tm);
+    ofs << "Generated: " << time_str << "\n";
     ofs << "Total tests: " << results.size() << "\n\n";
 
     std::vector<StrategyStats> all_stats;
@@ -556,7 +571,8 @@ void generate_text_report(const std::vector<std::pair<FragmentationParams, Fragm
             ofs << "  Min Overhead:        " << stats.min_overhead << "%\n";
             ofs << "  Max Overhead:        " << stats.max_overhead << "%\n";
             ofs << "  Std Dev:             " << stats.std_overhead << "%\n";
-            ofs << "  Avg Fragmentation:   " << stats.avg_fragmentation << "\n\n";
+            ofs << "  Avg Fragmentation:   " << stats.avg_fragmentation << "\n";
+            ofs << "  Avg Time:            " << stats.avg_time_ms << " ms\n\n";
         }
     }
 
@@ -773,6 +789,26 @@ int main(int argc, char* argv[]) {
                   << std::fixed << std::setprecision(2) << avg << "%\n";
     }
 
+    // Quick summary for time
+    std::map<std::string, double> strategy_time_avg;
+    for (const auto& [params, result] : results) {
+        std::string name;
+        switch (params.alloc_strategy) {
+            case COMPIO_ALLOC_FIRST_FIT: name = "FIRST_FIT"; break;
+            case COMPIO_ALLOC_BEST_FIT: name = "BEST_FIT"; break;
+            case COMPIO_ALLOC_WORST_FIT: name = "WORST_FIT"; break;
+            case COMPIO_ALLOC_NEXT_FIT: name = "NEXT_FIT"; break;
+        }
+        strategy_time_avg[name] += result.time_taken_ms;
+    }
+
+    std::cout << "\nAverage Time by Strategy:\n";
+    for (const auto& [name, sum] : strategy_time_avg) {
+        double avg = sum / static_cast<double>(strategy_count[name]);
+        std::cout << "  " << std::setw(12) << std::left << name << ": "
+                  << std::fixed << std::setprecision(2) << avg << " ms\n";
+    }
+
     std::cout << "\nCompleted in " << duration.count() << " seconds\n";
     std::cout << "\nFull analysis available in:\n";
     std::cout << "  " << csv_file << "\n";
@@ -780,4 +816,3 @@ int main(int argc, char* argv[]) {
 
     return 0;
 }
-
