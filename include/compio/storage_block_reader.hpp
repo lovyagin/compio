@@ -41,6 +41,7 @@ public:
 
     const uint8_t *data() const;
     uint8_t *data();
+    bool valid() const;
 };
 
 /**

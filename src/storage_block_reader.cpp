@@ -113,6 +113,10 @@ uint8_t *block::data() {
     return dec_data.get();
 }
 
+bool block::valid() const {
+    return is_valid;
+}
+
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
     : file(file),
@@ -130,6 +134,9 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
     }
     DEBUG_PRINT("[sbr][read_block]: cache miss\n");
     auto b = std::make_shared<block>(file, allocator, index, compressor, addr);
+    if (!b->valid()) {
+        return nullptr;
+    }
     cache.put(key, b);
     return b;
 }
