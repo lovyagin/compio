@@ -441,9 +441,9 @@ TEST_F(InsertEraseTest, MultiBlockFileErase) {
 
     // Erase across block boundaries
     compio_seek(file, 2, COMP_SEEK_SET);
-    uint64_t erased = compio_erase(4, file);
+    uint64_t erased = compio_erase(3, file);
 
-    ASSERT_EQ(erased, 4);
+    ASSERT_EQ(erased, 3);
     std::vector<unsigned char> expected = {1, 2, 6};
     VerifyFileContent(expected);
 }
