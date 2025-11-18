@@ -105,6 +105,11 @@ inline bool operator!=(const tree_key &x, const tree_key &y) {
  */
 inline tree_key operator+(const tree_key &x, uint64_t size) { return {x.hash, x.pos + size}; }
 
+inline tree_key &operator+=(tree_key &x, uint64_t size) {
+    x.pos += size;
+    return x;
+}
+
 /**
  * @internal
  * @brief Template for minimum value
@@ -122,6 +127,10 @@ template <> constexpr tree_key _max<tree_key>() { return {(uint64_t)-1, (uint64_
 
 struct tree_key_hash {
     size_t operator()(const tree_key &key) const { return key.hash ^ key.pos; }
+};
+
+struct tree_key_comparator {
+    bool operator()(const tree_key &a, const tree_key &b) const { return a < b; }
 };
 
 inline bool operator==(const tree_val &x, const tree_val &y) {

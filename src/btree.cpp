@@ -288,7 +288,7 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
 
     // iterate through keys, that are in range
     while (idx < RO(node)->num_keys && RO(node)->keys[idx] <= key_max) {
-        node->keys[idx] = node->keys[idx] + addition;
+        node->keys[idx] += addition;
         if (!RO(node)->is_leaf) {
             // if next key is in range
             if (idx + 1 < RO(node)->num_keys && RO(node)->keys[idx + 1] <= key_max) {
@@ -527,7 +527,7 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
     if (addition != 0) {
         if (RO(child)->num_keys > 0) {
             for (auto &key : child->keys) {
-                key = key + addition;
+                key += addition;
             }
         }
         if (!RO(child)->is_leaf) {
