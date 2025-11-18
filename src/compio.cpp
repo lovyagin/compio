@@ -68,10 +68,48 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
 
 bool compio_archive::is_readonly() const { return mode_b & mode_bit::r; }
 
-compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
-    // TODO: validate config
+static bool validate_config(const compio_config *c) {
+    if (c->block_size <= 0) {
+        WARNING_PRINT("warning: block_size=%d <= 0\n", c->block_size);
+        return false;
+    }
+    if (c->block_size__minimum < 0) {
+        WARNING_PRINT("warning: block_size__minimum=%d < 0\n", c->block_size__minimum);
+        return false;
+    }
+    if (c->block_size__minimum > c->block_size) {
+        WARNING_PRINT("warning: block_size__minimum=%d > block_size=%d\n", c->block_size__minimum,
+                      c->block_size);
+        return false;
+    }
+    if (c->block_size__maximum < c->block_size * 2) {
+        WARNING_PRINT("warning: block_size__maximum=%d < block_size*2=%d\n", c->block_size__maximum,
+                      c->block_size * 2);
+        return false;
+    }
+    if (c->b_tree_degree <= 0) {
+        WARNING_PRINT("warning: b_tree_degree=%d <= 0\n", c->b_tree_degree);
+        return false;
+    }
+    if (c->cache_size__blocks < 0) {
+        WARNING_PRINT("warning: cache_size__blocks=%d < 0\n", c->cache_size__blocks);
+        return false;
+    }
+    if (c->cache_size__nodes < 0) {
+        WARNING_PRINT("warning: cache_size__nodes=%d < 0\n", c->cache_size__nodes);
+        return false;
+    }
+    return true;
+}
 
-    uint8_t mode_b = parse_mode(mode);
+compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
+    if (!validate_config(c)) {
+        errno = EINVAL;
+        goto end;
+    }
+
+    uint8_t mode_b;
+    mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
         goto end;
@@ -538,7 +576,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         file->cursor += copy_size;
     }
     block_reader->disable_temporary_index();
-    
+
     return ptr_bytes_read;
 }
 

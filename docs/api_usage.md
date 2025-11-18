@@ -73,6 +73,8 @@ compio_close_archive(archive);
 compio_config config;
 config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
+config.block_size__minimum = 512;                   // Minumum block size in bytes
+config.block_size__maximum = 16384;                 // Maximum block size in bytes
 config.cache_size__nodes = 128;                     // B-tree node cache
 config.cache_size__blocks = 16;                     // Storage block cache
 config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT; // Allocation strategy

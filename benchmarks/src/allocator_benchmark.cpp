@@ -55,6 +55,8 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
         compio_config config = {};
         compio_build_default_config(&config);
         config.block_size = block_size;
+        config.block_size__minimum = 0;
+        config.block_size__maximum = config.block_size * 4;
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
         compio_build_dummy_compressor(&config.compressor);
 
@@ -166,6 +168,8 @@ static void BM_SpaceReuseEfficiency(benchmark::State& state) {
         compio_config config = {};
         compio_build_default_config(&config);
         config.block_size = block_size;
+        config.block_size__minimum = 0;
+        config.block_size__maximum = config.block_size * 4;
         config.allocation_strategy = static_cast<compio_allocation_strategy>(strategy);
         compio_build_dummy_compressor(&config.compressor);
 

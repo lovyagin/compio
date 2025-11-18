@@ -198,6 +198,8 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
 
     compio_build_default_config(&config);
     config.block_size = 128;
+    config.block_size__minimum = 64;
+    config.block_size__maximum = 512;
 
     generate_tmp_fn(fn, sizeof(fn));
 
@@ -365,6 +367,8 @@ TEST_P(CustomUsageTest, CustomUsage) {
 
     compio_build_default_config(&config);
     config.block_size = 16;
+    config.block_size__minimum = 0;
+    config.block_size__maximum = config.block_size * 4;
     generate_tmp_fn(fn, sizeof(fn));
 
     std::minstd_rand rng(0);
