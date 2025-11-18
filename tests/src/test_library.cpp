@@ -265,7 +265,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
     auto [file_size, n_operations, n_repetitions] = GetParam();
 
     std::minstd_rand rng;
-    std::uniform_int_distribution<int> d_op(0, 3);
+    std::uniform_int_distribution<int> d_op(0, 5);
     std::uniform_int_distribution<int> d_pos(0, file_size - 2);
 
     for (int k = 0; k < n_repetitions; ++k) {
@@ -321,8 +321,35 @@ TEST_P(RandomUsageTest, RandomUsage) {
                     std::copy_n(html_data + start, size, file_data.data() + cursor);
                     cursor += size;
                     current_fsize = std::max(current_fsize, cursor);
-                    break;
                 }
+                break;
+            }
+            case 4: {
+                if (current_fsize < file_size) {
+                    std::uniform_int_distribution<int> d_size(
+                        1, std::min(static_cast<uint64_t>(file_size - current_fsize), sizeof(html_data)));
+                    int size = d_size(rng);
+                    std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
+                    int start = d_start(rng);
+                    // fprintf(stderr, "compio_insert(%d, %d)\n", start, size);
+                    ASSERT_EQ(compio_insert(html_data + start, size, file), size);
+                    file_data.insert(file_data.begin() + cursor, html_data + start, html_data + start + size);
+                    cursor += size;
+                    current_fsize += size;
+                }
+                break;
+            }
+            case 5: {
+                if (cursor < current_fsize) {
+                    int max_size = current_fsize - cursor;
+                    std::uniform_int_distribution<int> d_size(1, max_size);
+                    int size = d_size(rng);
+                    // fprintf(stderr, "compio_erase(%d)\n", size);
+                    ASSERT_EQ(compio_erase(size, file), size);
+                    file_data.erase(file_data.begin() + cursor, file_data.begin() + cursor + size);
+                    current_fsize -= size;
+                }
+                break;
             }
             }
         }
