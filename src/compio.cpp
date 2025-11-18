@@ -666,7 +666,114 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
 uint64_t compio_erase(uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
-    return 0;
+
+    auto *archive = file->archive;
+    const auto block_reader = archive->block_reader;
+
+    if (archive->mode_b & mode_bit::r) {
+        WARNING_PRINT("warning: can't compio_write to read-only file\n");
+        errno = EROFS;
+        return 0;
+    }
+
+    size = std::max(UINT64_C(0), std::min(size, file->size - file->cursor));
+    if (size == 0) {
+        return 0;
+    }
+
+    auto file_table_item = archive->header->ftable.find(file->name);
+    if (!file_table_item) {
+        // should not happen, because compio_open_file creates ftable record
+        WARNING_PRINT("warning: no such file in header.ftable\n");
+        errno = ENOENT;
+        return 0;
+    }
+
+    const uint64_t erase_start = file->cursor;
+    const uint64_t erase_end = erase_start + size;
+
+    const tree_key key_min = {file->hash_tail, erase_start};
+    const tree_key key_max = {file->hash_tail, erase_end};
+    auto range = archive->index->get_range(key_min, key_max);
+    assert(!range.empty());
+
+    DEBUG_PRINT("[CE]b-tree range:\n");
+    for (const auto &[key, val] : range) {
+        DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
+                    val.size);
+    }
+
+    for (std::size_t i = 1; i < range.size(); ++i) {
+        assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
+    }
+    assert(range.front().first.pos <= erase_start);
+    assert(range.back().first.pos + range.back().second.size >= erase_end);
+
+    uint64_t bytes_erased = 0;
+
+    block_reader->enable_temporary_index();
+    for (const auto &[key, val] : range) {
+        DEBUG_PRINT("[CE]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+                    val.size);
+        const auto b = block_reader->read_block(val.addr, key);
+        if (!b) {
+            // failed to decompress
+            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+            errno = EIO;
+            block_reader->disable_temporary_index();
+            return bytes_erased;
+        }
+        assert(b->size() == val.size);
+
+        const uint64_t block_start = key.pos;
+        const uint64_t block_end = key.pos + b->size();
+        const uint64_t block_erase_end = std::min(erase_end, block_end);
+        const uint64_t block_erase_start = std::max(erase_start, block_start);
+        assert(block_erase_end > block_erase_start);
+        const uint64_t block_erase_size = block_erase_end - block_erase_start;
+        const uint64_t erase_start_offset = block_erase_start - block_start;
+        const uint64_t erase_end_offset = block_erase_end - block_start;
+
+        DEBUG_PRINT("[CE]block=(%lu, %lu), erase=(%lu, %lu) -> block_erase=(%lu, %lu)\n",
+                    block_start, block_end, erase_start, erase_end, block_erase_start,
+                    block_erase_end);
+        const uint64_t left_size = erase_start_offset;
+        const uint64_t right_size = block_end - block_erase_end;
+        DEBUG_PRINT("[CE]---left_size=%lu, erase_size=%lu, right_size=%lu\n", left_size,
+                    block_erase_size, right_size);
+
+        if (block_erase_size < b->size()) {
+            // keep block in btree, but update key.pos and val.size
+            if (right_size > 0) {
+                DEBUG_PRINT("[CE]---copying %lu bytes from offset=%lu to offset=%lu\n", right_size,
+                            erase_end_offset, erase_start_offset);
+                std::copy(b->data() + erase_end_offset, b->data() + b->size(),
+                          b->data() + erase_start_offset);
+            }
+            DEBUG_PRINT("[CE]---shrinking from size=%lu to size=%lu\n", b->size(),
+                        b->size() - block_erase_size);
+            b->shrink(b->size() - block_erase_size);
+            if (left_size == 0) {
+                DEBUG_PRINT("[CE]---moving by offset=%lu\n", block_erase_size);
+                archive->index->add_to_range(block_erase_size, key, key);
+                block_reader->add_to_range(block_erase_size, key, key);
+            }
+        } else {
+            // remove block completely
+            DEBUG_PRINT("[CE]---removing block\n");
+            block_reader->remove_block(b);
+        }
+
+        bytes_erased += block_erase_size;
+        file->size -= block_erase_size;
+    }
+
+    const tree_key file_end_key{file->hash_tail, UINT64_MAX};
+    const int64_t shift = -static_cast<int64_t>(bytes_erased);
+    archive->index->add_to_range(shift, key_max, file_end_key);
+    block_reader->add_to_range(shift, key_max, file_end_key);
+
+    return bytes_erased;
 }
 
 void compio_flush(compio_archive *archive) {
