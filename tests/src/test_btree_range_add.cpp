@@ -309,8 +309,7 @@ TEST_F(BTreeRangeAddTest, MultipleRangeAddOperations) {
 
     tree->add_to_range(-25, make_key(1, 200), make_key(1, 400));
 
-    std::vector<std::pair<tree_key, tree_val>> current_data;
-    tree->get_range(make_key(1, 0), make_key(1, UINT64_MAX), current_data);
+    auto current_data = tree->get_range(make_key(1, 0), make_key(1, UINT64_MAX));
 
     std::vector<uint64_t> expected_positions = {0, 150, 226, 278, 406};
     EXPECT_EQ(current_data.size(), expected_positions.size());
@@ -366,8 +365,7 @@ TEST_F(BTreeRangeAddTest, RangeAddPreservesTreeStructure) {
 
     tree->add_to_range(50, make_key(1, 100), make_key(1, 500));
 
-    std::vector<std::pair<tree_key, tree_val>> range_result;
-    tree->get_range(make_key(1, 0), make_key(1, 1000), range_result);
+    auto range_result = tree->get_range(make_key(1, 0), make_key(1, 1000));
     EXPECT_EQ(range_result.size(), original_data.size());
 
     for (const auto &[key, val] : range_result) {

@@ -151,8 +151,7 @@ TEST_F(BTreeAdvancedTest, DeleteAllKeys) {
         current_pos += block_size;
     }
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX), result);
+    auto result = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
     EXPECT_TRUE(result.empty());
 }
 
@@ -205,8 +204,7 @@ TEST_F(BTreeAdvancedTest, ComplexRangeQueries) {
     tree_key min_key = make_key(1, 200);
     tree_key max_key = make_key(3, 200);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(min_key, max_key, result);
+    auto result = tree->get_range(min_key, max_key);
 
     EXPECT_EQ(result.size(), 5);
 
@@ -246,8 +244,7 @@ TEST_F(BTreeAdvancedTest, RangeQueryWithGaps) {
     tree_key min_key = make_key(1, 100);
     tree_key max_key = make_key(1, 550);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(min_key, max_key, result);
+    auto result = tree->get_range(min_key, max_key);
 
     EXPECT_EQ(result.size(), 5);
 }
@@ -283,8 +280,7 @@ TEST_F(BTreeAdvancedTest, MixedOperationsStress) {
         case 1: {
             tree_key min_key = make_key(1, 0);
             tree_key max_key = make_key(5, 10000);
-            std::vector<std::pair<tree_key, tree_val>> result;
-            tree->get_range(min_key, max_key, result);
+            auto result = tree->get_range(min_key, max_key);
             EXPECT_GT(result.size(), 0);
         } break;
         case 2:
@@ -307,8 +303,7 @@ TEST_F(BTreeAdvancedTest, BoundaryValues) {
     tree->insert(min_key, make_val(1000, 100));
     tree->insert(max_key, make_val(2000, 200));
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(min_key, make_key(UINT64_MAX, UINT64_MAX), result);
+    auto result = tree->get_range(min_key, make_key(UINT64_MAX, UINT64_MAX));
     EXPECT_EQ(result.size(), 2);
 }
 

@@ -194,16 +194,18 @@ void btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
     }
 }
 
-void btree::get_range(const tree_key &key_min, const tree_key &key_max,
-                      std::vector<std::pair<tree_key, tree_val>> &result) {
+std::vector<std::pair<tree_key, tree_val>> btree::get_range(const tree_key &key_min,
+                                                            const tree_key &key_max) {
     if (key_max <= key_min) {
         WARNING_PRINT("warning: btree::get_range received invalid range bounds (key_min={%lu,%lu} "
                       ">= {%lu,%lu}=key_max)\n",
                       key_min.hash, key_min.pos, key_max.hash, key_max.pos);
-        return;
+        return {};
     }
+    std::vector<std::pair<tree_key, tree_val>> result;
     auto root = read_root();
     _get_range(root, key_min, key_max, result);
+    return result;
 }
 
 bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_value) {

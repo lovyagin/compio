@@ -681,13 +681,12 @@ void block_allocator::perform_defragmentation() {
     static constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024; // 1MB buffer
     static std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
 
-    std::vector<std::pair<tree_key, tree_val>> used_blocks;
     constexpr tree_key key_min{};
     tree_key key_max{};
     key_max.hash = UINT64_MAX;
     key_max.pos = UINT64_MAX;
 
-    archive_->index->get_range(key_min, key_max, used_blocks);
+    auto used_blocks = archive_->index->get_range(key_min, key_max);
 
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });

@@ -11,8 +11,6 @@ namespace compio {
 
 struct btree;
 
-std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file, uint64_t size);
-
 } // namespace compio
 
 /**

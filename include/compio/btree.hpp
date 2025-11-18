@@ -143,10 +143,11 @@ struct btree {
      *
      * @param key_min Minimum key (inclusive)
      * @param key_max Maximum key (inclusive)
-     * @param result Vector to store the resulting key-value pairs
+     * @return std::vector<std::pair<tree_key, tree_val>> result Vector with resulting key-value
+     * pairs
      */
-    void get_range(const tree_key &key_min, const tree_key &key_max,
-                   std::vector<std::pair<tree_key, tree_val>> &result);
+    std::vector<std::pair<tree_key, tree_val>> get_range(const tree_key &key_min,
+                                                         const tree_key &key_max);
 
     /**
      * @brief Update the value associated with an existing key

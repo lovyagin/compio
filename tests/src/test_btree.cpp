@@ -76,8 +76,7 @@ protected:
 
     void verify_range(const tree_key &key_min, const tree_key &key_max,
                       const std::vector<std::pair<tree_key, tree_val>> &expected) {
-        std::vector<std::pair<tree_key, tree_val>> result;
-        tree->get_range(key_min, key_max, result);
+        auto result = tree->get_range(key_min, key_max);
 
         ASSERT_EQ(result.size(), expected.size())
             << "Range query returned " << result.size() << " items, expected " << expected.size();
@@ -97,8 +96,7 @@ protected:
 };
 
 TEST_F(BTreeTest, EmptyTreeOperations) {
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(make_key(0, 0), make_key(100, 100), result);
+    auto result = tree->get_range(make_key(0, 0), make_key(100, 100));
     EXPECT_TRUE(result.empty());
 
     tree->remove(make_key(1, 1));
@@ -171,8 +169,7 @@ TEST_F(BTreeTest, RemoveNonExistingKey) {
 
     tree->remove(key);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX), result);
+    auto result = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
     EXPECT_TRUE(result.empty());
 }
 
@@ -221,8 +218,7 @@ TEST_F(BTreeTest, EmptyRangeQuery) {
     tree_key min_key = make_key(1, 350);
     tree_key max_key = make_key(1, 400);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(min_key, max_key, result);
+    auto result = tree->get_range(min_key, max_key);
     EXPECT_TRUE(result.empty());
 }
 
@@ -230,8 +226,7 @@ TEST_F(BTreeTest, InvalidRangeQuery) {
     tree_key min_key = make_key(1, 200);
     tree_key max_key = make_key(1, 100);
 
-    std::vector<std::pair<tree_key, tree_val>> result;
-    tree->get_range(min_key, max_key, result);
+    auto result = tree->get_range(min_key, max_key);
     EXPECT_TRUE(result.empty());
 }
 

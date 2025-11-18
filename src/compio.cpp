@@ -250,10 +250,9 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     const uint64_t hash_tail = fnv1a(name);
 
     if (file_size > 0) {
-        std::vector<std::pair<tree_key, tree_val>> all_blocks;
         tree_key key_min = {hash_tail, 0};
         tree_key key_max = {hash_tail, UINT64_MAX}; // Get all blocks for this file
-        archive->index->get_range(key_min, key_max, all_blocks);
+        auto all_blocks = archive->index->get_range(key_min, key_max);
 
         // Save current file position
         long saved_pos = ftell(archive->file);
@@ -396,8 +395,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     if (write_start < file->size) {
         const tree_key key_min = {file->hash_tail, write_start};
         const tree_key key_max = {file->hash_tail, write_end};
-        std::vector<std::pair<tree_key, tree_val>> range;
-        archive->index->get_range(key_min, key_max, range);
+        auto range = archive->index->get_range(key_min, key_max);
         assert(!range.empty());
 
         DEBUG_PRINT("[CW]b-tree range:\n");
@@ -525,8 +523,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     const tree_key key_min = {file->hash_tail, read_start};
     const tree_key key_max = {file->hash_tail, read_end};
-    std::vector<std::pair<tree_key, tree_val>> range;
-    archive->index->get_range(key_min, key_max, range);
+    auto range = archive->index->get_range(key_min, key_max);
     assert(!range.empty());
 
     DEBUG_PRINT("[CR]b-tree range:\n");
