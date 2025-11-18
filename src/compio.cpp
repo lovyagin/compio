@@ -1,6 +1,7 @@
 #include "compio.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdlib>
 #include <cstring>
 
@@ -325,7 +326,10 @@ uint64_t compio_tell(compio_file *file) { return file->cursor; }
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
 
-    if (file->archive->mode_b & mode_bit::r) {
+    const auto archive = file->archive;
+    const auto block_reader = archive->block_reader;
+
+    if (archive->mode_b & mode_bit::r) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
         errno = EROFS;
         return 0;
@@ -335,82 +339,89 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
-    const auto archive = file->archive;
-    const auto config = archive->config;
-
     auto file_table_item = archive->header->ftable.find(file->name);
-    const uint64_t fsize = file_table_item->size;
-    const uint64_t block_size = config->block_size;
+    if (!file_table_item) {
+        // should not happen, because compio_open_file creates ftable record
+        WARNING_PRINT("warning: no such file in header.ftable\n");
+        errno = ENOENT;
+        return 0;
+    }
 
     const uint64_t write_start = file->cursor;
     const uint64_t write_end = write_start + size;
     uint64_t written_bytes = 0;
 
-    const uint64_t n_existing_blocks = (fsize + block_size - 1) / block_size;
-    const uint64_t start_block_idx = std::min(file->cursor / block_size, n_existing_blocks);
-    const uint64_t end_block_idx = (file->cursor + size - 1) / block_size;
-
-    auto range = get_range_in_file(file, size);
-    uint64_t range_idx = 0;
+    // TODO: get rid of get_range if file->cursor >= file->size
+    const tree_key key_min = {file->hash_tail, write_start};
+    const tree_key key_max = {file->hash_tail, write_end};
+    std::vector<std::pair<tree_key, tree_val>> range;
+    archive->index->get_range(key_min, key_max, range);
 
     DEBUG_PRINT("[CW]b-tree range:\n");
     for (const auto &[key, val] : range) {
-        UNUSED(key);
-        UNUSED(val);
         DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
                     val.size);
     }
+    for (std::size_t i = 1; i < range.size(); ++i) {
+        assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
+    }
+    if (!range.empty()) {
+        assert(range.front().first.pos <= write_start);
+        assert(range.back().first.pos + range.back().second.size >= write_start);
+    }
 
-    const uint8_t *p_ptr = reinterpret_cast<const uint8_t *>(ptr);
+    auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
 
-    for (uint64_t i = start_block_idx; i <= end_block_idx; ++i, ++range_idx) {
-        const uint64_t block_start = i * block_size;
-        const uint64_t block_end = block_start + block_size;
-
-        const tree_key new_key{file->hash_tail, block_start};
-        std::shared_ptr<block> b;
-
-        if (i < n_existing_blocks) {
-            if (range_idx >= range.size()) {
-                // this should not happen
-                WARNING_PRINT("range_idx = %lu >= %lu = range.size()\n", range_idx, range.size());
-                goto end;
-            }
-            const auto &[key, val] = range[range_idx];
-            if (key.pos != i * block_size) {
-                // this should not happen
-                WARNING_PRINT("key.pos = %lu != %lu = i * block_size\n", key.pos, i * block_size);
-                for (const auto &[key, val] : range) {
-                    WARNING_PRINT("%lu, %lu - %lu, %lu\n", key.hash, key.pos, val.addr, val.size);
-                }
-                WARNING_PRINT("cur=%lu, size=%lu\n", file->cursor, size);
-                WARNING_PRINT("fsize=%lu\n", fsize);
-                goto end;
-            }
-
-            DEBUG_PRINT("[CW]want block on val.addr=%lu\n", val.addr);
-            b = archive->block_reader->read_block(val.addr, key);
-        } else {
-            DEBUG_PRINT("[CW]zero-initializing new block\n");
-            b = archive->block_reader->create_block(block_size, new_key);
+    for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
+        // update existing blocks with new data
+        const auto &[key, val] = range[range_idx];
+        const uint64_t block_start = key.pos;
+        const uint64_t block_end = key.pos + val.size;
+        DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+                    val.size);
+        const auto b = block_reader->read_block(val.addr, key);
+        if (!b) {
+            // failed to decompress
+            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+            errno = EIO;
+            goto end;
         }
+        assert(b->size() == val.size);
 
-        // copy data from ptr into dec_buffer
-        int64_t copy_size =
-            std::min<int64_t>(write_end, block_end) - std::max<int64_t>(write_start, block_start);
-        if (copy_size > 0) {
-            uint64_t dec_offset =
-                std::max<int64_t>(0, static_cast<int64_t>(file->cursor) - block_start);
-            uint64_t ptr_offset =
-                std::max<int64_t>(0, static_cast<int64_t>(block_start) - file->cursor);
-            std::copy_n(p_ptr + ptr_offset, copy_size, b->data() + dec_offset);
-            written_bytes += copy_size;
-            DEBUG_PRINT("[CW]copied ptr data to dec_buffer\n");
-        }
+        const uint64_t copy_end = std::min(write_end, block_end);
+        const uint64_t copy_start = std::max(write_start, block_start);
+        assert(copy_end > copy_start); // if not, btree::get_range is broken
+        const uint64_t copy_size = copy_end - copy_start;
+        const uint64_t dec_offset = (write_start > block_start) ? (write_start - block_start) : 0;
+        DEBUG_PRINT("[CW]copying data of size %ld to block (offset=%ld)\n", copy_size, dec_offset);
+
+        std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
+        written_bytes += copy_size;
+        p_ptr += copy_size;
+    }
+
+    if (written_bytes < size) {
+        // append block to the end of the file
+        const uint64_t n_zeros = (file->cursor + written_bytes > file->size)
+                                     ? (file->cursor + written_bytes - file->size)
+                                     : 0;
+        const uint64_t copy_size = size - written_bytes;
+        const uint64_t bsize = n_zeros + copy_size;
+        const tree_key key{file->hash_tail, file->size};
+        DEBUG_PRINT("[CW]creating block ({%lu,%lu}-{?,%lu})\n", key.hash, key.pos, bsize);
+        assert(bsize == write_end - file->size);
+        const auto b = block_reader->create_block(bsize, key);
+
+        DEBUG_PRINT("[CW]filling %ld bytes of new block with zeros\n", n_zeros);
+        std::fill_n(b->data(), n_zeros, 0);
+        DEBUG_PRINT("[CW]copying data of size %ld to new block (offset=%ld)\n", copy_size, n_zeros);
+        std::copy_n(p_ptr, copy_size, b->data() + n_zeros);
+        written_bytes += copy_size;
     }
 
 end:
-    file->size = file_table_item->size = std::max<uint64_t>(fsize, write_end);
+    block_reader->clear_temporary_index();
+    file->size = file_table_item->size = std::max(file->cursor + written_bytes, file->size);
     file->cursor += written_bytes;
     return written_bytes;
 }
@@ -418,60 +429,70 @@ end:
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu)\n", file->cursor, size);
 
-    const auto archive = file->archive;
-    const auto config = archive->config;
+    const auto *archive = file->archive;
+    const auto block_reader = archive->block_reader;
 
     auto file_table_item = readonly(archive->header, header)->ftable.find(file->name);
-    const uint64_t fsize = file_table_item->size;
-    const uint64_t block_size = config->block_size;
-    const uint64_t cursor = file->cursor;
+    if (!file_table_item) {
+        // should not happen, because compio_open_file creates ftable record
+        WARNING_PRINT("warning: no such file in header.ftable\n");
+        errno = ENOENT;
+        return 0;
+    }
 
-    size = std::max<uint64_t>(0, std::min<int64_t>(size, fsize - cursor));
+    size = std::max(UINT64_C(0), std::min(size, file->size - file->cursor));
     if (size == 0) {
         return 0;
     }
 
-    const uint64_t start_block_idx = cursor / block_size;
-    const uint64_t end_block_idx = (cursor + size - 1) / block_size;
-
-    const uint64_t read_start = cursor;
+    const uint64_t read_start = file->cursor;
     const uint64_t read_end = read_start + size;
     uint64_t read_bytes = 0;
 
-    auto range = get_range_in_file(file, size);
-    uint64_t range_idx = 0;
+    const tree_key key_min = {file->hash_tail, read_start};
+    const tree_key key_max = {file->hash_tail, read_end};
+    std::vector<std::pair<tree_key, tree_val>> range;
+    archive->index->get_range(key_min, key_max, range);
 
     DEBUG_PRINT("[CR]b-tree range:\n");
     for (const auto &[key, val] : range) {
-        UNUSED(key);
-        UNUSED(val);
         DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
                     val.size);
     }
 
-    uint8_t *p_ptr = reinterpret_cast<uint8_t *>(ptr);
+    for (std::size_t i = 1; i < range.size(); ++i) {
+        assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
+    }
+    assert(range.front().first.pos <= read_start);
+    assert(range.back().first.pos + range.back().second.size >= read_end);
 
-    for (uint64_t i = start_block_idx; i <= end_block_idx; ++i, ++range_idx) {
-        const uint64_t block_start = i * block_size;
-        const uint64_t block_end = block_start + block_size;
+    auto p_ptr = reinterpret_cast<uint8_t *>(ptr);
 
-        if (range_idx >= range.size()) {
-            WARNING_PRINT("went out of range in compio_read (%lu >= %lu)\n", range_idx,
-                          range.size());
+    for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
+        const auto &[key, val] = range[range_idx];
+        const uint64_t block_start = key.pos;
+        const uint64_t block_end = key.pos + val.size;
+        DEBUG_PRINT("[CR]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+                    val.size);
+        const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
+        if (!b) {
+            // failed to decompress
+            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+            errno = EIO;
             goto end;
         }
+        assert(b->size() == val.size);
 
-        const auto &[key, val] = range[range_idx];
-        const std::shared_ptr<const block> b = archive->block_reader->read_block(val.addr, key);
+        const uint64_t copy_end = std::min(read_end, block_end);
+        const uint64_t copy_start = std::max(read_start, block_start);
+        assert(copy_end > copy_start); // if not, btree::get_range is broken
+        const uint64_t copy_size = copy_end - copy_start;
+        const uint64_t dec_offset = (read_start > block_start) ? (read_start - block_start) : 0;
+        DEBUG_PRINT("[CR]copying data of size %ld from block (offset=%ld)\n", copy_size,
+                    dec_offset);
 
-        int64_t copy_size =
-            std::min<int64_t>(read_end, block_end) - std::max<int64_t>(read_start, block_start);
-        if (copy_size > 0) {
-            uint64_t dec_offset = std::max<int64_t>(0, static_cast<int64_t>(cursor) - block_start);
-            uint64_t ptr_offset = std::max<int64_t>(0, static_cast<int64_t>(block_start) - cursor);
-            std::copy_n(b->data() + dec_offset, copy_size, p_ptr + ptr_offset);
-            read_bytes += copy_size;
-        }
+        p_ptr = std::copy_n(b->data() + dec_offset, copy_size, p_ptr);
+        read_bytes += copy_size;
     }
 
 end:
@@ -483,24 +504,3 @@ void compio_flush(compio_archive *archive) {
     archive->block_reader->clear_cache();
     archive->index->clear_cache();
 }
-
-namespace compio {
-
-std::vector<std::pair<tree_key, tree_val>> get_range_in_file(compio_file *file, uint64_t size) {
-    // return range of blocks, that intersect [cursor, cursor + size)
-    std::vector<std::pair<tree_key, tree_val>> range;
-
-    // reserve number of blocks, that should be in the tree
-    int64_t n_blocks = std::min<int64_t>(file->cursor + size, file->size);
-    n_blocks -= static_cast<int64_t>(file->cursor);
-    n_blocks = std::max<int64_t>(0l, n_blocks);
-    n_blocks /= file->archive->config->block_size;
-    range.reserve(n_blocks);
-
-    tree_key key_min = {file->hash_tail, file->cursor};
-    tree_key key_max = {file->hash_tail, file->cursor + size};
-    file->archive->index->get_range(key_min, key_max, range);
-    return range;
-}
-
-} // namespace compio
