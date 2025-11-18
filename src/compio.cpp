@@ -419,8 +419,6 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
             // update existing blocks with new data
             const auto &[key, val] = range[range_idx];
-            const uint64_t block_start = key.pos;
-            const uint64_t block_end = key.pos + val.size;
             DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
                         val.size);
             const auto b = block_reader->read_block(val.addr, key);
@@ -434,6 +432,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
             }
             assert(b->size() == val.size);
 
+            const uint64_t block_start = key.pos;
+            const uint64_t block_end = key.pos + b->size();
             const uint64_t copy_end = std::min(write_end, block_end);
             const uint64_t copy_start = std::max(write_start, block_start);
             assert(copy_end > copy_start); // if not, btree::get_range is broken
@@ -548,8 +548,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     block_reader->enable_temporary_index();
     for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
         const auto &[key, val] = range[range_idx];
-        const uint64_t block_start = key.pos;
-        const uint64_t block_end = key.pos + val.size;
         DEBUG_PRINT("[CR]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
                     val.size);
         const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
@@ -562,6 +560,8 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         }
         assert(b->size() == val.size);
 
+        const uint64_t block_start = key.pos;
+        const uint64_t block_end = key.pos + b->size();
         const uint64_t copy_end = std::min(read_end, block_end);
         const uint64_t copy_start = std::max(read_start, block_start);
         assert(copy_end > copy_start); // if not, btree::get_range is broken
