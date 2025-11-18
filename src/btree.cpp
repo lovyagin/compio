@@ -266,7 +266,11 @@ std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &ke
     assert(key.pos < UINT64_MAX);
     assert(range.size() < 2);
     if (!range.empty()) {
-        return range[0];
+        if (key == range[0].first) {
+            return std::nullopt;
+        } else {
+            return range[0];
+        }
     } else {
         return std::nullopt;
     }
