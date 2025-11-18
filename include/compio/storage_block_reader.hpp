@@ -23,6 +23,7 @@ class block {
     btree *index;
     const compio_compressor *compressor;
     std::map<tree_key, uint64_t> &temporary_index;
+    const bool &is_temporary_index_enabled;
     tree_key key;
     uint64_t addr;
     uint64_t c_size;
@@ -34,12 +35,14 @@ class block {
 
 public:
     block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
-          std::map<tree_key, uint64_t> &temporary_index, uint64_t addr);
+          std::map<tree_key, uint64_t> &temporary_index, const bool &is_temporary_index_enabled,
+          uint64_t addr);
     block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
-          std::map<tree_key, uint64_t> &temporary_index, tree_key key, uint64_t size,
-          std::unique_ptr<uint8_t[]> &&data);
+          std::map<tree_key, uint64_t> &temporary_index, const bool &is_temporary_index_enabled,
+          tree_key key, uint64_t size, std::unique_ptr<uint8_t[]> &&data);
     block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
-          std::map<tree_key, uint64_t> &temporary_index, tree_key key, uint64_t size);
+          std::map<tree_key, uint64_t> &temporary_index, const bool &is_temporary_index_enabled,
+          tree_key key, uint64_t size);
     ~block();
 
     const uint8_t *data() const;
@@ -84,7 +87,22 @@ struct storage_block_reader {
      */
     void clear_cache();
 
-    void clear_temporary_index();
+    /**
+     * @brief Enable temporary index, so that every cache-evicted block will write it's new address
+     * to it, and read_block will search for new address before reading block
+     *
+     * Enable this, when you got many tree_vals from get_range, then iterate through them, but you
+     * don't want to update every tree_val with btree::get before processing it (as it might expire
+     * because of cache eviction)
+     */
+    void enable_temporary_index();
+
+    /**
+     * @brief Disable temporary intex and clear it
+     *
+     * Disable this when you're done with processing possibly expired tree_vals
+     */
+    void disable_temporary_index();
 
 private:
     FILE *file; /**< Archive file handle */
@@ -139,9 +157,10 @@ private:
      * could be no longer valid. But since we don't want unnecessary btree calls for perfomance
      * reasons, we use temporary_index, which stores actual addresses from block destructor. Key
      * benefit of this approach is that we can clear that temporary index in the end of
-     * compio_write, so temporary_index is not big, and operations are faster that on btree.
+     * compio_write/read, so temporary_index is not big, and operations are faster that on btree.
      */
     std::map<tree_key, uint64_t> temporary_index;
+    bool is_temporary_index_enabled;
 };
 
 } // namespace compio

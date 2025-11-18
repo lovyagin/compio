@@ -69,6 +69,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
 bool compio_archive::is_readonly() const { return mode_b & mode_bit::r; }
 
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
+    // TODO: validate config
+
     uint8_t mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
@@ -349,83 +351,116 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 
     const uint64_t write_start = file->cursor;
     const uint64_t write_end = write_start + size;
-    uint64_t written_bytes = 0;
-
-    const tree_key key_min = {file->hash_tail, write_start};
-    const tree_key key_max = {file->hash_tail, write_end};
-    std::vector<std::pair<tree_key, tree_val>> range;
-    if (write_start < file->size) {
-        archive->index->get_range(key_min, key_max, range);
-        assert(range.size() > 0);
-    }
-
-    DEBUG_PRINT("[CW]b-tree range:\n");
-    for (const auto &[key, val] : range) {
-        DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
-                    val.size);
-    }
-    for (std::size_t i = 1; i < range.size(); ++i) {
-        assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
-    }
-    if (!range.empty()) {
-        assert(range.front().first.pos <= write_start);
-        assert(range.back().first.pos + range.back().second.size >= write_start);
-    }
 
     auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
+    uint64_t ptr_bytes_written = 0;
 
-    for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
-        // update existing blocks with new data
-        const auto &[key, val] = range[range_idx];
-        const uint64_t block_start = key.pos;
-        const uint64_t block_end = key.pos + val.size;
-        DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
-                    val.size);
-        const auto b = block_reader->read_block(val.addr, key);
-        if (!b) {
-            // failed to decompress
-            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
-            errno = EIO;
-            goto end;
+    if (write_start < file->size) {
+        const tree_key key_min = {file->hash_tail, write_start};
+        const tree_key key_max = {file->hash_tail, write_end};
+        std::vector<std::pair<tree_key, tree_val>> range;
+        archive->index->get_range(key_min, key_max, range);
+        assert(!range.empty());
+
+        DEBUG_PRINT("[CW]b-tree range:\n");
+        for (const auto &[key, val] : range) {
+            DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
+                        val.size);
         }
-        assert(b->size() == val.size);
+        for (std::size_t i = 1; i < range.size(); ++i) {
+            assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
+        }
+        if (!range.empty()) {
+            assert(range.front().first.pos <= write_start);
+            assert(range.back().first.pos + range.back().second.size >= write_start);
+        }
 
-        const uint64_t copy_end = std::min(write_end, block_end);
-        const uint64_t copy_start = std::max(write_start, block_start);
-        assert(copy_end > copy_start); // if not, btree::get_range is broken
-        const uint64_t copy_size = copy_end - copy_start;
-        const uint64_t dec_offset = (write_start > block_start) ? (write_start - block_start) : 0;
-        DEBUG_PRINT("[CW]copying data of size %ld to block (offset=%ld)\n", copy_size, dec_offset);
+        // enable temporary index, so it will fix expired tree_vals, that we will have in our range
+        block_reader->enable_temporary_index();
+        for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
+            // update existing blocks with new data
+            const auto &[key, val] = range[range_idx];
+            const uint64_t block_start = key.pos;
+            const uint64_t block_end = key.pos + val.size;
+            DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+                        val.size);
+            const auto b = block_reader->read_block(val.addr, key);
+            if (!b) {
+                // failed to decompress
+                WARNING_PRINT(
+                    "warning: failed to decompress data (compressed block is corrupted)\n");
+                errno = EIO;
+                block_reader->disable_temporary_index();
+                return ptr_bytes_written;
+            }
+            assert(b->size() == val.size);
 
-        std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
-        written_bytes += copy_size;
-        p_ptr += copy_size;
+            const uint64_t copy_end = std::min(write_end, block_end);
+            const uint64_t copy_start = std::max(write_start, block_start);
+            assert(copy_end > copy_start); // if not, btree::get_range is broken
+            const uint64_t copy_size = copy_end - copy_start;
+            const uint64_t dec_offset =
+                (write_start > block_start) ? (write_start - block_start) : 0;
+            DEBUG_PRINT("[CW]copying data of size %ld to block (offset=%ld)\n", copy_size,
+                        dec_offset);
+
+            std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
+            p_ptr += copy_size;
+            ptr_bytes_written += copy_size;
+            file->cursor += copy_size;
+            assert(file->cursor <= file->size);
+        }
+        block_reader->disable_temporary_index();
     }
 
-    if (written_bytes < size) {
-        // append block to the end of the file
-        const uint64_t n_zeros = (file->cursor + written_bytes > file->size)
-                                     ? (file->cursor + written_bytes - file->size)
-                                     : 0;
-        const uint64_t copy_size = size - written_bytes;
-        const uint64_t bsize = n_zeros + copy_size;
-        const tree_key key{file->hash_tail, file->size};
-        DEBUG_PRINT("[CW]creating block ({%lu,%lu}-{?,%lu})\n", key.hash, key.pos, bsize);
-        assert(bsize == write_end - file->size);
-        const auto b = block_reader->create_block(bsize, key);
+    if (ptr_bytes_written < size) {
+        // append blocks to the end of the file
+        uint64_t n_zeros = (file->cursor > file->size) ? (file->cursor - file->size) : 0;
+        const uint64_t ptr_bytes_left = size - ptr_bytes_written;
+        uint64_t total_bytes_left = n_zeros + ptr_bytes_left;
+        uint64_t cursor = file->size;
 
-        DEBUG_PRINT("[CW]filling %ld bytes of new block with zeros\n", n_zeros);
-        std::fill_n(b->data(), n_zeros, 0);
-        DEBUG_PRINT("[CW]copying data of size %ld to new block (offset=%ld)\n", copy_size, n_zeros);
-        std::copy_n(p_ptr, copy_size, b->data() + n_zeros);
-        written_bytes += copy_size;
+        const uint64_t block_size = archive->config->block_size;
+        const uint64_t block_size__minimum = archive->config->block_size__minimum;
+        const uint64_t block_size__maximum = archive->config->block_size__maximum;
+        while (total_bytes_left > 0) {
+            uint64_t current_block_size;
+            if (total_bytes_left < block_size ||
+                total_bytes_left - block_size < block_size__minimum) {
+                current_block_size = total_bytes_left;
+            } else {
+                current_block_size = block_size;
+            }
+            assert(current_block_size <= block_size__maximum);
+            assert(current_block_size <= total_bytes_left);
+
+            const uint64_t dec_offset = std::min(n_zeros, current_block_size);
+            const uint64_t copy_size = current_block_size - dec_offset;
+
+            const tree_key key{file->hash_tail, cursor};
+            DEBUG_PRINT("[CW]creating block ({%lu,%lu}-{?,%lu})\n", key.hash, key.pos,
+                        current_block_size);
+            const auto b = block_reader->create_block(current_block_size, key);
+
+            DEBUG_PRINT("[CW]filling %ld bytes of new block with zeros\n", dec_offset);
+            std::fill_n(b->data(), dec_offset, 0);
+            DEBUG_PRINT("[CW]copying data of size %ld to new block (offset=%ld)\n", copy_size,
+                        dec_offset);
+            std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
+            p_ptr += copy_size;
+            ptr_bytes_written += copy_size;
+            cursor += current_block_size;
+            file->cursor += copy_size;
+
+            n_zeros -= dec_offset;
+            total_bytes_left -= current_block_size;
+            file->size += current_block_size;
+            file_table_item->size += current_block_size;
+        }
     }
 
-end:
-    block_reader->clear_temporary_index();
-    file->size = file_table_item->size = std::max(file->cursor + written_bytes, file->size);
-    file->cursor += written_bytes;
-    return written_bytes;
+    assert(ptr_bytes_written == size);
+    return size;
 }
 
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
@@ -449,12 +484,12 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     const uint64_t read_start = file->cursor;
     const uint64_t read_end = read_start + size;
-    uint64_t read_bytes = 0;
 
     const tree_key key_min = {file->hash_tail, read_start};
     const tree_key key_max = {file->hash_tail, read_end};
     std::vector<std::pair<tree_key, tree_val>> range;
     archive->index->get_range(key_min, key_max, range);
+    assert(!range.empty());
 
     DEBUG_PRINT("[CR]b-tree range:\n");
     for (const auto &[key, val] : range) {
@@ -469,7 +504,10 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     assert(range.back().first.pos + range.back().second.size >= read_end);
 
     auto p_ptr = reinterpret_cast<uint8_t *>(ptr);
+    uint64_t ptr_bytes_read = 0;
 
+    // enable temporary index, so it will fix expired tree_vals, that we will have in our range
+    block_reader->enable_temporary_index();
     for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
         const auto &[key, val] = range[range_idx];
         const uint64_t block_start = key.pos;
@@ -481,7 +519,8 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             // failed to decompress
             WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
             errno = EIO;
-            goto end;
+            block_reader->disable_temporary_index();
+            return ptr_bytes_read;
         }
         assert(b->size() == val.size);
 
@@ -493,13 +532,14 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         DEBUG_PRINT("[CR]copying data of size %ld from block (offset=%ld)\n", copy_size,
                     dec_offset);
 
-        p_ptr = std::copy_n(b->data() + dec_offset, copy_size, p_ptr);
-        read_bytes += copy_size;
+        std::copy_n(b->data() + dec_offset, copy_size, p_ptr);
+        p_ptr += copy_size;
+        ptr_bytes_read += copy_size;
+        file->cursor += copy_size;
     }
-
-end:
-    file->cursor += read_bytes;
-    return read_bytes;
+    block_reader->disable_temporary_index();
+    
+    return ptr_bytes_read;
 }
 
 void compio_flush(compio_archive *archive) {
