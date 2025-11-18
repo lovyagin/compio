@@ -416,9 +416,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 
         // enable temporary index, so it will fix expired tree_vals, that we will have in our range
         block_reader->enable_temporary_index();
-        for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
+        for (const auto &[key, val] : range) {
             // update existing blocks with new data
-            const auto &[key, val] = range[range_idx];
             DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
                         val.size);
             const auto b = block_reader->read_block(val.addr, key);
@@ -546,8 +545,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     // enable temporary index, so it will fix expired tree_vals, that we will have in our range
     block_reader->enable_temporary_index();
-    for (std::size_t range_idx = 0; range_idx < range.size(); ++range_idx) {
-        const auto &[key, val] = range[range_idx];
+    for (const auto &[key, val] : range) {
         DEBUG_PRINT("[CR]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
                     val.size);
         const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
@@ -632,9 +630,9 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
 
     // shift blocks after cursor
-    const tree_key key_max{file->hash_tail, UINT64_MAX};
-    archive->index->add_to_range(size, cursor_key, key_max);
-    block_reader->add_to_range(size, cursor_key, key_max);
+    const tree_key file_end_key{file->hash_tail, UINT64_MAX};
+    archive->index->add_to_range(size, cursor_key, file_end_key);
+    block_reader->add_to_range(size, cursor_key, file_end_key);
 
     auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
     uint64_t total_bytes_left = size;
