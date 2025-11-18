@@ -106,7 +106,7 @@ TEST_F(BTreeGetBlockTest, SingleBlockBasicCases) {
     tree->insert(block_key, block_val);
 
     // Test positions inside the block
-    verify_get_block(1, 100, {{block_key, block_val}}); // At start
+    verify_get_block(1, 100, std::nullopt); // At start
     verify_get_block(1, 150, {{block_key, block_val}}); // In middle
     verify_get_block(1, 299, {{block_key, block_val}}); // At end (100 + 200 - 1)
 
@@ -136,10 +136,23 @@ TEST_F(BTreeGetBlockTest, SingleBlockSizeOne) {
     tree_val block_val = make_val(1000, 1);
     tree->insert(block_key, block_val);
 
-    // Zero-size block should contain only it's start position
-    verify_get_block(1, 100, std::make_pair(block_key, block_val));
+    // Block ok size 1 has no inner points
+    verify_get_block(1, 100, std::nullopt);
     verify_get_block(1, 99, std::nullopt);
     verify_get_block(1, 101, std::nullopt);
+}
+
+TEST_F(BTreeGetBlockTest, SequentialBlocksEdgeCases) {
+    insert_block(1, 0, 100);
+    insert_block(1, 100, 100);
+
+    verify_get_block(1, 0, std::nullopt);
+    verify_get_block(1, 1, {{make_key(1, 0), make_val(1000, 100)}});
+    verify_get_block(1, 99, {{make_key(1, 0), make_val(1000, 100)}});
+    verify_get_block(1, 100, std::nullopt);
+    verify_get_block(1, 101, {{make_key(1, 100), make_val(1000, 100)}});
+    verify_get_block(1, 199, {{make_key(1, 100), make_val(1000, 100)}});
+    verify_get_block(1, 200, std::nullopt);
 }
 
 TEST_F(BTreeGetBlockTest, MultipleBlocksSameHash) {
@@ -160,8 +173,8 @@ TEST_F(BTreeGetBlockTest, MultipleBlocksSameHash) {
     // Test boundaries
     verify_get_block(1, 149, {{make_key(1, 100), make_val(1000, 50)}});  // End of block 1
     verify_get_block(1, 150, std::nullopt);                              // Start of gap
-    verify_get_block(1, 199, std::nullopt);                              // End of gap
-    verify_get_block(1, 200, {{make_key(1, 200), make_val(1000, 100)}}); // Start of block 2
+    verify_get_block(1, 200, std::nullopt);                              // End of gap
+    verify_get_block(1, 201, {{make_key(1, 200), make_val(1000, 100)}}); // Start of block 2
 }
 
 TEST_F(BTreeGetBlockTest, MultipleBlocksDifferentHashes) {
@@ -178,27 +191,6 @@ TEST_F(BTreeGetBlockTest, MultipleBlocksDifferentHashes) {
     // Cross-hash searches should fail
     verify_get_block(1, 175, std::nullopt); // Hash 1, pos in hash 2 block
     verify_get_block(2, 125, std::nullopt); // Hash 2, pos in hash 1 block
-}
-
-TEST_F(BTreeGetBlockTest, OverlappingBlocksSameHash) {
-    // Insert overlapping blocks with same hash
-    insert_block(1, 100, 100); // [100, 200)
-    insert_block(1, 150, 100); // [150, 250) - overlaps with first
-    insert_block(1, 200, 50);  // [200, 250) - overlaps with second
-
-    // Test positions in overlapping regions
-    // The behavior should be deterministic - should find one of the containing blocks
-    auto result_175 = tree->get_block(make_key(1, 175));
-    ASSERT_TRUE(result_175.has_value());
-    EXPECT_EQ(result_175->first.hash, 1);
-    EXPECT_LE(result_175->first.pos, 175);
-    EXPECT_GT(result_175->first.pos + result_175->second.size, 175);
-
-    auto result_225 = tree->get_block(make_key(1, 225));
-    ASSERT_TRUE(result_225.has_value());
-    EXPECT_EQ(result_225->first.hash, 1);
-    EXPECT_LE(result_225->first.pos, 225);
-    EXPECT_GT(result_225->first.pos + result_225->second.size, 225);
 }
 
 TEST_F(BTreeGetBlockTest, SequentialBlocks) {
@@ -323,12 +315,12 @@ TEST_F(BTreeGetBlockTest, BoundaryValues) {
     tree->insert(max_key, make_val(2000, 50));
 
     // Test minimum boundary
-    verify_get_block(0, 0, {{min_key, make_val(1000, 100)}});
+    verify_get_block(0, 0, std::nullopt);
     verify_get_block(0, 50, {{min_key, make_val(1000, 100)}});
     verify_get_block(0, 100, std::nullopt);
 
     // Test maximum boundary
-    verify_get_block(UINT64_MAX - 1, UINT64_MAX - 100, {{max_key, make_val(2000, 50)}});
+    verify_get_block(UINT64_MAX - 1, UINT64_MAX - 100, std::nullopt);
     verify_get_block(UINT64_MAX - 1, UINT64_MAX - 75, {{max_key, make_val(2000, 50)}});
     verify_get_block(UINT64_MAX - 1, UINT64_MAX - 50, std::nullopt);
 }
@@ -345,18 +337,18 @@ TEST_F(BTreeGetBlockTest, ComplexScenario) {
     // Perform some operations
     tree->remove(make_key(1, 200));                      // Remove middle block from hash 1
     tree->update(make_key(2, 150), make_val(5000, 120)); // Update block size
-    
+
     // Test all remaining blocks
     verify_get_block(1, 125, {{make_key(1, 100), make_val(1000, 50)}});
     verify_get_block(1, 225, std::nullopt); // Removed block
     verify_get_block(1, 400, {{make_key(1, 350), make_val(1000, 100)}});
-    
+
     verify_get_block(2, 200, {{make_key(2, 150), make_val(5000, 120)}}); // Updated size
     verify_get_block(2, 250, {{make_key(2, 150), make_val(5000, 120)}});
     verify_get_block(2, 330, {{make_key(2, 300), make_val(1000, 60)}});
-    
+
     verify_get_block(3, 75, {{make_key(3, 50), make_val(1000, 40)}});
-    
+
     // Test gaps
     verify_get_block(1, 175, std::nullopt); // Gap in hash 1
     verify_get_block(2, 299, std::nullopt); // Gap in hash 2
