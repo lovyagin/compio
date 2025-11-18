@@ -49,6 +49,7 @@ public:
     uint8_t *data();
     bool valid() const;
     uint64_t size() const;
+    void shrink(uint64_t new_size);
 };
 
 /**
@@ -104,12 +105,14 @@ struct storage_block_reader {
      */
     void disable_temporary_index();
 
+    void add_to_range(int64_t addition, const tree_key& key_min, const tree_key& key_max);
+
 private:
     FILE *file; /**< Archive file handle */
     block_allocator *allocator;
     btree *index;
     const compio_compressor *compressor;
-    cache::lru_cache<tree_key, std::shared_ptr<block>, tree_key_hash> cache;
+    cache::lru_cache<tree_key, std::shared_ptr<block>, tree_key_comparator> cache;
 
     /**
      * @brief Temporary in-memory substitution for BTree, to avoid excess BTree operations

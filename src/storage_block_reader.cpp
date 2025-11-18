@@ -145,6 +145,17 @@ bool block::valid() const { return is_valid; }
 
 uint64_t block::size() const { return dec_size; }
 
+void block::shrink(uint64_t new_size) {
+    assert(new_size < dec_size);
+    dec_size = new_size;
+    // we're not updating size in btree, because while this block is in cache, read_block()->size()
+    // will return correct size, and if block is not in cache, then destructor already updated size
+    //
+    // UPD: we are updating size in btree, because otherwise we can't use btree::get_block in
+    // compio_insert
+    index->update(key, {addr, new_size});
+}
+
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
     : file(file),
@@ -204,6 +215,15 @@ void storage_block_reader::clear_cache() {
 
 void storage_block_reader::enable_temporary_index() { is_temporary_index_enabled = true; }
 
-void storage_block_reader::disable_temporary_index() { is_temporary_index_enabled = false; temporary_index.clear(); }
+void storage_block_reader::disable_temporary_index() {
+    is_temporary_index_enabled = false;
+    temporary_index.clear();
+}
+
+void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
+                                        const tree_key &key_max) {
+    DEBUG_PRINT("[sbr]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos, key_max.pos);
+    cache.add_to_range(addition, key_min, key_max);
+}
 
 } // namespace compio
