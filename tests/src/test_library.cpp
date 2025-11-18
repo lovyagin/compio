@@ -259,9 +259,6 @@ TEST_P(RandomUsageTest, RandomUsage) {
     char fn[256];
 
     compio_build_default_config(&config);
-    // TODO: test (50000, 1000) fails when setting lower block_size (f.e. 128)
-    // it fails only on one compio_read operation, that happens in the first 1000 iterations,
-    // but after than compio_read everything works fine
 
     generate_tmp_fn(fn, sizeof(fn));
 
