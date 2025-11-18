@@ -114,7 +114,7 @@ TEST_F(BTreeRangeAddTest, AddToSingleKeyRange) {
     }
 
     tree_key target_key = make_key(1, 100);
-    tree->add_in_range(50, target_key, target_key);
+    tree->add_to_range(50, target_key, target_key);
 
     auto old_result = tree->get(target_key);
     EXPECT_FALSE(old_result.has_value()) << "Old key should not exist after modification";
@@ -141,7 +141,7 @@ TEST_F(BTreeRangeAddTest, AddToMultipleKeysInRange) {
 
     tree_key lower_bound = make_key(1, 100);
     tree_key upper_bound = make_key(1, 303);
-    tree->add_in_range(50, lower_bound, upper_bound);
+    tree->add_to_range(50, lower_bound, upper_bound);
 
     auto modified_keys = get_keys_in_range(original_data, lower_bound, upper_bound);
 
@@ -162,7 +162,7 @@ TEST_F(BTreeRangeAddTest, AddNegativeValue) {
 
     tree_key lower_bound = make_key(1, 100);
     tree_key upper_bound = make_key(1, 300);
-    tree->add_in_range(-50, lower_bound, upper_bound);
+    tree->add_to_range(-50, lower_bound, upper_bound);
 
     auto modified_keys = get_keys_in_range(original_data, lower_bound, upper_bound);
 
@@ -185,7 +185,7 @@ TEST_F(BTreeRangeAddTest, AddToSpecificHashOnly) {
 
     tree_key lower_bound = make_key(2, 50);
     tree_key upper_bound = make_key(2, 250);
-    tree->add_in_range(50, lower_bound, upper_bound);
+    tree->add_to_range(50, lower_bound, upper_bound);
 
     auto modified_keys = get_keys_in_range(hash2_data, lower_bound, upper_bound);
     verify_key_transformation(all_data, modified_keys, 50);
@@ -219,7 +219,7 @@ TEST_F(BTreeRangeAddTest, AddAcrossMultipleHashes) {
 
     tree_key lower_bound = make_key(1, 50);
     tree_key upper_bound = make_key(3, 150);
-    tree->add_in_range(50, lower_bound, upper_bound);
+    tree->add_to_range(50, lower_bound, upper_bound);
 
     std::vector<tree_key> modified_keys;
     for (const auto &data : {hash1_data, hash2_data, hash3_data}) {
@@ -238,7 +238,7 @@ TEST_F(BTreeRangeAddTest, AddToEmptyRange) {
 
     tree_key lower_bound = make_key(1, 200);
     tree_key upper_bound = make_key(1, 100);
-    tree->add_in_range(50, lower_bound, upper_bound);
+    tree->add_to_range(50, lower_bound, upper_bound);
 
     for (const auto &[key, val] : original_data) {
         auto result = tree->get(key);
@@ -255,7 +255,7 @@ TEST_F(BTreeRangeAddTest, AddToNonExistentRange) {
 
     tree_key lower_bound = make_key(1, 500);
     tree_key upper_bound = make_key(1, 600);
-    tree->add_in_range(50, lower_bound, upper_bound);
+    tree->add_to_range(50, lower_bound, upper_bound);
 
     for (const auto &[key, val] : original_data) {
         auto result = tree->get(key);
@@ -272,7 +272,7 @@ TEST_F(BTreeRangeAddTest, AddToEntireTree) {
 
     tree_key lower_bound = make_key(1, 0);
     tree_key upper_bound = make_key(1, UINT64_MAX);
-    tree->add_in_range(53, lower_bound, upper_bound);
+    tree->add_to_range(53, lower_bound, upper_bound);
 
     std::vector<tree_key> all_keys;
     for (const auto &[key, val] : original_data) {
@@ -290,7 +290,7 @@ TEST_F(BTreeRangeAddTest, AddZeroValue) {
 
     tree_key lower_bound = make_key(1, 0);
     tree_key upper_bound = make_key(1, 300);
-    tree->add_in_range(0, lower_bound, upper_bound);
+    tree->add_to_range(0, lower_bound, upper_bound);
 
     for (const auto &[key, val] : original_data) {
         auto result = tree->get(key);
@@ -305,9 +305,9 @@ TEST_F(BTreeRangeAddTest, MultipleRangeAddOperations) {
         tree->insert(key, val);
     }
 
-    tree->add_in_range(50, make_key(1, 100), make_key(1, 300));
+    tree->add_to_range(50, make_key(1, 100), make_key(1, 300));
 
-    tree->add_in_range(-25, make_key(1, 200), make_key(1, 400));
+    tree->add_to_range(-25, make_key(1, 200), make_key(1, 400));
 
     std::vector<std::pair<tree_key, tree_val>> current_data;
     tree->get_range(make_key(1, 0), make_key(1, UINT64_MAX), current_data);
@@ -328,7 +328,7 @@ TEST_F(BTreeRangeAddTest, RangeAddWithTreeSplits) {
 
     tree_key lower_bound = make_key(1, 200);
     tree_key upper_bound = make_key(1, 800);
-    tree->add_in_range(100, lower_bound, upper_bound);
+    tree->add_to_range(100, lower_bound, upper_bound);
 
     auto modified_keys = get_keys_in_range(original_data, lower_bound, upper_bound);
 
@@ -351,7 +351,7 @@ TEST_F(BTreeRangeAddTest, KeyAdditionsPropagateToChildren) {
 
     tree_key lower_bound = make_key(1, 100);
     tree_key upper_bound = make_key(1, 400);
-    tree->add_in_range(50, lower_bound, upper_bound);
+    tree->add_to_range(50, lower_bound, upper_bound);
 
     auto modified_keys = get_keys_in_range(original_data, lower_bound, upper_bound);
 
@@ -364,7 +364,7 @@ TEST_F(BTreeRangeAddTest, RangeAddPreservesTreeStructure) {
         tree->insert(key, val);
     }
 
-    tree->add_in_range(50, make_key(1, 100), make_key(1, 500));
+    tree->add_to_range(50, make_key(1, 100), make_key(1, 500));
 
     std::vector<std::pair<tree_key, tree_val>> range_result;
     tree->get_range(make_key(1, 0), make_key(1, 1000), range_result);
@@ -393,7 +393,7 @@ TEST_F(BTreeRangeAddTest, RangeAddAtBoundaries) {
         tree->insert(key, val);
     }
 
-    tree->add_in_range(50, make_key(1, 100), make_key(1, 201));
+    tree->add_to_range(50, make_key(1, 100), make_key(1, 201));
 
     auto modified_keys = get_keys_in_range(original_data, make_key(1, 100), make_key(1, 201));
 
@@ -417,7 +417,7 @@ TEST_F(BTreeRangeAddTest, RangeAddWithMinimumMaximumKeys) {
         tree->insert(key, val);
     }
 
-    tree->add_in_range(50, min_key, max_key);
+    tree->add_to_range(50, min_key, max_key);
 
     auto old_min_result = tree->get(min_key);
     EXPECT_FALSE(old_min_result.has_value());
@@ -591,7 +591,7 @@ TEST_P(BTreeRangeAddRandomizedTest, RandomizedRangeAddOperations) {
 
         int64_t addition = generate_addition(original_data, lower_bound, upper_bound);
 
-        tree->add_in_range(addition, lower_bound, upper_bound);
+        tree->add_to_range(addition, lower_bound, upper_bound);
 
         update_points(original_data, lower_bound, upper_bound, addition);
 

@@ -180,7 +180,7 @@ struct btree {
      * @param key_min Minimum key (inclusive)
      * @param key_max Maximum key (inclusive)
      */
-    void add_in_range(int64_t addition, const tree_key &key_min, const tree_key &key_max);
+    void add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max);
 
     /**
      * @brief Print the B-Tree structure for debugging

@@ -293,7 +293,7 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
     RO(node)->validate();
 }
 
-void btree::add_in_range(int64_t addition, const tree_key &key_min, const tree_key &key_max) {
+void btree::add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max) {
     if (key_min > key_max) {
         WARNING_PRINT("warning: passed invalid range into btree::add_pos_to_keys_in_range "
                       "(key_min={%lu,%lu} > {%lu,%lu}=key_max)\n",
