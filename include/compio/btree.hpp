@@ -172,6 +172,16 @@ struct btree {
     std::optional<tree_val> get(const tree_key &key);
 
     /**
+     * @brief Get a key-value pair, whose block contains specified key
+     *
+     * Finds key-value pair, such that block [key, key + size) contains specified key
+     *
+     * @param key The key to look up
+     * @return std::optional<std::pair<tree_key, tree_val>> key-value pair, or nullopt if not found
+     */
+    std::optional<std::pair<tree_key, tree_val>> get_block(const tree_key &key);
+
+    /**
      * @brief Add a value to .pos field of all keys within the specified range
      *
      * Adds the specified addition value to .pos field of all keys that fall within
