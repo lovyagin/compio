@@ -432,3 +432,54 @@ INSTANTIATE_TEST_CASE_P(CustomUsageTests, CustomUsageTest,
                                                           {OperationType::WRITE, 10, 16},
                                                           {OperationType::READ, 0, 26},
                                                       }}));
+
+class ManySmallWritesOneBigReadTest : public ::testing::TestWithParam<std::tuple<int, int, int>> {};
+
+TEST_P(ManySmallWritesOneBigReadTest, ManySmallWritesOneBigRead) {
+    auto [num_writes, write_size, cache_size__blocks] = GetParam();
+
+    compio_config config;
+    compio_build_default_config(&config);
+    config.cache_size__blocks = cache_size__blocks;
+
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+
+    compio_archive *archive = compio_open_archive(fn, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("A", archive);
+    ASSERT_NE(file, nullptr);
+
+    const uint64_t total_size = num_writes * write_size;
+
+    std::vector<unsigned char> expected_data(total_size);
+    for (int i = 0; i < num_writes; ++i) {
+        int start_offset = (i * write_size) % (sizeof(html_data) - write_size);
+        std::copy_n(html_data + start_offset, write_size, expected_data.data() + i * write_size);
+    }
+
+    for (int i = 0; i < num_writes; ++i) {
+        int start_offset = (i * write_size) % (sizeof(html_data) - write_size);
+        ASSERT_EQ(compio_write(html_data + start_offset, write_size, file), write_size)
+            << "Write failed at iteration " << i;
+    }
+
+    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+
+    std::vector<unsigned char> actual_data(total_size);
+    ASSERT_EQ(compio_read(actual_data.data(), total_size, file), total_size) << "Big read failed";
+
+    for (uint64_t i = 0; i < total_size; ++i) {
+        ASSERT_EQ(expected_data[i], actual_data[i]) << "Data mismatch at byte " << i;
+    }
+
+    ASSERT_EQ(compio_close_file(file), 0);
+    ASSERT_EQ(compio_close_archive(archive), 0);
+
+    remove(fn);
+}
+
+INSTANTIATE_TEST_CASE_P(ManySmallWritesOneBigReadTests, ManySmallWritesOneBigReadTest,
+                        ::testing::Combine(::testing::Values(10, 100, 1000),
+                                           ::testing::Values(1, 4, 16, 256),
+                                           ::testing::Values(0, 10, 100)));

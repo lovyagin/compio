@@ -203,6 +203,28 @@ TEST_F(BTreeEdgeCasesTest, RangeQueryMaximumRange) {
     EXPECT_EQ(result.size(), 2);
 }
 
+TEST_F(BTreeEdgeCasesTest, RangeQueryEdge) {
+    const tree_key k1 = make_key(1, 100);
+    const tree_key k2 = make_key(1, 200);
+    const tree_key k3 = make_key(1, 300);
+    const tree_val v1 = make_val(1000, 100);
+    const tree_val v2 = make_val(2000, 100);
+    const tree_val v3 = make_val(3000, 100);
+    tree->insert(k1, v1);
+    tree->insert(k2, v2);
+    tree->insert(k3, v3);
+
+    tree_key min_key = k1;
+    tree_key max_key = k3;
+
+    std::vector<std::pair<tree_key, tree_val>> result;
+    tree->get_range(min_key, max_key, result);
+
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(result[0], (std::pair<tree_key, tree_val>{k1, v1}));
+    EXPECT_EQ(result[1], (std::pair<tree_key, tree_val>{k2, v2}));
+}
+
 TEST_F(BTreeEdgeCasesTest, SingleNodeTree) {
     insert_sequential_blocks(4, 1, 0, 50);
 
