@@ -136,13 +136,13 @@ struct btree {
     void remove(const tree_key &key);
 
     /**
-     * @brief Get all key-value pairs within the specified range
+     * @brief Get all key-value pairs, whose blocks intersect specified range
      *
-     * Retrieves all key-value pairs where keys fall within the range
-     * [key_min, key_max). Results are appended to the provided vector.
+     * Retrieves all key-value pairs where block [key, key + val.size) intersect range [key_min,
+     * key_max)
      *
      * @param key_min Minimum key (inclusive)
-     * @param key_max Maximum key (inclusive)
+     * @param key_max Maximum key (exclusive)
      * @return std::vector<std::pair<tree_key, tree_val>> result Vector with resulting key-value
      * pairs
      */
@@ -333,7 +333,7 @@ private:
      *
      * @param node The current node being processed
      * @param key_min Minimum key (inclusive)
-     * @param key_max Maximum key (inclusive)
+     * @param key_max Maximum key (exclusive)
      * @param result Vector to store the resulting key-value pairs
      */
     void _get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
