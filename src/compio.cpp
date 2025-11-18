@@ -351,11 +351,13 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     const uint64_t write_end = write_start + size;
     uint64_t written_bytes = 0;
 
-    // TODO: get rid of get_range if file->cursor >= file->size
     const tree_key key_min = {file->hash_tail, write_start};
     const tree_key key_max = {file->hash_tail, write_end};
     std::vector<std::pair<tree_key, tree_val>> range;
-    archive->index->get_range(key_min, key_max, range);
+    if (write_start < file->size) {
+        archive->index->get_range(key_min, key_max, range);
+        assert(range.size() > 0);
+    }
 
     DEBUG_PRINT("[CW]b-tree range:\n");
     for (const auto &[key, val] : range) {
