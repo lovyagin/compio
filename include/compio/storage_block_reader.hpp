@@ -50,6 +50,8 @@ public:
     bool valid() const;
     uint64_t size() const;
     void shrink(uint64_t new_size);
+    void remove();
+    const tree_key &get_key();
 };
 
 /**
@@ -106,6 +108,8 @@ struct storage_block_reader {
     void disable_temporary_index();
 
     void add_to_range(int64_t addition, const tree_key& key_min, const tree_key& key_max);
+
+    void remove_block(std::shared_ptr<block> block);
 
 private:
     FILE *file; /**< Archive file handle */

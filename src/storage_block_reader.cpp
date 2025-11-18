@@ -124,7 +124,9 @@ block::~block() {
         if (addr == 0) {
             // this block was created in storage_block_reader::create_block, so it's key was
             // inserted to btree
-            index->remove(key);
+            //
+            // not calling index->remove, because storage_block_reader::remove_block calls it
+            // index->remove(key);
         }
         if (is_removed && addr != 0) {
             // this block was created in storage_block_reader::read_block, so we need to deallocate
@@ -155,6 +157,10 @@ void block::shrink(uint64_t new_size) {
     // compio_insert
     index->update(key, {addr, new_size});
 }
+
+void block::remove() { is_removed = true; }
+
+const tree_key &block::get_key() { return key; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
@@ -224,6 +230,18 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
                                         const tree_key &key_max) {
     DEBUG_PRINT("[sbr]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos, key_max.pos);
     cache.add_to_range(addition, key_min, key_max);
+}
+
+void storage_block_reader::remove_block(std::shared_ptr<block> block) {
+    block->remove();
+    const auto &key = block->get_key();
+    if (cache.exists(key)) {
+        cache.remove(key);
+    }
+    if (is_temporary_index_enabled) {
+        temporary_index.erase(key);
+    }
+    index->remove(key);
 }
 
 } // namespace compio
