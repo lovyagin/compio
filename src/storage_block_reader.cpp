@@ -35,8 +35,9 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
         dec_data = std::make_unique<uint8_t[]>(dec_size);
         int ret = compressor->decompress(dec_data.get(), &dec_size, b.data.get(), b.size);
         if (ret != 0) {
-            WARNING_PRINT("compressed data is too big after decompression (%lu is not enough)\n",
-                          dec_size);
+            WARNING_PRINT(
+                "warning: compressed data is too big after decompression (%lu is not enough)\n",
+                dec_size);
             is_valid = false;
             return;
         }
@@ -84,7 +85,7 @@ block::~block() {
         int ret = compressor->compress(b.data.get(), &b.size, dec_data.get(), dec_size);
         if (ret != 0 || b.size > dec_size) {
             if (ret != 0) {
-                WARNING_PRINT("compressor->compress returned %d\n", ret);
+                WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
             }
 
             b.is_compressed = false;
@@ -199,8 +200,8 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     DEBUG_PRINT("[sbr][create_block]: size=%lu, key.hash=%lu, key.pos=%lu\n", size, key.hash,
                 key.pos);
     if (cache.exists(key)) {
-        WARNING_PRINT("[storage_block_reader]: trying to create block with key (%lu, %lu), that "
-                      "already exists in cache\n",
+        WARNING_PRINT("warning: trying to create block with key (%lu, %lu), that "
+                      "already exists in storage_block_reader.cache\n",
                       key.hash, key.pos);
         return cache.get(key);
     }
