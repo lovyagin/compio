@@ -234,7 +234,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file);
  * @param file opened file
  * @return uint64_t number of successfully inserted bytes
  */
-uint64_t compio_insert(void *ptr, uint64_t size, compio_file *file);
+uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file);
 
 /**
  * @brief Erase block of data from file at current position, shifting remaining data

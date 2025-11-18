@@ -580,9 +580,96 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     return ptr_bytes_read;
 }
 
-uint64_t compio_insert(void *ptr, uint64_t size, compio_file *file) { return 0; }
+uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
+    DEBUG_PRINT("\ncompio_insert(cursor=%lu, size=%lu)\n", file->cursor, size);
 
-uint64_t compio_erase(uint64_t size, compio_file *file) { return 0; }
+    if (file->cursor >= file->size) {
+        return compio_write(ptr, size, file);
+    }
+
+    auto *archive = file->archive;
+    const auto block_reader = archive->block_reader;
+
+    if (archive->mode_b & mode_bit::r) {
+        WARNING_PRINT("warning: can't compio_write to read-only file\n");
+        errno = EROFS;
+        return 0;
+    }
+
+    if (size == 0) {
+        return 0;
+    }
+
+    auto file_table_item = archive->header->ftable.find(file->name);
+    if (!file_table_item) {
+        // should not happen, because compio_open_file creates ftable record
+        WARNING_PRINT("warning: no such file in header.ftable\n");
+        errno = ENOENT;
+        return 0;
+    }
+
+    const tree_key cursor_key = {file->hash_tail, file->cursor};
+    const auto key_val = archive->index->get_block(cursor_key);
+
+    if (key_val.has_value()) {
+        // split block into two
+        const auto &[left_key, left_val] = key_val.value();
+        const auto left_b = block_reader->read_block(left_val.addr, left_key);
+        if (!left_b) {
+            // failed to decompress
+            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+            errno = EIO;
+            return 0;
+        }
+
+        assert(left_key.pos < file->cursor);
+        assert(left_key.pos + left_b->size() > file->cursor);
+        const uint64_t left_size = file->cursor - left_key.pos;
+        const uint64_t right_size = left_b->size() - left_size;
+        const auto right_b = block_reader->create_block(right_size, cursor_key);
+        std::copy_n(left_b->data() + left_size, right_size, right_b->data());
+        left_b->shrink(left_size);
+    }
+
+    // shift blocks after cursor
+    const tree_key key_max{file->hash_tail, UINT64_MAX};
+    archive->index->add_to_range(size, cursor_key, key_max);
+    block_reader->add_to_range(size, cursor_key, key_max);
+
+    auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
+    uint64_t total_bytes_left = size;
+
+    const uint64_t block_size = archive->config->block_size;
+    const uint64_t block_size__minimum = archive->config->block_size__minimum;
+    const uint64_t block_size__maximum = archive->config->block_size__maximum;
+    while (total_bytes_left > 0) {
+        uint64_t current_block_size;
+        if (total_bytes_left < block_size || total_bytes_left - block_size < block_size__minimum) {
+            current_block_size = total_bytes_left;
+        } else {
+            current_block_size = block_size;
+        }
+        assert(current_block_size <= block_size__maximum);
+        assert(current_block_size <= total_bytes_left);
+
+        const tree_key key{file->hash_tail, file->cursor};
+        const auto b = block_reader->create_block(current_block_size, key);
+        std::copy_n(p_ptr, current_block_size, b->data());
+
+        p_ptr += current_block_size;
+        file->cursor += current_block_size;
+        file->size += current_block_size;
+        file_table_item->size += current_block_size;
+        total_bytes_left -= current_block_size;
+    }
+
+    return size;
+}
+
+uint64_t compio_erase(uint64_t size, compio_file *file) {
+    DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
+    return 0;
+}
 
 void compio_flush(compio_archive *archive) {
     archive->block_reader->clear_cache();
