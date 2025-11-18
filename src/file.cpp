@@ -136,10 +136,12 @@ void index_node::validate() const {
 
 void storage_block::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][storage_block]addr=%lu\n", addr);
+    assert(addr != 0);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(is_compressed, file);
     lendian_fread_member(size, file);
+    assert(size != 0);
     lendian_fread_member(original_size, file);
     lendian_fread_member(index_key.hash, file);
     lendian_fread_member(index_key.pos, file);
@@ -149,6 +151,10 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
 
 void storage_block::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][storage_block]addr=%lu;size=%lu\n", addr, STORAGE_BLOCK_METASIZE + size);
+    assert(addr != 0);
+    assert(size > 0);
+    assert(original_size > 0);
+    assert(is_compressed || size == original_size);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(is_compressed, file);

@@ -86,6 +86,8 @@ void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_va
 }
 
 void btree::insert(const tree_key &key, const tree_val &value) {
+    DEBUG_PRINT("[BTREE]: insert(key={%lu,%lu},value={%lu,%lu})\n", key.hash, key.pos, value.addr,
+                value.size);
     auto root = read_root();
     if (RO(root)->num_keys == (2 * degree - 1)) {
         auto new_root = create_node();
@@ -154,6 +156,7 @@ void btree::_remove(shared_node &node, const tree_key &key) {
 }
 
 void btree::remove(const tree_key &key) {
+    DEBUG_PRINT("[BTREE]: remove(key={%lu,%lu})\n", key.hash, key.pos);
     auto root = read_root();
     _remove(root, key);
     if (root->num_keys == 0 && !root->is_leaf) {
@@ -229,6 +232,8 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
 }
 
 void btree::update(const tree_key &key, const tree_val &new_value) {
+    DEBUG_PRINT("[BTREE]: update(key={%lu,%lu},new_value={%lu,%lu})\n", key.hash, key.pos,
+                new_value.addr, new_value.size);
     auto root = read_root();
     if (!_update(root, key, new_value)) {
         WARNING_PRINT("warning: trying to update non-existing key\n");

@@ -35,6 +35,7 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
             is_valid = false;
             return;
         }
+        assert(b.original_size == dec_size);
     } else {
         dec_data = std::move(b.data);
     }
