@@ -147,8 +147,10 @@ typedef enum {
 typedef struct {
     compio_compressor compressor; /**< Compressor for data blocks */
 
-    int b_tree_degree; /**< B-Tree branching factor (typically 3-10) */
-    int block_size;    /**< Block size for splitting files (in bytes) */
+    int b_tree_degree;       /**< B-Tree branching factor (typically 3-10) */
+    int block_size;          /**< Block size for splitting files (in bytes) */
+    int block_size__minimum; /** Minimum size of an uncompressed block */
+    int block_size__maximum; /** Maximum size of an uncompressed block */
 
     int cache_size__nodes;  /**< Maximum B-tree nodes kept in memory */
     int cache_size__blocks; /**< Maximum storage blocks kept in memory */
