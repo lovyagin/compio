@@ -212,7 +212,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive);
  * @param ptr pointer to data
  * @param size size in bytes
  * @param file opened file
- * @return uint64_t
+ * @return uint64_t number of successfully written bytes
  */
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file);
 
@@ -222,9 +222,28 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file);
  * @param ptr pointer to buffer
  * @param size size in bytes
  * @param file opened file
- * @return uint64_t
+ * @return uint64_t number of successfully read bytes
  */
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file);
+
+/**
+ * @brief Insert block of data into file at current position, shifting existing data
+ *
+ * @param ptr pointer to data to insert
+ * @param size size of data to insert in bytes
+ * @param file opened file
+ * @return uint64_t number of successfully inserted bytes
+ */
+uint64_t compio_insert(void *ptr, uint64_t size, compio_file *file);
+
+/**
+ * @brief Erase block of data from file at current position, shifting remaining data
+ *
+ * @param size number of bytes to erase
+ * @param file opened file handle
+ * @return uint64_t number of successfully erased bytes
+ */
+uint64_t compio_erase(uint64_t size, compio_file *file);
 
 #define COMP_SEEK_SET 0
 #define COMP_SEEK_CUR 1
@@ -251,6 +270,14 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin);
  * @return long
  */
 uint64_t compio_tell(compio_file *file);
+
+/**
+ * @brief Get file size
+ *
+ * @param file opened file
+ * @return long
+ */
+uint64_t compio_get_size(compio_file *file);
 
 /**
  * @brief Flush all cached data to filesystem

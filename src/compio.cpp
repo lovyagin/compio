@@ -362,6 +362,8 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
 
 uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
+uint64_t compio_get_size(compio_file *file) { return file->size; }
+
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
 
@@ -576,6 +578,10 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     return ptr_bytes_read;
 }
+
+uint64_t compio_insert(void *ptr, uint64_t size, compio_file *file) { return 0; }
+
+uint64_t compio_erase(uint64_t size, compio_file *file) { return 0; }
 
 void compio_flush(compio_archive *archive) {
     archive->block_reader->clear_cache();
