@@ -357,6 +357,7 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     }
 
     file->cursor = new_cursor;
+    DEBUG_PRINT("\ncompio_seek(new_cursor=%ld)\n", new_cursor);
     return 0;
 }
 
