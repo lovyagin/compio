@@ -14,7 +14,7 @@ auto file = archive.open_file("data.bin");
 
 int value = 42;
 file << value;  // Write
-file.seek(0, COMP_SEEK_SET);
+file.seek(0, COMPIO_SEEK_SET);
 file >> value;  // Read
 ```
 

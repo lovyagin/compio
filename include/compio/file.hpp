@@ -91,6 +91,8 @@ struct index_node : public infile_object {
     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
     std::vector<tree_val> values;   /**< Storage blocks addresses in archive file */
     std::vector<uint64_t> children; /**< Children addresses in archive file */
+    std::vector<int64_t>
+        key_additions; /**< Additions for keys pos in children (used in segment operations) */
 
     int tree_degree; /**< B-Tree degree (not saved in file) */
 
@@ -103,18 +105,21 @@ struct index_node : public infile_object {
 
     void read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr) const override;
+    void validate() const;
 };
 
 /**
  * @brief Size of index node metadata (without arrays)
  */
-#define INDEX_NODE_METASIZE (sizeof(index_node::is_leaf) + sizeof(index_node::num_keys))
+#define INDEX_NODE_METASIZE                                                                        \
+    (sizeof(uint8_t) /* signature */ + sizeof(index_node::is_leaf) + sizeof(index_node::num_keys))
 /**
  * @brief Whole size of index node
  */
 #define INDEX_NODE_SIZE(degree)                                                                    \
     (INDEX_NODE_METASIZE + sizeof(tree_key) * (2 * degree - 1) +                                   \
-     sizeof(tree_val) * (2 * degree - 1) + sizeof(uint64_t) * (2 * degree))
+     sizeof(tree_val) * (2 * degree - 1) + sizeof(uint64_t) * (2 * degree) +                       \
+     sizeof(int64_t) * (2 * degree))
 
 /**
  * @brief Block of (usually compressed) data
@@ -124,7 +129,6 @@ struct storage_block : public infile_object {
     uint8_t is_compressed;           /**< Is this block compressed */
     uint64_t size;                   /**< Size of data array */
     uint64_t original_size;          /**< Original size (size of uncompressed data) */
-    tree_key index_key;              /**< Index key of this block */
     std::unique_ptr<uint8_t[]> data; /**< Data block */
 
     storage_block();
@@ -146,8 +150,8 @@ struct storage_block : public infile_object {
  * @brief Size of storage block metadata (without data)
  */
 #define STORAGE_BLOCK_METASIZE                                                                     \
-    (sizeof(storage_block::is_compressed) + sizeof(storage_block::size) +                          \
-     sizeof(storage_block::original_size) + sizeof(storage_block::index_key))
+    (sizeof(uint8_t) /* signature */ + sizeof(storage_block::is_compressed) +                      \
+     sizeof(storage_block::size) + sizeof(storage_block::original_size))
 
 } // namespace compio
 

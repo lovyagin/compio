@@ -112,17 +112,17 @@ TEST_F(OpenedFileTest, BasicWriteRead) {
 
     std::vector<unsigned char> out_data(size, '?');
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
     ASSERT_EQ(compio_write(in_data.data(), size, file), size);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_CUR), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_CUR), 0);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), 0);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
     ASSERT_EQ(compio_read(out_data.data(), size, file), size);
 
     for (std::size_t i = 0; i < size; ++i) {
@@ -154,10 +154,10 @@ TEST_P(WriteReadNBytesTest, RandomWriteRead) {
     ASSERT_EQ(compio_write(in_data.data(), size, file), size);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), 0);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
     ASSERT_EQ(compio_tell(file), 0);
     ASSERT_EQ(compio_read(out_data.data(), size, file), size);
     ASSERT_EQ(compio_tell(file), size);
@@ -198,6 +198,8 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
 
     compio_build_default_config(&config);
     config.block_size = 128;
+    config.block_size__minimum = 64;
+    config.block_size__maximum = 512;
 
     generate_tmp_fn(fn, sizeof(fn));
 
@@ -257,25 +259,21 @@ TEST_P(RandomUsageTest, RandomUsage) {
     char fn[256];
 
     compio_build_default_config(&config);
-    // TODO: test (50000, 1000) fails when setting lower block_size (f.e. 128)
-    // it fails only on one compio_read operation, that happens in the first 1000 iterations,
-    // but after than compio_read everything works fine
 
     generate_tmp_fn(fn, sizeof(fn));
 
-    auto [file_size, n_operations, n_repetitions] = GetParam();
+    auto [max_file_size, n_operations, n_repetitions] = GetParam();
 
     std::minstd_rand rng;
-    std::uniform_int_distribution<int> d_op(0, 3);
-    std::uniform_int_distribution<int> d_pos(0, file_size - 2);
+    std::uniform_int_distribution<int> d_op(0, 5);
+    std::uniform_int_distribution<int> d_pos(0, max_file_size - 2);
 
     for (int k = 0; k < n_repetitions; ++k) {
         rng.seed(k);
 
-        std::vector<unsigned char> file_data(file_size, 0);
-        std::vector<unsigned char> buffer(file_size);
+        std::vector<unsigned char> file_data;
+        std::vector<unsigned char> buffer(max_file_size);
         int cursor = 0;
-        int current_fsize = 0;
 
         archive = compio_open_archive(fn, "w+", &config);
         ASSERT_NE(archive, nullptr);
@@ -283,49 +281,90 @@ TEST_P(RandomUsageTest, RandomUsage) {
         ASSERT_NE(file, nullptr);
 
         for (int i = 0; i < n_operations; ++i) {
-            // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
             switch (d_op(rng)) {
             case 0: {
                 cursor = d_pos(rng);
-                // fprintf(stderr, "compio_seek(%d)\n", cursor);
-                ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+                ASSERT_EQ(compio_seek(file, cursor, COMPIO_SEEK_SET), 0);
                 break;
             }
             case 1: {
-                // fprintf(stderr, "compio_tell() = %d\n", cursor);
                 ASSERT_EQ(compio_tell(file), cursor);
                 break;
             }
             case 2: {
-                if (cursor < current_fsize) {
-                    int max_size = current_fsize - cursor;
-                    std::uniform_int_distribution<int> d_size(1, max_size);
+                if (cursor < file_data.size()) {
+                    int max_size = file_data.size() - cursor;
+                    std::uniform_int_distribution<int> d_size(1, 2 * max_size);
                     int size = d_size(rng);
-                    // fprintf(stderr, "compio_read(%d, %d)\n", cursor, size);
-                    ASSERT_EQ(compio_read(buffer.data(), size, file), size);
-                    for (int i = 0; i < size; ++i) {
+                    int actual_read_size = std::min(size, max_size);
+
+                    ASSERT_EQ(compio_read(buffer.data(), size, file), actual_read_size);
+                    for (int i = 0; i < actual_read_size; ++i) {
                         ASSERT_EQ(buffer[i], file_data[cursor + i]);
                     }
-                    cursor += size;
+                    cursor += actual_read_size;
                 }
                 break;
             }
             case 3: {
-                if (cursor < file_size) {
+                if (cursor < max_file_size) {
                     std::uniform_int_distribution<int> d_size(
-                        1, std::min(static_cast<uint64_t>(file_size - cursor), sizeof(html_data)));
+                        1,
+                        std::min(static_cast<uint64_t>(max_file_size - cursor), sizeof(html_data)));
                     int size = d_size(rng);
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
-                    // fprintf(stderr, "compio_write(%d, %d)\n", start, size);
+
                     ASSERT_EQ(compio_write(html_data + start, size, file), size);
+                    if (cursor + size > file_data.size()) {
+                        file_data.resize(cursor + size, 0);
+                    }
                     std::copy_n(html_data + start, size, file_data.data() + cursor);
                     cursor += size;
-                    current_fsize = std::max(current_fsize, cursor);
-                    break;
                 }
+                break;
+            }
+            case 4: {
+                if (file_data.size() < max_file_size) {
+                    std::uniform_int_distribution<int> d_size(
+                        1, std::min(max_file_size - std::max(file_data.size(),
+                                                             static_cast<std::size_t>(cursor)),
+                                    sizeof(html_data)));
+                    int size = d_size(rng);
+                    std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
+                    int start = d_start(rng);
+
+                    if (cursor > file_data.size()) {
+                        file_data.resize(cursor, 0);
+                    }
+                    ASSERT_EQ(compio_insert(html_data + start, size, file), size);
+                    file_data.insert(file_data.begin() + cursor, html_data + start,
+                                     html_data + start + size);
+                    cursor += size;
+                }
+                break;
+            }
+            case 5: {
+                if (cursor < max_file_size) {
+                    int max_size = std::max(0, static_cast<int>(file_data.size()) - cursor);
+                    std::uniform_int_distribution<int> d_size(1, max_file_size - cursor);
+                    int size = d_size(rng);
+                    int actual_erase_size = std::min(size, max_size);
+
+                    ASSERT_EQ(compio_erase(size, file), actual_erase_size)
+                        << file_data.size() << " " << cursor << " " << max_size << " " << size
+                        << " " << actual_erase_size;
+                    if (cursor < file_data.size()) {
+                        file_data.erase(file_data.begin() + cursor,
+                                        file_data.begin() + cursor + actual_erase_size);
+                    }
+                }
+                break;
             }
             }
+
+            ASSERT_EQ(file_data.size(), compio_get_size(file));
+            ASSERT_LE(file_data.size(), max_file_size);
         }
 
         ASSERT_EQ(compio_close_file(file), 0);
@@ -365,6 +404,8 @@ TEST_P(CustomUsageTest, CustomUsage) {
 
     compio_build_default_config(&config);
     config.block_size = 16;
+    config.block_size__minimum = 0;
+    config.block_size__maximum = config.block_size * 4;
     generate_tmp_fn(fn, sizeof(fn));
 
     std::minstd_rand rng(0);
@@ -384,7 +425,7 @@ TEST_P(CustomUsageTest, CustomUsage) {
         // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
         cursor = operation.pos;
         // fprintf(stderr, "compio_seek(%d)\n", cursor);
-        ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+        ASSERT_EQ(compio_seek(file, cursor, COMPIO_SEEK_SET), 0);
 
         switch (operation.type) {
         case OperationType::READ: {
@@ -432,3 +473,54 @@ INSTANTIATE_TEST_CASE_P(CustomUsageTests, CustomUsageTest,
                                                           {OperationType::WRITE, 10, 16},
                                                           {OperationType::READ, 0, 26},
                                                       }}));
+
+class ManySmallWritesOneBigReadTest : public ::testing::TestWithParam<std::tuple<int, int, int>> {};
+
+TEST_P(ManySmallWritesOneBigReadTest, ManySmallWritesOneBigRead) {
+    auto [num_writes, write_size, cache_size__blocks] = GetParam();
+
+    compio_config config;
+    compio_build_default_config(&config);
+    config.cache_size__blocks = cache_size__blocks;
+
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+
+    compio_archive *archive = compio_open_archive(fn, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("A", archive);
+    ASSERT_NE(file, nullptr);
+
+    const uint64_t total_size = num_writes * write_size;
+
+    std::vector<unsigned char> expected_data(total_size);
+    for (int i = 0; i < num_writes; ++i) {
+        int start_offset = (i * write_size) % (sizeof(html_data) - write_size);
+        std::copy_n(html_data + start_offset, write_size, expected_data.data() + i * write_size);
+    }
+
+    for (int i = 0; i < num_writes; ++i) {
+        int start_offset = (i * write_size) % (sizeof(html_data) - write_size);
+        ASSERT_EQ(compio_write(html_data + start_offset, write_size, file), write_size)
+            << "Write failed at iteration " << i;
+    }
+
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
+
+    std::vector<unsigned char> actual_data(total_size);
+    ASSERT_EQ(compio_read(actual_data.data(), total_size, file), total_size) << "Big read failed";
+
+    for (uint64_t i = 0; i < total_size; ++i) {
+        ASSERT_EQ(expected_data[i], actual_data[i]) << "Data mismatch at byte " << i;
+    }
+
+    ASSERT_EQ(compio_close_file(file), 0);
+    ASSERT_EQ(compio_close_archive(archive), 0);
+
+    remove(fn);
+}
+
+INSTANTIATE_TEST_CASE_P(ManySmallWritesOneBigReadTests, ManySmallWritesOneBigReadTest,
+                        ::testing::Combine(::testing::Values(10, 100, 1000),
+                                           ::testing::Values(1, 4, 16, 256),
+                                           ::testing::Values(0, 10, 100)));

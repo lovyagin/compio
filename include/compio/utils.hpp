@@ -1,6 +1,6 @@
 /**
  * @file utils.hpp
- * @brief Utility functions and operators for the compression library
+ * @brief Utility functions
  */
 
 #ifndef UTILS_HEADER_
@@ -23,8 +23,18 @@ enum mode_bit { r = 0b0001, w = 0b0010, a = 0b0100, plus = 0b1000 };
  */
 uint8_t parse_mode(const char *mode);
 
+/**
+ * @brief Hashes input string via fnv1a algorithm
+ * @param s Input string
+ * @return resulting hash
+ */
 uint64_t fnv1a(const char *s);
 
+/**
+ * @brief Checks if file is empty
+ * @param file Opened file
+ * @return true if file is empty, false otherwise
+ */
 bool is_file_empty(FILE *file);
 
 } // namespace compio

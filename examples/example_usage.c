@@ -66,7 +66,7 @@ int main() {
         return -3;
     }
 
-    int ret = compio_seek(file, 0, COMP_SEEK_SET);
+    int ret = compio_seek(file, 0, COMPIO_SEEK_SET);
     if (ret != 0) {
         fprintf(stderr, "compio_seek returned %d\n", ret);
         compio_close_file(file);

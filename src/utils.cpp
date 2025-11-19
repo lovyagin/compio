@@ -38,7 +38,8 @@ uint8_t parse_mode(const char *mode) {
 
 uint64_t fnv1a(const char *s) {
     uint64_t hash = 0xcbf29ce484222325;
-    while (*s) hash = (hash ^ *s++) * 0x100000001b3;
+    while (*s)
+        hash = (hash ^ *s++) * 0x100000001b3;
     return hash;
 }
 

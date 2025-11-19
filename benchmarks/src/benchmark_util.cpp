@@ -55,12 +55,12 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config) 
             config->cache_size__nodes = std::atoi(value.c_str());
         } else if (key == "cache_size__blocks") {
             config->cache_size__blocks = std::atoi(value.c_str());
-        } else if (key == "cache_size__compression") {
-            config->cache_size__compression = std::atoi(value.c_str());
         } else if (key == "b_tree_degree") {
             config->b_tree_degree = std::atoi(value.c_str());
         } else if (key == "block_size") {
             config->block_size = std::atoi(value.c_str());
+            config->block_size__minimum = 0;
+            config->block_size__maximum = config->block_size * 4;
         } else if (key == "fill_holes_with_zeros") {
             if (value == "true") {
                 config->fill_holes_with_zeros = true;

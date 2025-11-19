@@ -59,7 +59,7 @@ compio_write(data, strlen(data) + 1, file);
 
 // Read data
 char buffer[256];
-compio_seek(file, 0, COMP_SEEK_SET);
+compio_seek(file, 0, COMPIO_SEEK_SET);
 compio_read(buffer, sizeof(buffer), file);
 
 // Close file and archive
@@ -73,9 +73,10 @@ compio_close_archive(archive);
 compio_config config;
 config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
+config.block_size__minimum = 512;                   // Minumum block size in bytes
+config.block_size__maximum = 16384;                 // Maximum block size in bytes
 config.cache_size__nodes = 128;                     // B-tree node cache
 config.cache_size__blocks = 16;                     // Storage block cache
-config.cache_size__compression = 16;                // Decompression cache
 config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT; // Allocation strategy
 config.fragmentation_threshold = 30;                // Defrag threshold (%)
 config.fill_holes_with_zeros = false;               // Zero-fill freed blocks

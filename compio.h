@@ -28,18 +28,21 @@
 extern "C" {
 #endif
 
+#define COMPIO_MAGIC_NUMBER 27110654
+
 /**
  * @brief Compression algorithm types
  */
 typedef enum {
     /**
-     * @brief Custom compression (use it, when you're using your custom compress/decompress algorithm;
-     * note, that if you want to use archive, created with custom compression, in different program,
-     * you'll need to provide the exact same compressor, and set compression_type to custom)
+     * @brief Custom compression (use it, when you're using your custom compress/decompress
+     * algorithm; note, that if you want to use archive, created with custom compression, in
+     * different program, you'll need to provide the exact same compressor, and set compression_type
+     * to custom)
      *
      */
     COMPIO_COMPRESS_CUSTOM = 0,
-    COMPIO_COMPRESS_DUMMY = 1,  /**< No compression (dummy) */
+    COMPIO_COMPRESS_DUMMY = 1, /**< No compression (dummy) */
     COMPIO_COMPRESS_ZLIB = 2,  /**< ZLIB compression */
     COMPIO_COMPRESS_LZ4 = 3,   /**< LZ4 compression */
     COMPIO_COMPRESS_ZSTD = 4,  /**< Zstandard compression */
@@ -146,12 +149,13 @@ typedef enum {
 typedef struct {
     compio_compressor compressor; /**< Compressor for data blocks */
 
-    int b_tree_degree; /**< B-Tree branching factor (typically 3-10) */
-    int block_size;    /**< Block size for splitting files (in bytes) */
+    int b_tree_degree;       /**< B-Tree branching factor (typically 3-10) */
+    int block_size;          /**< Block size for splitting files (in bytes) */
+    int block_size__minimum; /** Minimum size of an uncompressed block */
+    int block_size__maximum; /** Maximum size of an uncompressed block */
 
-    int cache_size__nodes;       /**< Maximum B-tree nodes kept in memory */
-    int cache_size__blocks;      /**< Maximum storage blocks kept in memory */
-    int cache_size__compression; /**< Maximum uncompressed blocks kept in memory */
+    int cache_size__nodes;  /**< Maximum B-tree nodes kept in memory */
+    int cache_size__blocks; /**< Maximum storage blocks kept in memory */
 
     compio_allocation_strategy allocation_strategy; /**< Free block selection strategy */
     bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */
@@ -168,12 +172,12 @@ void compio_build_default_config(compio_config *result);
 
 /**
  * @brief Get compression type from header of existing archive
- * 
+ *
  * @param fp path to archive file
  * @param t pointer t compression_type object
  * @return int
  */
-int compio_get_compression_type(const char *fp, compio_compression_type* t);
+int compio_get_compression_type(const char *fp, compio_compression_type *t);
 
 /**
  * @brief Opened archive
@@ -210,7 +214,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive);
  * @param ptr pointer to data
  * @param size size in bytes
  * @param file opened file
- * @return uint64_t
+ * @return uint64_t number of successfully written bytes
  */
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file);
 
@@ -220,13 +224,30 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file);
  * @param ptr pointer to buffer
  * @param size size in bytes
  * @param file opened file
- * @return uint64_t
+ * @return uint64_t number of successfully read bytes
  */
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file);
 
-#define COMP_SEEK_SET 0
-#define COMP_SEEK_CUR 1
-#define COMP_SEEK_END 2
+/**
+ * @brief Insert block of data into file at current position, shifting existing data
+ *
+ * @param ptr pointer to data to insert
+ * @param size size of data to insert in bytes
+ * @param file opened file
+ * @return uint64_t number of successfully inserted bytes
+ */
+uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file);
+
+/**
+ * @brief Erase block of data from file at current position, shifting remaining data
+ *
+ * @param size number of bytes to erase
+ * @param file opened file handle
+ * @return uint64_t number of successfully erased bytes
+ */
+uint64_t compio_erase(uint64_t size, compio_file *file);
+
+typedef enum { COMPIO_SEEK_SET, COMPIO_SEEK_CUR, COMPIO_SEEK_END } compio_seek_mode;
 
 /**
  * @brief Set current position inside of a file
@@ -235,9 +256,9 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file);
  * @param offset offset in bytes
  * @param origin position, used as reference for the offset
  * `origin` possible values:
- *  - COMP_SEEK_SET - offset is counted from the beginning of a file
- *  - COMP_SEEK_CUR - offset is counter from current position
- *  - COMP_SEEK_END - offset is counter from the end of a file
+ *  - COMPIO_SEEK_SET - offset is counted from the beginning of a file
+ *  - COMPIO_SEEK_CUR - offset is counter from current position
+ *  - COMPIO_SEEK_END - offset is counter from the end of a file
  * @return int
  */
 int compio_seek(compio_file *file, int64_t offset, uint8_t origin);
@@ -249,6 +270,14 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin);
  * @return long
  */
 uint64_t compio_tell(compio_file *file);
+
+/**
+ * @brief Get file size
+ *
+ * @param file opened file
+ * @return long
+ */
+uint64_t compio_get_size(compio_file *file);
 
 /**
  * @brief Flush all cached data to filesystem

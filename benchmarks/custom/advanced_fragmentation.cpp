@@ -159,6 +159,8 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
     compio_config config = {};
     compio_build_default_config(&config);
     config.block_size = static_cast<int>(params.block_size);
+    config.block_size__minimum = 0;
+    config.block_size__maximum = config.block_size * 4;
     config.allocation_strategy = params.alloc_strategy;
 
     // Use ZLIB for realistic compression testing

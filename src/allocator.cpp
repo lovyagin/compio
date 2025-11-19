@@ -588,7 +588,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
     try {
         // Convert allocation strategy from config to internal enum
         allocation_strategy strategy;
-        switch (archive_->config->allocation_strategy) {
+        switch (archive_->config.allocation_strategy) {
         case COMPIO_ALLOC_BEST_FIT:
             strategy = allocation_strategy::BEST_FIT;
             break;
@@ -633,7 +633,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 
     blocks_manager_.add_free_block(offset, size);
 
-    if (archive_->config->fill_holes_with_zeros && archive_->file) {
+    if (archive_->config.fill_holes_with_zeros && archive_->file) {
         static constexpr size_t BUFFER_SIZE = 4096;
         static uint8_t zeros[BUFFER_SIZE] = {0};
 
@@ -655,7 +655,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 
 void block_allocator::maintenance() {
     uint8_t current_fragmentation = get_fragmentation();
-    uint8_t threshold = archive_->config->fragmentation_threshold;
+    uint8_t threshold = archive_->config.fragmentation_threshold;
 
     if (current_fragmentation > threshold) {
         blocks_manager_.defragment();
@@ -674,20 +674,19 @@ void block_allocator::maintenance() {
 // Private methods
 
 bool block_allocator::needs_defragmentation() const {
-    return blocks_manager_.calculate_fragmentation() > archive_->config->fragmentation_threshold;
+    return blocks_manager_.calculate_fragmentation() > archive_->config.fragmentation_threshold;
 }
 
 void block_allocator::perform_defragmentation() {
     static constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024; // 1MB buffer
     static std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
 
-    std::vector<std::pair<tree_key, tree_val>> used_blocks;
     constexpr tree_key key_min{};
     tree_key key_max{};
     key_max.hash = UINT64_MAX;
     key_max.pos = UINT64_MAX;
 
-    archive_->index->get_range(key_min, key_max, used_blocks);
+    auto used_blocks = archive_->index->get_range(key_min, key_max);
 
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
@@ -769,11 +768,13 @@ void block_allocator::perform_defragmentation() {
 
     fflush(archive_->file);
 
-    blocks_manager_ =
-        free_blocks_manager(readonly(archive_->header, header)->file_size ? &readonly(archive_->header, header)->file_size : nullptr);
+    blocks_manager_ = free_blocks_manager(readonly(archive_->header, header)->file_size
+                                              ? &readonly(archive_->header, header)->file_size
+                                              : nullptr);
 
     if (new_offset < readonly(archive_->header, header)->file_size) {
-        blocks_manager_.add_free_block(new_offset, readonly(archive_->header, header)->file_size - new_offset);
+        blocks_manager_.add_free_block(new_offset,
+                                       readonly(archive_->header, header)->file_size - new_offset);
     } else {
         archive_->header->file_size = new_offset;
     }
