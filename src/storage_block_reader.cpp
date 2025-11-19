@@ -165,6 +165,20 @@ void block::remove() { is_removed = true; }
 
 const tree_key &block::get_key() const { return key; }
 
+void block::shift_key(int64_t addition) {
+    assert(addition != 0);
+    is_modified = true;
+    DEBUG_PRINT("[B][shift_key]: key.pos=%lu, shifting with addition=%ld\n", key.pos, addition);
+    key += addition;
+}
+
+void block::set_key(const tree_key &new_key) {
+    if (key != new_key) {
+        is_modified = true;
+        key = new_key;
+    }
+}
+
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
     : file(file),
@@ -233,7 +247,14 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
                                         const tree_key &key_max) {
     DEBUG_PRINT("[SBR][add_to_range]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos,
                 key_max.pos);
+    // manually update block::key for entries in cache
+    auto it_start = cache._cache_items_map.lower_bound(key_min);
+    auto it_end = cache._cache_items_map.upper_bound(key_max);
+    for (auto it = it_start; it != it_end; ++it) {
+        it->second->second->shift_key(addition);
+    }
 
+    // and then update keys themselves
     cache.add_to_range(addition, key_min, key_max);
 }
 
@@ -249,5 +270,7 @@ void storage_block_reader::remove_block(std::shared_ptr<block> block) {
     }
     index->remove(key);
 }
+
+bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }
 
 } // namespace compio

@@ -52,6 +52,8 @@ public:
     void shrink(uint64_t new_size);
     void remove();
     const tree_key &get_key() const;
+    void shift_key(int64_t addition);
+    void set_key(const tree_key &new_key);
 };
 
 /**
@@ -107,9 +109,11 @@ struct storage_block_reader {
      */
     void disable_temporary_index();
 
-    void add_to_range(int64_t addition, const tree_key& key_min, const tree_key& key_max);
+    void add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max);
 
     void remove_block(std::shared_ptr<block> block);
+
+    bool cache_contains(const tree_key &key) const;
 
 private:
     FILE *file; /**< Archive file handle */

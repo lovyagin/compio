@@ -763,6 +763,12 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             if (left_size == 0) {
                 DEBUG_PRINT("[CE]---moving by offset=%lu\n", block_erase_size);
                 archive->index->add_to_range(block_erase_size, key, key);
+                if (!block_reader->cache_contains(key)) {
+                    // if out block not in cache (if cache_size=0), then block_reader->add_to_range
+                    // won't update it's key, and invalid key will be written into file, so we
+                    // manually shift key for this block
+                    b->shift_key(block_erase_size);
+                }
                 block_reader->add_to_range(block_erase_size, key, key);
             }
         } else {
