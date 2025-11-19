@@ -63,7 +63,7 @@ protected:
         for (int i = 0; i < count; ++i) {
             uint64_t block_size = base_size + (i % 10);
             // Ensure minimum gap between blocks to accommodate shifts
-            uint64_t gap = std::max(block_size / 2, 50UL);
+            uint64_t gap = std::max(block_size / 2, UINT64_C(50));
             data.push_back({make_key(hash, current_pos), make_val(1000 + i * 100, block_size)});
             current_pos += block_size + gap;
         }
