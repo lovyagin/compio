@@ -19,7 +19,7 @@ struct btree;
  */
 struct compio_archive {
     FILE *file;                                 /**< Opened stdio FILE */
-    const compio_config *config;                /**< Compio configuration */
+    const compio_config config;                /**< Compio configuration */
     smart_infile_object<compio::header> header; /**< Read file header */
     compio::btree *index;
     compio::storage_block_reader *block_reader;

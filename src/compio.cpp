@@ -51,7 +51,7 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
 
 compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
     : file(file),
-      config(config),
+      config(*config),
       index(nullptr),
       block_reader(nullptr),
       mode_b(mode_b),
@@ -111,8 +111,6 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         errno = EINVAL;
         goto end;
     }
-
-    // TODO: copy config, so that potential user changes won't break anything
 
     uint8_t mode_b;
     mode_b = parse_mode(mode);
@@ -482,9 +480,9 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         uint64_t total_bytes_left = n_zeros + ptr_bytes_left;
         uint64_t cursor = file->size;
 
-        const uint64_t block_size = archive->config->block_size;
-        const uint64_t block_size__minimum = archive->config->block_size__minimum;
-        const uint64_t block_size__maximum = archive->config->block_size__maximum;
+        const uint64_t block_size = archive->config.block_size;
+        const uint64_t block_size__minimum = archive->config.block_size__minimum;
+        const uint64_t block_size__maximum = archive->config.block_size__maximum;
         while (total_bytes_left > 0) {
             uint64_t current_block_size;
             if (total_bytes_left < block_size ||
@@ -663,9 +661,9 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
     uint64_t total_bytes_left = size;
 
-    const uint64_t block_size = archive->config->block_size;
-    const uint64_t block_size__minimum = archive->config->block_size__minimum;
-    const uint64_t block_size__maximum = archive->config->block_size__maximum;
+    const uint64_t block_size = archive->config.block_size;
+    const uint64_t block_size__minimum = archive->config.block_size__minimum;
+    const uint64_t block_size__maximum = archive->config.block_size__maximum;
     while (total_bytes_left > 0) {
         uint64_t current_block_size;
         if (total_bytes_left < block_size || total_bytes_left - block_size < block_size__minimum) {

@@ -588,7 +588,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
     try {
         // Convert allocation strategy from config to internal enum
         allocation_strategy strategy;
-        switch (archive_->config->allocation_strategy) {
+        switch (archive_->config.allocation_strategy) {
         case COMPIO_ALLOC_BEST_FIT:
             strategy = allocation_strategy::BEST_FIT;
             break;
@@ -633,7 +633,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 
     blocks_manager_.add_free_block(offset, size);
 
-    if (archive_->config->fill_holes_with_zeros && archive_->file) {
+    if (archive_->config.fill_holes_with_zeros && archive_->file) {
         static constexpr size_t BUFFER_SIZE = 4096;
         static uint8_t zeros[BUFFER_SIZE] = {0};
 
@@ -655,7 +655,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 
 void block_allocator::maintenance() {
     uint8_t current_fragmentation = get_fragmentation();
-    uint8_t threshold = archive_->config->fragmentation_threshold;
+    uint8_t threshold = archive_->config.fragmentation_threshold;
 
     if (current_fragmentation > threshold) {
         blocks_manager_.defragment();
@@ -674,7 +674,7 @@ void block_allocator::maintenance() {
 // Private methods
 
 bool block_allocator::needs_defragmentation() const {
-    return blocks_manager_.calculate_fragmentation() > archive_->config->fragmentation_threshold;
+    return blocks_manager_.calculate_fragmentation() > archive_->config.fragmentation_threshold;
 }
 
 void block_allocator::perform_defragmentation() {
