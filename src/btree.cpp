@@ -269,7 +269,6 @@ std::optional<tree_val> btree::get(const tree_key &key) {
 }
 
 std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &key) {
-    // TODO: implement this without get_range (only if it will be faster)
     auto range = get_range(key, key + 1);
     assert(key.pos < UINT64_MAX);
     assert(range.size() < 2);
