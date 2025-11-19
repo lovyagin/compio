@@ -150,6 +150,7 @@ uint64_t block::size() const { return dec_size; }
 
 void block::shrink(uint64_t new_size) {
     assert(new_size < dec_size);
+    is_modified = true;
     dec_size = new_size;
     // we're not updating size in btree, because while this block is in cache, read_block()->size()
     // will return correct size, and if block is not in cache, then destructor already updated size
