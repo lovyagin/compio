@@ -41,7 +41,7 @@ int main() {
             switch (d_op(rng)) {
             case 0: {
                 cursor = d_pos(rng);
-                compio_seek(file, cursor, COMP_SEEK_SET);
+                compio_seek(file, cursor, COMPIO_SEEK_SET);
                 break;
             }
             case 1: {

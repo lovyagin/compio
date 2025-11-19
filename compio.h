@@ -247,9 +247,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file);
  */
 uint64_t compio_erase(uint64_t size, compio_file *file);
 
-#define COMP_SEEK_SET 0
-#define COMP_SEEK_CUR 1
-#define COMP_SEEK_END 2
+typedef enum { COMPIO_SEEK_SET, COMPIO_SEEK_CUR, COMPIO_SEEK_END } compio_seek_mode;
 
 /**
  * @brief Set current position inside of a file
@@ -258,9 +256,9 @@ uint64_t compio_erase(uint64_t size, compio_file *file);
  * @param offset offset in bytes
  * @param origin position, used as reference for the offset
  * `origin` possible values:
- *  - COMP_SEEK_SET - offset is counted from the beginning of a file
- *  - COMP_SEEK_CUR - offset is counter from current position
- *  - COMP_SEEK_END - offset is counter from the end of a file
+ *  - COMPIO_SEEK_SET - offset is counted from the beginning of a file
+ *  - COMPIO_SEEK_CUR - offset is counter from current position
+ *  - COMPIO_SEEK_END - offset is counter from the end of a file
  * @return int
  */
 int compio_seek(compio_file *file, int64_t offset, uint8_t origin);

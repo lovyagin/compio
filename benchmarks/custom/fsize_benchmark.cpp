@@ -92,7 +92,7 @@ int main(int argc, char **argv) {
 
         for (std::size_t i = 0; i < n_blocks; ++i) {
             if (type == 1) {
-                compio_seek(file, d2(rng), COMP_SEEK_SET);
+                compio_seek(file, d2(rng), COMPIO_SEEK_SET);
             }
 
             auto bytes_written = compio_write(html_data + d1(rng), block_size, file);

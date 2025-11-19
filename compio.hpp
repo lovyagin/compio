@@ -172,7 +172,7 @@ public:
     /**
      * @brief Seek to position in file
      */
-    void seek(int64_t offset, uint8_t origin = COMP_SEEK_SET) {
+    void seek(int64_t offset, uint8_t origin = COMPIO_SEEK_SET) {
         if (!file_) throw Exception("File is not open");
         if (compio_seek(file_, offset, origin) != 0) {
             throw Exception("Seek failed");

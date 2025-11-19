@@ -116,7 +116,7 @@ int main() {
             }
 
             // Seek to third element
-            file.seek(2 * sizeof(ComplexData), COMP_SEEK_SET);
+            file.seek(2 * sizeof(ComplexData), COMPIO_SEEK_SET);
 
             ComplexData third;
             file >> third;
@@ -133,7 +133,7 @@ int main() {
             const char* text = "Hello, compio C++ wrapper!";
             file.write(text, strlen(text));
 
-            file.seek(0, COMP_SEEK_SET);
+            file.seek(0, COMPIO_SEEK_SET);
 
             char buffer[100] = {0};
             file.read(buffer, strlen(text));

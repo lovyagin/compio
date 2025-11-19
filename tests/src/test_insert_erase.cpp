@@ -55,7 +55,7 @@ protected:
             return;
 
         std::vector<unsigned char> actual(file_size);
-        compio_seek(file, 0, COMP_SEEK_SET);
+        compio_seek(file, 0, COMPIO_SEEK_SET);
         uint64_t bytes_read = compio_read(actual.data(), file_size, file);
         ASSERT_EQ(bytes_read, file_size) << "Failed to read entire file";
 
@@ -64,7 +64,7 @@ protected:
 
     // Helper function to write initial data
     void WriteInitialData(const std::vector<unsigned char> &data) {
-        compio_seek(file, 0, COMP_SEEK_SET);
+        compio_seek(file, 0, COMPIO_SEEK_SET);
         uint64_t bytes_written = compio_write(data.data(), data.size(), file);
         ASSERT_EQ(bytes_written, data.size()) << "Failed to write initial data";
     }
@@ -115,7 +115,7 @@ protected:
             return;
 
         std::vector<unsigned char> actual(file_size);
-        compio_seek(file, 0, COMP_SEEK_SET);
+        compio_seek(file, 0, COMPIO_SEEK_SET);
         uint64_t bytes_read = compio_read(actual.data(), file_size, file);
         ASSERT_EQ(bytes_read, file_size) << "Failed to read entire file";
 
@@ -124,7 +124,7 @@ protected:
 
     // Helper function to write initial data
     void WriteInitialData(const std::vector<unsigned char> &data) {
-        compio_seek(file, 0, COMP_SEEK_SET);
+        compio_seek(file, 0, COMPIO_SEEK_SET);
         uint64_t bytes_written = compio_write(data.data(), data.size(), file);
         ASSERT_EQ(bytes_written, data.size()) << "Failed to write initial data";
     }
@@ -135,7 +135,7 @@ TEST_P(InsertEraseTest, InsertAtBeginning) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 0, COMP_SEEK_SET);
+    compio_seek(file, 0, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -148,7 +148,7 @@ TEST_P(InsertEraseTest, InsertAtMiddle) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 2, COMP_SEEK_SET);
+    compio_seek(file, 2, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -161,7 +161,7 @@ TEST_P(InsertEraseTest, InsertAtEnd) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 3, COMP_SEEK_SET); // Seek to end
+    compio_seek(file, 3, COMPIO_SEEK_SET); // Seek to end
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -173,7 +173,7 @@ TEST_P(InsertEraseTest, InsertAtEnd) {
 TEST_P(InsertEraseTest, InsertIntoEmptyFile) {
     // File is already empty
 
-    compio_seek(file, 0, COMP_SEEK_SET);
+    compio_seek(file, 0, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -186,7 +186,7 @@ TEST_P(InsertEraseTest, InsertBeyondFileEnd) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 7, COMP_SEEK_SET); // Seek to position 7 (4 bytes beyond end)
+    compio_seek(file, 7, COMPIO_SEEK_SET); // Seek to position 7 (4 bytes beyond end)
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -200,7 +200,7 @@ TEST_P(InsertEraseTest, EraseFromBeginning) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 0, COMP_SEEK_SET);
+    compio_seek(file, 0, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(2, file);
 
     ASSERT_EQ(erased, 2);
@@ -212,7 +212,7 @@ TEST_P(InsertEraseTest, EraseFromMiddle) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(2, file);
 
     ASSERT_EQ(erased, 2);
@@ -224,7 +224,7 @@ TEST_P(InsertEraseTest, EraseFromEnd) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 3, COMP_SEEK_SET);
+    compio_seek(file, 3, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(2, file);
 
     ASSERT_EQ(erased, 2);
@@ -236,7 +236,7 @@ TEST_P(InsertEraseTest, EraseEntireFile) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 0, COMP_SEEK_SET);
+    compio_seek(file, 0, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(5, file);
 
     ASSERT_EQ(erased, 5);
@@ -249,7 +249,7 @@ TEST_P(InsertEraseTest, ZeroSizeInsert) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     uint64_t inserted = compio_insert(nullptr, 0, file);
 
     ASSERT_EQ(inserted, 0);
@@ -261,7 +261,7 @@ TEST_P(InsertEraseTest, ZeroSizeErase) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(0, file);
 
     ASSERT_EQ(erased, 0);
@@ -273,7 +273,7 @@ TEST_P(InsertEraseTest, SingleByteInsert) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     unsigned char single_byte = 9;
     uint64_t inserted = compio_insert(&single_byte, 1, file);
 
@@ -286,7 +286,7 @@ TEST_P(InsertEraseTest, SingleByteErase) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(1, file);
 
     ASSERT_EQ(erased, 1);
@@ -298,7 +298,7 @@ TEST_P(InsertEraseTest, EraseBeyondFileSize) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 2, COMP_SEEK_SET);
+    compio_seek(file, 2, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(5, file); // Try to erase 5 bytes from position 2
 
     ASSERT_EQ(erased, 1); // Should only erase 1 byte (position 2)
@@ -312,13 +312,13 @@ TEST_P(InsertEraseTest, InsertThenErase) {
     WriteInitialData(initial);
 
     // Insert data
-    compio_seek(file, 2, COMP_SEEK_SET);
+    compio_seek(file, 2, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
     ASSERT_EQ(inserted, 2);
 
     // Erase the inserted data
-    compio_seek(file, 2, COMP_SEEK_SET);
+    compio_seek(file, 2, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(2, file);
     ASSERT_EQ(erased, 2);
 
@@ -332,12 +332,12 @@ TEST_P(InsertEraseTest, EraseThenInsert) {
     WriteInitialData(initial);
 
     // Erase some data
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(2, file);
     ASSERT_EQ(erased, 2);
 
     // Insert new data
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
     ASSERT_EQ(inserted, 2);
@@ -351,13 +351,13 @@ TEST_P(InsertEraseTest, MultipleConsecutiveInserts) {
     WriteInitialData(initial);
 
     // First insert
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data1 = {9};
     uint64_t inserted1 = compio_insert(insert_data1.data(), insert_data1.size(), file);
     ASSERT_EQ(inserted1, 1);
 
     // Second insert at same position
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data2 = {8};
     uint64_t inserted2 = compio_insert(insert_data2.data(), insert_data2.size(), file);
     ASSERT_EQ(inserted2, 1);
@@ -371,7 +371,7 @@ TEST_P(InsertEraseTest, MultipleConsecutiveErases) {
     WriteInitialData(initial);
 
     // First erase
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     uint64_t erased1 = compio_erase(1, file);
     ASSERT_EQ(erased1, 1);
 
@@ -388,7 +388,7 @@ TEST_P(InsertEraseTest, CursorPositionAfterInsert) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8};
     compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -401,7 +401,7 @@ TEST_P(InsertEraseTest, CursorPositionAfterErase) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
-    compio_seek(file, 1, COMP_SEEK_SET);
+    compio_seek(file, 1, COMPIO_SEEK_SET);
     compio_erase(2, file);
 
     // Cursor should stay at same position
@@ -421,7 +421,7 @@ TEST_P(InsertEraseTest, MultiBlockFileInsert) {
     compio_write(data3.data(), data3.size(), file);
 
     // Insert in the middle (should span blocks)
-    compio_seek(file, 3, COMP_SEEK_SET);
+    compio_seek(file, 3, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data = {9, 8, 7};
     uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
 
@@ -441,7 +441,7 @@ TEST_P(InsertEraseTest, MultiBlockFileErase) {
     compio_write(data3.data(), data3.size(), file);
 
     // Erase across block boundaries
-    compio_seek(file, 2, COMP_SEEK_SET);
+    compio_seek(file, 2, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(3, file);
 
     ASSERT_EQ(erased, 3);
@@ -468,7 +468,7 @@ TEST_P(InsertEraseParamTest, ParametrizedInsertTest) {
 
     // Perform insert
     uint64_t pos = std::min(insert_pos, initial_size);
-    compio_seek(file, pos, COMP_SEEK_SET);
+    compio_seek(file, pos, COMPIO_SEEK_SET);
     uint64_t inserted = compio_insert(insert_data.data(), insert_size, file);
 
     ASSERT_EQ(inserted, insert_size);
@@ -495,7 +495,7 @@ TEST_P(InsertEraseParamTest, ParametrizedEraseTest) {
     // Perform erase
     uint64_t pos = std::min(erase_pos, initial_size);
     uint64_t actual_erase_size = std::min(erase_size, initial_size - pos);
-    compio_seek(file, pos, COMP_SEEK_SET);
+    compio_seek(file, pos, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(erase_size, file);
 
     ASSERT_EQ(erased, actual_erase_size);
@@ -599,7 +599,7 @@ TEST_P(InsertEraseBlockConfigTest, InsertAcrossBlockBoundaries) {
     compio_write(initial_data.data(), initial_data.size(), file);
 
     // Insert at block boundary
-    compio_seek(file, block_size, COMP_SEEK_SET);
+    compio_seek(file, block_size, COMPIO_SEEK_SET);
     std::vector<unsigned char> insert_data(block_size / 2);
     for (int i = 0; i < block_size / 2; ++i) {
         insert_data[i] = static_cast<unsigned char>((i + 200) % 256);
@@ -616,7 +616,7 @@ TEST_P(InsertEraseBlockConfigTest, InsertAcrossBlockBoundaries) {
 
     uint64_t file_size = compio_get_size(file);
     std::vector<unsigned char> actual(file_size);
-    compio_seek(file, 0, COMP_SEEK_SET);
+    compio_seek(file, 0, COMPIO_SEEK_SET);
     compio_read(actual.data(), file_size, file);
 
     ASSERT_EQ(actual, expected);

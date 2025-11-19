@@ -103,7 +103,7 @@ static void BM_compio_RandomWrite(benchmark::State &state) {
 
         bool failed = false;
         for (std::size_t i = 0; i < n_blocks; ++i) {
-            if (compio_seek(file, d2(rng), COMP_SEEK_SET) != 0) {
+            if (compio_seek(file, d2(rng), COMPIO_SEEK_SET) != 0) {
                 compio_close_file(file);
                 compio_close_archive(archive);
                 state.SkipWithError("compio_seek failed");

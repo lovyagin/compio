@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
             std::size_t size = d_size(rng);
             std::uniform_int_distribution<std::size_t> d_start(0, sample_size - size);
             std::size_t start = d_start(rng);
-            compio_seek(file, d_start(rng), COMP_SEEK_SET);
+            compio_seek(file, d_start(rng), COMPIO_SEEK_SET);
 
             auto bytes_written = compio_write(sample_data.data() + start, size, file);
             if (bytes_written != size) {

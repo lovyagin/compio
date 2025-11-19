@@ -344,13 +344,13 @@ int compio_close_archive(compio_archive *archive) {
 int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     int64_t new_cursor = file->cursor;
     switch (origin) {
-    case COMP_SEEK_SET:
+    case COMPIO_SEEK_SET:
         new_cursor = offset;
         break;
-    case COMP_SEEK_CUR:
+    case COMPIO_SEEK_CUR:
         new_cursor += offset;
         break;
-    case COMP_SEEK_END:
+    case COMPIO_SEEK_END:
         new_cursor = file->size + offset;
         break;
     }
@@ -381,8 +381,7 @@ static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
     DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash);
-    auto file_range =
-        index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
+    auto file_range = index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
     if (!allow_empty) {
         assert(!file_range.empty());
     }

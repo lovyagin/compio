@@ -59,7 +59,7 @@ compio_write(data, strlen(data) + 1, file);
 
 // Read data
 char buffer[256];
-compio_seek(file, 0, COMP_SEEK_SET);
+compio_seek(file, 0, COMPIO_SEEK_SET);
 compio_read(buffer, sizeof(buffer), file);
 
 // Close file and archive

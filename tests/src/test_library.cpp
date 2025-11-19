@@ -112,17 +112,17 @@ TEST_F(OpenedFileTest, BasicWriteRead) {
 
     std::vector<unsigned char> out_data(size, '?');
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
     ASSERT_EQ(compio_write(in_data.data(), size, file), size);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_CUR), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_CUR), 0);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), 0);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
     ASSERT_EQ(compio_read(out_data.data(), size, file), size);
 
     for (std::size_t i = 0; i < size; ++i) {
@@ -154,10 +154,10 @@ TEST_P(WriteReadNBytesTest, RandomWriteRead) {
     ASSERT_EQ(compio_write(in_data.data(), size, file), size);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_END), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), 0);
     ASSERT_EQ(compio_tell(file), size);
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
     ASSERT_EQ(compio_tell(file), 0);
     ASSERT_EQ(compio_read(out_data.data(), size, file), size);
     ASSERT_EQ(compio_tell(file), size);
@@ -284,7 +284,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
             switch (d_op(rng)) {
             case 0: {
                 cursor = d_pos(rng);
-                ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+                ASSERT_EQ(compio_seek(file, cursor, COMPIO_SEEK_SET), 0);
                 break;
             }
             case 1: {
@@ -425,7 +425,7 @@ TEST_P(CustomUsageTest, CustomUsage) {
         // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
         cursor = operation.pos;
         // fprintf(stderr, "compio_seek(%d)\n", cursor);
-        ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
+        ASSERT_EQ(compio_seek(file, cursor, COMPIO_SEEK_SET), 0);
 
         switch (operation.type) {
         case OperationType::READ: {
@@ -505,7 +505,7 @@ TEST_P(ManySmallWritesOneBigReadTest, ManySmallWritesOneBigRead) {
             << "Write failed at iteration " << i;
     }
 
-    ASSERT_EQ(compio_seek(file, 0, COMP_SEEK_SET), 0);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), 0);
 
     std::vector<unsigned char> actual_data(total_size);
     ASSERT_EQ(compio_read(actual_data.data(), total_size, file), total_size) << "Big read failed";
