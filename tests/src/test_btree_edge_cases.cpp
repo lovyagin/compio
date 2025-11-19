@@ -279,7 +279,7 @@ TEST_F(BTreeEdgeCasesTest, RapidInsertDelete) {
     std::vector<tree_key> inserted_keys;
 
     for (int i = 0; i < 100; ++i) {
-        uint64_t pos = i * 100;
+        uint64_t pos = i * 200;
         tree_key key = make_key(1, pos);
         tree_val val = make_val(1000 + i, 50 + i);
 

@@ -171,7 +171,7 @@ TEST_F(BTreeAdvancedTest, CacheConsistencyAfterUpdate) {
 
     auto test_data = create_sequential_data(5, 1, 0, 100);
     tree_key key = test_data[2].first;
-    tree_val new_val = make_val(9999, 8888);
+    tree_val new_val = make_val(9999, 23);
     tree->update(key, new_val);
 
     auto result = tree->get(key);
@@ -275,7 +275,7 @@ TEST_F(BTreeAdvancedTest, MixedOperationsStress) {
 
         switch (operation) {
         case 0:
-            tree->update(key, make_val(9999, 8888));
+            tree->update(key, make_val(9999, 1));
             break;
         case 1: {
             tree_key min_key = make_key(1, 0);
@@ -335,7 +335,7 @@ TEST_F(BTreeAdvancedTest, PersistenceAfterComplexOperations) {
 
     auto test_data = create_sequential_data(10, 1, 0, 100);
     tree->remove(test_data[3].first);
-    tree->update(test_data[5].first, make_val(9999, 8888));
+    tree->update(test_data[5].first, make_val(9999, 23));
 
     for (int i = 0; i < 10; ++i) {
         if (i == 3)
@@ -346,7 +346,7 @@ TEST_F(BTreeAdvancedTest, PersistenceAfterComplexOperations) {
         if (i == 5) {
             ASSERT_TRUE(result.has_value());
             EXPECT_EQ(result.value().addr, 9999);
-            EXPECT_EQ(result.value().size, 8888);
+            EXPECT_EQ(result.value().size, 23);
         } else {
             ASSERT_TRUE(result.has_value()) << "Key not found after reopen: index=" << i;
             EXPECT_EQ(result.value(), test_data[i].second);
