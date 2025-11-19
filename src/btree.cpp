@@ -64,7 +64,7 @@ void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_va
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
     if (RO(node)->is_leaf) {
-        if (RO(node)->keys[idx] == key) {
+        if (idx < RO(node)->num_keys && RO(node)->keys[idx] == key) {
             WARNING_PRINT("warning: trying to insert already existing key\n");
             return;
         }
