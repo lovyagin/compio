@@ -131,6 +131,15 @@ void index_node::validate() const {
             assert(key_addition != DEBUG_VAL);
         }
     }
+    for (std::size_t i = 1; i < keys.size(); i++) {
+        assert(keys[i - 1] < keys[i]);
+    }
+    for (std::size_t i = 1; i < keys.size(); i++) {
+        if (keys[i - 1].hash == keys[i].hash) {
+            uint64_t prev_end = keys[i - 1].pos + values[i - 1].size;
+            assert(prev_end <= keys[i].pos);
+        }
+    }
 #endif
 }
 
