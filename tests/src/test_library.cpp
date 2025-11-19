@@ -262,19 +262,18 @@ TEST_P(RandomUsageTest, RandomUsage) {
 
     generate_tmp_fn(fn, sizeof(fn));
 
-    auto [file_size, n_operations, n_repetitions] = GetParam();
+    auto [max_file_size, n_operations, n_repetitions] = GetParam();
 
     std::minstd_rand rng;
     std::uniform_int_distribution<int> d_op(0, 5);
-    std::uniform_int_distribution<int> d_pos(0, file_size - 2);
+    std::uniform_int_distribution<int> d_pos(0, max_file_size - 2);
 
     for (int k = 0; k < n_repetitions; ++k) {
         rng.seed(k);
 
-        std::vector<unsigned char> file_data(file_size, 0);
-        std::vector<unsigned char> buffer(file_size);
+        std::vector<unsigned char> file_data;
+        std::vector<unsigned char> buffer(max_file_size);
         int cursor = 0;
-        int current_fsize = 0;
 
         archive = compio_open_archive(fn, "w+", &config);
         ASSERT_NE(archive, nullptr);
@@ -282,76 +281,90 @@ TEST_P(RandomUsageTest, RandomUsage) {
         ASSERT_NE(file, nullptr);
 
         for (int i = 0; i < n_operations; ++i) {
-            // fprintf(stderr, "cursor=%d, current_fsize=%d\n", cursor, current_fsize);
             switch (d_op(rng)) {
             case 0: {
                 cursor = d_pos(rng);
-                // fprintf(stderr, "compio_seek(%d)\n", cursor);
                 ASSERT_EQ(compio_seek(file, cursor, COMP_SEEK_SET), 0);
                 break;
             }
             case 1: {
-                // fprintf(stderr, "compio_tell() = %d\n", cursor);
                 ASSERT_EQ(compio_tell(file), cursor);
                 break;
             }
             case 2: {
-                if (cursor < current_fsize) {
-                    int max_size = current_fsize - cursor;
-                    std::uniform_int_distribution<int> d_size(1, max_size);
+                if (cursor < file_data.size()) {
+                    int max_size = file_data.size() - cursor;
+                    std::uniform_int_distribution<int> d_size(1, 2 * max_size);
                     int size = d_size(rng);
-                    // fprintf(stderr, "compio_read(%d, %d)\n", cursor, size);
-                    ASSERT_EQ(compio_read(buffer.data(), size, file), size);
-                    for (int i = 0; i < size; ++i) {
+                    int actual_read_size = std::min(size, max_size);
+
+                    ASSERT_EQ(compio_read(buffer.data(), size, file), actual_read_size);
+                    for (int i = 0; i < actual_read_size; ++i) {
                         ASSERT_EQ(buffer[i], file_data[cursor + i]);
                     }
-                    cursor += size;
+                    cursor += actual_read_size;
                 }
                 break;
             }
             case 3: {
-                if (cursor < file_size) {
+                if (cursor < max_file_size) {
                     std::uniform_int_distribution<int> d_size(
-                        1, std::min(static_cast<uint64_t>(file_size - cursor), sizeof(html_data)));
+                        1,
+                        std::min(static_cast<uint64_t>(max_file_size - cursor), sizeof(html_data)));
                     int size = d_size(rng);
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
-                    // fprintf(stderr, "compio_write(%d, %d)\n", start, size);
+
                     ASSERT_EQ(compio_write(html_data + start, size, file), size);
+                    if (cursor + size > file_data.size()) {
+                        file_data.resize(cursor + size, 0);
+                    }
                     std::copy_n(html_data + start, size, file_data.data() + cursor);
                     cursor += size;
-                    current_fsize = std::max(current_fsize, cursor);
                 }
                 break;
             }
             case 4: {
-                if (current_fsize < file_size) {
+                if (file_data.size() < max_file_size) {
                     std::uniform_int_distribution<int> d_size(
-                        1, std::min(static_cast<uint64_t>(file_size - current_fsize), sizeof(html_data)));
+                        1, std::min(max_file_size - std::max(file_data.size(),
+                                                             static_cast<std::size_t>(cursor)),
+                                    sizeof(html_data)));
                     int size = d_size(rng);
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
-                    // fprintf(stderr, "compio_insert(%d, %d)\n", start, size);
+
+                    if (cursor > file_data.size()) {
+                        file_data.resize(cursor, 0);
+                    }
                     ASSERT_EQ(compio_insert(html_data + start, size, file), size);
-                    file_data.insert(file_data.begin() + cursor, html_data + start, html_data + start + size);
+                    file_data.insert(file_data.begin() + cursor, html_data + start,
+                                     html_data + start + size);
                     cursor += size;
-                    current_fsize += size;
                 }
                 break;
             }
             case 5: {
-                if (cursor < current_fsize) {
-                    int max_size = current_fsize - cursor;
-                    std::uniform_int_distribution<int> d_size(1, max_size);
+                if (cursor < max_file_size) {
+                    int max_size = std::max(0, static_cast<int>(file_data.size()) - cursor);
+                    std::uniform_int_distribution<int> d_size(1, max_file_size - cursor);
                     int size = d_size(rng);
-                    // fprintf(stderr, "compio_erase(%d)\n", size);
-                    ASSERT_EQ(compio_erase(size, file), size);
-                    file_data.erase(file_data.begin() + cursor, file_data.begin() + cursor + size);
-                    current_fsize -= size;
+                    int actual_erase_size = std::min(size, max_size);
+
+                    ASSERT_EQ(compio_erase(size, file), actual_erase_size)
+                        << file_data.size() << " " << cursor << " " << max_size << " " << size
+                        << " " << actual_erase_size;
+                    if (cursor < file_data.size()) {
+                        file_data.erase(file_data.begin() + cursor,
+                                        file_data.begin() + cursor + actual_erase_size);
+                    }
                 }
                 break;
             }
             }
+
+            ASSERT_EQ(file_data.size(), compio_get_size(file));
+            ASSERT_LE(file_data.size(), max_file_size);
         }
 
         ASSERT_EQ(compio_close_file(file), 0);
