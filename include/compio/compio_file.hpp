@@ -13,39 +13,25 @@ struct btree;
 
 } // namespace compio
 
-/**
- * @brief Opened archive
- *
- */
 struct compio_archive {
-    FILE *file;                                 /**< Opened stdio FILE */
-    const compio_config config;                /**< Compio configuration */
-    smart_infile_object<compio::header> header; /**< Read file header */
+    FILE *file;
+    const compio_config config;
+    smart_infile_object<compio::header> header;
     compio::btree *index;
     compio::storage_block_reader *block_reader;
-
-    /**
-     * @brief Parsed open mode (1 - read, 2 - write, 4 - edit, don't clear
-     * contents)
-     */
+    compio::block_allocator *allocator;
     uint8_t mode_b;
 
     compio_archive(FILE *file, uint8_t mode_b, const compio_config *config);
-
-    compio::block_allocator *allocator;
-
     bool is_readonly() const;
 };
 
-/**
- * @brief Opened file inside of an archive
- */
 struct compio_file {
-    compio_archive *archive;          /**< Opened archive */
-    char name[COMPIO_FNAME_MAX_SIZE]; /**< Internal filename */
-    uint64_t cursor;                  /**< File cursor */
-    uint64_t size;                    /**< File size */
-    uint64_t hash_tail;               /**< Last 8 bytes of hashed filename */
+    compio_archive *archive;
+    char name[COMPIO_FNAME_MAX_SIZE];
+    uint64_t cursor;
+    uint64_t size;
+    uint64_t hash;
 };
 
 #endif // COMPIO_FILE_HEADER_

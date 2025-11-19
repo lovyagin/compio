@@ -230,7 +230,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     file->archive = archive;
     strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
 
-    file->hash_tail = fnv1a(name);
+    file->hash = fnv1a(name);
 
     return file;
 }
@@ -251,11 +251,11 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 
     // Get all blocks belonging to this file
     const uint64_t file_size = file_table_item->size;
-    const uint64_t hash_tail = fnv1a(name);
+    const uint64_t hash = fnv1a(name);
 
     if (file_size > 0) {
-        tree_key key_min = {hash_tail, 0};
-        tree_key key_max = {hash_tail, UINT64_MAX}; // Get all blocks for this file
+        tree_key key_min = {hash, 0};
+        tree_key key_max = {hash, UINT64_MAX}; // Get all blocks for this file
         auto all_blocks = archive->index->get_range(key_min, key_max);
 
         // Save current file position
@@ -380,15 +380,15 @@ static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree
 
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
-    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash_tail);
+    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash);
     auto file_range =
-        index->get_range(tree_key{file->hash_tail, 0}, tree_key{file->hash_tail, UINT64_MAX});
+        index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
     if (!allow_empty) {
         assert(!file_range.empty());
     }
     validate_no_gaps_in_range(file_range);
     for (const auto &[key, val] : file_range) {
-        assert(key.hash == file->hash_tail);
+        assert(key.hash == file->hash);
     }
     if (!file_range.empty()) {
         // check that blocks cover the whole file
@@ -429,8 +429,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     uint64_t ptr_bytes_written = 0;
 
     if (write_start < file->size) {
-        const tree_key key_min = {file->hash_tail, write_start};
-        const tree_key key_max = {file->hash_tail, write_end};
+        const tree_key key_min = {file->hash, write_start};
+        const tree_key key_max = {file->hash, write_end};
         auto range = archive->index->get_range(key_min, key_max);
         assert(!range.empty());
         assert(range.front().first.pos <= write_start);
@@ -500,7 +500,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
             const uint64_t dec_offset = std::min(n_zeros, current_block_size);
             const uint64_t copy_size = current_block_size - dec_offset;
 
-            const tree_key key{file->hash_tail, cursor};
+            const tree_key key{file->hash, cursor};
             DEBUG_PRINT("[CW]creating block ({%lu,%lu}-{?,%lu})\n", key.hash, key.pos,
                         current_block_size);
             const auto b = block_reader->create_block(current_block_size, key);
@@ -550,8 +550,8 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     const uint64_t read_start = file->cursor;
     const uint64_t read_end = read_start + size;
 
-    const tree_key key_min = {file->hash_tail, read_start};
-    const tree_key key_max = {file->hash_tail, read_end};
+    const tree_key key_min = {file->hash, read_start};
+    const tree_key key_max = {file->hash, read_end};
     auto range = archive->index->get_range(key_min, key_max);
     assert(!range.empty());
 
@@ -631,7 +631,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
-    const tree_key cursor_key = {file->hash_tail, file->cursor};
+    const tree_key cursor_key = {file->hash, file->cursor};
     const auto key_val = archive->index->get_block(cursor_key);
 
     // TODO: merge with existing block if size is small
@@ -658,7 +658,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
 
     // shift blocks after cursor
-    const tree_key file_end_key{file->hash_tail, UINT64_MAX};
+    const tree_key file_end_key{file->hash, UINT64_MAX};
     archive->index->add_to_range(size, cursor_key, file_end_key);
     block_reader->add_to_range(size, cursor_key, file_end_key);
 
@@ -679,7 +679,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         assert(current_block_size <= block_size__maximum);
         assert(current_block_size <= total_bytes_left);
 
-        const tree_key key{file->hash_tail, file->cursor};
+        const tree_key key{file->hash, file->cursor};
         const auto b = block_reader->create_block(current_block_size, key);
         std::copy_n(p_ptr, current_block_size, b->data());
 
@@ -727,8 +727,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     const uint64_t erase_start = file->cursor;
     const uint64_t erase_end = erase_start + size;
 
-    const tree_key key_min = {file->hash_tail, erase_start};
-    const tree_key key_max = {file->hash_tail, erase_end};
+    const tree_key key_min = {file->hash, erase_start};
+    const tree_key key_max = {file->hash, erase_end};
     auto range = archive->index->get_range(key_min, key_max);
     assert(!range.empty());
     assert(range.front().first.pos <= erase_start);
@@ -803,7 +803,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     }
 
     // shift blocks after cursor to the left
-    const tree_key file_end_key{file->hash_tail, UINT64_MAX};
+    const tree_key file_end_key{file->hash, UINT64_MAX};
     const int64_t shift = -static_cast<int64_t>(bytes_erased);
     archive->index->add_to_range(shift, key_max, file_end_key);
     block_reader->add_to_range(shift, key_max, file_end_key);
