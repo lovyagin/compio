@@ -111,7 +111,8 @@ struct index_node : public infile_object {
 /**
  * @brief Size of index node metadata (without arrays)
  */
-#define INDEX_NODE_METASIZE (sizeof(index_node::is_leaf) + sizeof(index_node::num_keys))
+#define INDEX_NODE_METASIZE                                                                        \
+    (sizeof(uint8_t) /* signature */ + sizeof(index_node::is_leaf) + sizeof(index_node::num_keys))
 /**
  * @brief Whole size of index node
  */
@@ -149,8 +150,8 @@ struct storage_block : public infile_object {
  * @brief Size of storage block metadata (without data)
  */
 #define STORAGE_BLOCK_METASIZE                                                                     \
-    (sizeof(storage_block::is_compressed) + sizeof(storage_block::size) +                          \
-     sizeof(storage_block::original_size))
+    (sizeof(uint8_t) /* signature */ + sizeof(storage_block::is_compressed) +                      \
+     sizeof(storage_block::size) + sizeof(storage_block::original_size))
 
 } // namespace compio
 

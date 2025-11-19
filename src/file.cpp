@@ -7,14 +7,18 @@
 #include <stdexcept>
 
 #include "compio/debug_print.hpp"
+#include "compio.h"
 
 using namespace compio;
 
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
+static const uint8_t index_node_signature = 67;
+static const uint8_t storage_block_signature = 171;
+
 header::header()
-    : magic_number(0),
+    : magic_number(27110654),
       index_root(0),
       file_size(sizeof(header)),
       ftable(),
@@ -27,6 +31,10 @@ void header::read_from(FILE *file, uint64_t addr) {
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(magic_number, file);
+    if (magic_number != COMPIO_MAGIC_NUMBER) {
+        WARNING_PRINT("warning: header magic_number does not match\n");
+        assert(false);
+    }
     lendian_fread_member(index_root, file);
     lendian_fread_member(file_size, file);
     lendian_fread_member(allocator_state_offset, file);
@@ -60,6 +68,12 @@ void index_node::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][index_node]addr=%lu\n", addr);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
+    uint8_t signature;
+    lendian_fread(&signature, sizeof(signature), 1, file);
+    if (signature != index_node_signature) {
+        WARNING_PRINT("warning: index_node signature does not match\n");
+        assert(false);
+    }
     lendian_fread_member(is_leaf, file);
     lendian_fread_member(num_keys, file);
     keys.resize(num_keys);
@@ -89,6 +103,7 @@ void index_node::write_to(FILE *file, uint64_t addr) const {
     validate();
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
+    lendian_fwrite(&index_node_signature, sizeof(index_node_signature), 1, file);
     lendian_fwrite_member(is_leaf, file);
     const uint32_t actual_num_keys = keys.size();
     assert(num_keys == actual_num_keys);
@@ -148,6 +163,12 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     assert(addr != 0);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
+    uint8_t signature;
+    lendian_fread(&signature, sizeof(signature), 1, file);
+    if (signature != storage_block_signature) {
+        WARNING_PRINT("warning: storage_block signature does not match\n");
+        assert(false);
+    }
     lendian_fread_member(is_compressed, file);
     lendian_fread_member(size, file);
     assert(size != 0);
@@ -164,6 +185,7 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
     assert(is_compressed || size == original_size);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
+    lendian_fwrite(&storage_block_signature, sizeof(storage_block_signature), 1, file);
     lendian_fwrite_member(is_compressed, file);
     lendian_fwrite_member(size, file);
     lendian_fwrite_member(original_size, file);

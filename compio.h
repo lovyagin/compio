@@ -28,6 +28,8 @@
 extern "C" {
 #endif
 
+#define COMPIO_MAGIC_NUMBER 27110654
+
 /**
  * @brief Compression algorithm types
  */
