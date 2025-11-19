@@ -367,6 +367,28 @@ uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
 uint64_t compio_get_size(compio_file *file) { return file->size; }
 
+static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
+#ifndef NDEBUG
+    auto file_range =
+        index->get_range(tree_key{file->hash_tail, 0}, tree_key{file->hash_tail, UINT64_MAX});
+    if (!allow_empty) {
+        assert(!file_range.empty());
+    }
+    for (std::size_t i = 1; i < file_range.size(); ++i) {
+        const auto &[key_prev, val_prev] = file_range[i - 1];
+        const auto &[key, val] = file_range[i];
+        assert(key.pos == key_prev.pos + val_prev.size);
+    }
+    for (const auto &[key, val] : file_range) {
+        assert(key.hash == file->hash_tail);
+    }
+    if (!file_range.empty()) {
+        assert(file_range.front().first.pos == 0);
+        assert(file_range.back().first.pos + file_range.back().second.size == file->size);
+    }
+#endif
+}
+
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
 
@@ -494,6 +516,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         }
     }
 
+    validate_tree(archive->index, file);
+
     assert(ptr_bytes_written == size);
     return size;
 }
@@ -566,6 +590,8 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         file->cursor += copy_size;
     }
     block_reader->disable_temporary_index();
+
+    validate_tree(archive->index, file);
 
     return ptr_bytes_read;
 }
@@ -654,6 +680,8 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         file_table_item->size += current_block_size;
         total_bytes_left -= current_block_size;
     }
+
+    validate_tree(archive->index, file);
 
     return size;
 }
@@ -767,6 +795,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     const int64_t shift = -static_cast<int64_t>(bytes_erased);
     archive->index->add_to_range(shift, key_max, file_end_key);
     block_reader->add_to_range(shift, key_max, file_end_key);
+
+    validate_tree(archive->index, file, true);
 
     return bytes_erased;
 }
