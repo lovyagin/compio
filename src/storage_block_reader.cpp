@@ -127,12 +127,6 @@ uint8_t *block::data() {
 
 bool block::is_valid() const { return _is_valid; }
 
-uint64_t block::size() const { return _size; }
-
-uint64_t block::addr() const { return _addr; }
-
-uint64_t block::c_size() const { return _c_size; }
-
 void block::shrink(uint64_t new_size) {
     assert(new_size < _size);
     _is_modified = true;
@@ -147,8 +141,6 @@ void block::shrink(uint64_t new_size) {
 
 void block::remove() { _is_removed = true; }
 
-const tree_key &block::key() const { return _key; }
-
 void block::shift_key(int64_t addition) {
     assert(addition != 0);
     _is_modified = true;
@@ -162,6 +154,14 @@ void block::set_key(const tree_key &new_key) {
         _key = new_key;
     }
 }
+
+const tree_key &block::key() const { return _key; }
+
+uint64_t block::size() const { return _size; }
+
+uint64_t block::addr() const { return _addr; }
+
+uint64_t block::c_size() const { return _c_size; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
