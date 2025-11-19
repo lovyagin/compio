@@ -532,6 +532,7 @@ void btree::free_node(const shared_node &node) {
 shared_node btree::create_node() { return reader.create_node(allocate_node()); }
 
 shared_node btree::read_node(uint64_t addr) {
+    DEBUG_PRINT("[BTREE][read_node]: addr=%lu\n", addr);
     auto node = reader.read_node(addr);
     RO(node)->validate();
     return node;

@@ -152,6 +152,13 @@ void index_node::validate() const {
     for (std::size_t i = 1; i < keys.size(); i++) {
         if (keys[i - 1].hash == keys[i].hash) {
             uint64_t prev_end = keys[i - 1].pos + values[i - 1].size;
+            if (prev_end > keys[i].pos) {
+                DEBUG_PRINT("[NODE_VALIDATE]: node state:\n");
+                for (std::size_t j = 0; j < num_keys; ++j) {
+                    DEBUG_PRINT("\t{%lu,%lu} -> {%lu,%lu}\n", keys[j].hash, keys[j].pos,
+                                values[j].addr, values[j].size);
+                }
+            }
             assert(prev_end <= keys[i].pos);
         }
     }

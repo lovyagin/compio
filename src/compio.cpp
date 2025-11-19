@@ -16,7 +16,11 @@ using namespace compio;
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_zlib_compressor(&result->compressor);
+#ifdef NDEBUG
     result->fill_holes_with_zeros = false;
+#else
+    result->fill_holes_with_zeros = true;
+#endif
     result->block_size = 1 << 12;
     result->block_size__minimum = 1 << 9;
     result->block_size__maximum = 1 << 14;
@@ -369,6 +373,7 @@ uint64_t compio_get_size(compio_file *file) { return file->size; }
 
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
+    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash_tail);
     auto file_range =
         index->get_range(tree_key{file->hash_tail, 0}, tree_key{file->hash_tail, UINT64_MAX});
     if (!allow_empty) {
@@ -583,6 +588,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         const uint64_t dec_offset = (read_start > block_start) ? (read_start - block_start) : 0;
         DEBUG_PRINT("[CR]copying data of size %ld from block (offset=%ld)\n", copy_size,
                     dec_offset);
+        assert(dec_offset + copy_size <= b->size());
 
         std::copy_n(b->data() + dec_offset, copy_size, p_ptr);
         p_ptr += copy_size;
