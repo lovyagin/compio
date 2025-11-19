@@ -161,7 +161,7 @@ void block::shrink(uint64_t new_size) {
 
 void block::remove() { is_removed = true; }
 
-const tree_key &block::get_key() { return key; }
+const tree_key &block::get_key() const { return key; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)

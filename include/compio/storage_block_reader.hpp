@@ -51,7 +51,7 @@ public:
     uint64_t size() const;
     void shrink(uint64_t new_size);
     void remove();
-    const tree_key &get_key();
+    const tree_key &get_key() const;
 };
 
 /**

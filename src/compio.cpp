@@ -108,6 +108,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto end;
     }
 
+    // TODO: copy config, so that potential user changes won't break anything
+
     uint8_t mode_b;
     mode_b = parse_mode(mode);
     if (!mode_b) {
@@ -430,6 +432,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                 return ptr_bytes_written;
             }
             assert(b->size() == val.size);
+            assert(b->get_key() == key);
 
             const uint64_t block_start = key.pos;
             const uint64_t block_end = key.pos + b->size();
@@ -557,6 +560,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             return ptr_bytes_read;
         }
         assert(b->size() == val.size);
+        assert(b->get_key() == key);
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
@@ -619,6 +623,8 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
             errno = EIO;
             return 0;
         }
+        assert(left_b->size() == left_val.size);
+        assert(left_b->get_key() == left_key);
 
         assert(left_key.pos < file->cursor);
         assert(left_key.pos + left_b->size() > file->cursor);
@@ -724,6 +730,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             return bytes_erased;
         }
         assert(b->size() == val.size);
+        assert(b->get_key() == key);
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
