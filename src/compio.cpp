@@ -473,6 +473,8 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         block_reader->disable_temporary_index();
     }
 
+    // TODO: write new data into last block if size is small
+
     if (ptr_bytes_written < size) {
         // append blocks to the end of the file
         uint64_t n_zeros = (file->cursor > file->size) ? (file->cursor - file->size) : 0;
@@ -631,6 +633,8 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     const tree_key cursor_key = {file->hash_tail, file->cursor};
     const auto key_val = archive->index->get_block(cursor_key);
 
+    // TODO: merge with existing block if size is small
+
     if (key_val.has_value()) {
         // split block into two
         const auto &[left_key, left_val] = key_val.value();
@@ -766,6 +770,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         const uint64_t right_size = block_end - block_erase_end;
         DEBUG_PRINT("[CE]---left_size=%lu, erase_size=%lu, right_size=%lu\n", left_size,
                     block_erase_size, right_size);
+
+        // TODO: merge with adjacent block if new size is small
 
         if (block_erase_size < b->size()) {
             // keep block in btree, but update key.pos and val.size
