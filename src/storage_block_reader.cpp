@@ -177,6 +177,8 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
     }
     DEBUG_PRINT("[SBR][read_block]: cache miss\n");
     if (context.is_temporary_index_enabled) {
+        // check in temporary index first, because if temporary index is enabled, that means that
+        // passed addr could be invalid, but ONLY if temporary index contains correct addr
         auto it = context.temporary_index.find(key);
         if (it != context.temporary_index.end()) {
             addr = it->second;
@@ -209,7 +211,8 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     cache.put(key, b);
 
     // adding element to btree, but without file address (we didn't allocate memory block yet)
-    // block::~block will update this element in btree with new address
+    // block::~block will update this element in btree with new address (or delete it if block will
+    // be removed, thought we don't remove newly created blocks anywhere)
     context.index->insert(key, {0, size});
     return b;
 }
@@ -263,6 +266,8 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
     b->remove();
     const auto &key = b->get_key();
     if (cache.exists(key)) {
+        // when cache_size=0, storage_block_reader returns blocks from read/create, but don't save
+        // them in cache, so we should check it
         cache.remove(key);
     }
     if (context.is_temporary_index_enabled) {

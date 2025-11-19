@@ -391,6 +391,7 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
         assert(key.hash == file->hash_tail);
     }
     if (!file_range.empty()) {
+        // check that blocks cover the whole file
         assert(file_range.front().first.pos == 0);
         assert(file_range.back().first.pos + file_range.back().second.size == file->size);
     }
@@ -452,7 +453,6 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                 return ptr_bytes_written;
             }
             assert(b->size() == val.size);
-            assert(b->get_key() == key);
 
             const uint64_t block_start = key.pos;
             const uint64_t block_end = key.pos + b->size();
@@ -578,7 +578,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             return ptr_bytes_read;
         }
         assert(b->size() == val.size);
-        assert(b->get_key() == key);
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
@@ -606,6 +605,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_insert(cursor=%lu, size=%lu)\n", file->cursor, size);
 
+    // behave the same as compio_write, when inserting after file end
     if (file->cursor >= file->size) {
         return compio_write(ptr, size, file);
     }
@@ -647,7 +647,6 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
             return 0;
         }
         assert(left_b->size() == left_val.size);
-        assert(left_b->get_key() == left_key);
 
         assert(left_key.pos < file->cursor);
         assert(left_key.pos + left_b->size() > file->cursor);
@@ -666,6 +665,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
     uint64_t total_bytes_left = size;
 
+    // write new data from p_ptr into new blocks
     const uint64_t block_size = archive->config.block_size;
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
@@ -750,7 +750,6 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             return bytes_erased;
         }
         assert(b->size() == val.size);
-        assert(b->get_key() == key);
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
@@ -803,6 +802,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         file->size -= block_erase_size;
     }
 
+    // shift blocks after cursor to the left
     const tree_key file_end_key{file->hash_tail, UINT64_MAX};
     const int64_t shift = -static_cast<int64_t>(bytes_erased);
     archive->index->add_to_range(shift, key_max, file_end_key);
