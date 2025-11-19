@@ -1,6 +1,6 @@
 /**
  * @file tree_types.hpp
- * @brief tree_key and tree_val types
+ * @brief Definition of tree_key and tree_val types, and operators for them
  *
  */
 
@@ -16,8 +16,8 @@ namespace compio {
  *
  */
 typedef struct {
-    uint64_t hash; /**< last 64 bits of hashed internal file name */
-    uint64_t pos;  /**< Position of block start in uncompressed file */
+    uint64_t hash; /**< Hashed internal file name */
+    uint64_t pos;  /**< Position of block start in an uncompressed file */
 } tree_key;
 
 /**
@@ -29,80 +29,38 @@ typedef struct {
     uint64_t size; /**< Original size of uncompressed block */
 } tree_val;
 
-/**
- * @brief Less-than comparison for tree keys
- * @param x First key
- * @param y Second key
- * @return True if x < y
- */
 inline bool operator<(const tree_key &x, const tree_key &y) {
     if (x.hash == y.hash)
         return x.pos < y.pos;
     return x.hash < y.hash;
 }
 
-/**
- * @brief Equality comparison for tree keys
- * @param x First key
- * @param y Second key
- * @return True if x == y
- */
 inline bool operator==(const tree_key &x, const tree_key &y) {
     return x.hash == y.hash && x.pos == y.pos;
 }
 
-/**
- * @brief Greater-than comparison for tree keys
- * @param x First key
- * @param y Second key
- * @return True if x > y
- */
 inline bool operator>(const tree_key &x, const tree_key &y) {
     if (x.hash == y.hash)
         return x.pos > y.pos;
     return x.hash > y.hash;
 }
 
-/**
- * @brief Less-than-or-equal comparison for tree keys
- * @param x First key
- * @param y Second key
- * @return True if x <= y
- */
 inline bool operator<=(const tree_key &x, const tree_key &y) {
     if (x.hash == y.hash)
         return x.pos <= y.pos;
     return x.hash <= y.hash;
 }
 
-/**
- * @brief Greater-than-or-equal comparison for tree keys
- * @param x First key
- * @param y Second key
- * @return True if x >= y
- */
 inline bool operator>=(const tree_key &x, const tree_key &y) {
     if (x.hash == y.hash)
         return x.pos >= y.pos;
     return x.hash >= y.hash;
 }
 
-/**
- * @brief Inequality comparison for tree keys
- * @param x First key
- * @param y Second key
- * @return True if x != y
- */
 inline bool operator!=(const tree_key &x, const tree_key &y) {
     return x.hash != y.hash || x.pos != y.pos;
 }
 
-/**
- * @brief Add offset to tree key position
- * @param x Original key
- * @param size Offset to add
- * @return New key with adjusted position
- */
 inline tree_key operator+(const tree_key &x, uint64_t size) { return {x.hash, x.pos + size}; }
 
 inline tree_key &operator+=(tree_key &x, uint64_t size) {
@@ -110,16 +68,8 @@ inline tree_key &operator+=(tree_key &x, uint64_t size) {
     return x;
 }
 
-/**
- * @internal
- * @brief Template for minimum value
- */
 template <class T> constexpr T _min();
 
-/**
- * @internal
- * @brief Minimum tree_key value
- */
 template <> constexpr tree_key _min<tree_key>() { return {0, 0}; }
 
 template <class T> constexpr T _max();
