@@ -6,15 +6,8 @@
 
 namespace compio {
 
-block::block(FILE *file, block_allocator *allocator, btree *index,
-             const compio_compressor *compressor, std::map<tree_key, uint64_t> &temporary_index,
-             const bool &is_temporary_index_enabled, const tree_key &key, uint64_t addr)
-    : file(file),
-      allocator(allocator),
-      index(index),
-      compressor(compressor),
-      temporary_index(temporary_index),
-      is_temporary_index_enabled(is_temporary_index_enabled),
+block::block(context_t &context, const tree_key &key, uint64_t addr)
+    : context(context),
       key(key),
       addr(addr),
       c_size(0),
@@ -25,14 +18,14 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
       is_valid(true) {
 
     storage_block b;
-    b.read_from(file, addr);
+    b.read_from(context.file, addr);
 
     c_size = b.size;
     dec_size = b.original_size;
 
     if (b.is_compressed) {
         dec_data = std::make_unique<uint8_t[]>(dec_size);
-        int ret = compressor->decompress(dec_data.get(), &dec_size, b.data.get(), b.size);
+        int ret = context.compressor->decompress(dec_data.get(), &dec_size, b.data.get(), b.size);
         if (ret != 0) {
             WARNING_PRINT(
                 "warning: compressed data is too big after decompression (%lu is not enough)\n",
@@ -46,31 +39,17 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
     }
 }
 
-block::block(FILE *file, block_allocator *allocator, btree *index,
-             const compio_compressor *compressor, std::map<tree_key, uint64_t> &temporary_index,
-             const bool &is_temporary_index_enabled, const tree_key &key, uint64_t size,
-             std::unique_ptr<uint8_t[]> &&data)
-    : file(file),
-      allocator(allocator),
-      index(index),
-      compressor(compressor),
-      temporary_index(temporary_index),
-      is_temporary_index_enabled(is_temporary_index_enabled),
+block::block(context_t &context, const tree_key &key, uint64_t size,
+             bool unused)
+    : context(context),
       key(key),
       addr(0),
       c_size(0),
-      dec_data(std::move(data)),
+      dec_data(std::make_unique<uint8_t[]>(size)),
       dec_size(size),
       is_modified(true),
       is_removed(false),
-      is_valid(true) {}
-
-block::block(FILE *file, block_allocator *allocator, btree *index,
-             const compio_compressor *compressor, std::map<tree_key, uint64_t> &temporary_index,
-             const bool &is_temporary_index_enabled, const tree_key &key, uint64_t size,
-             bool unused)
-    : block(file, allocator, index, compressor, temporary_index, is_temporary_index_enabled, key,
-            size, std::make_unique<uint8_t[]>(size)) {
+      is_valid(true) {
     UNUSED(unused);
 }
 
@@ -80,10 +59,10 @@ block::~block() {
         return;
     }
     if (is_modified && !is_removed) {
-        storage_block b(compressor->get_bufsize(dec_size));
+        storage_block b(context.compressor->get_bufsize(dec_size));
         b.original_size = dec_size;
 
-        int ret = compressor->compress(b.data.get(), &b.size, dec_data.get(), dec_size);
+        int ret = context.compressor->compress(b.data.get(), &b.size, dec_data.get(), dec_size);
         if (ret != 0 || b.size > dec_size) {
             if (ret != 0) {
                 WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
@@ -104,23 +83,23 @@ block::~block() {
             // }
 
             // though it would be better to pass this logic to allocator, and allocate memory again
-            allocator->deallocate(addr, c_size);
+            context.allocator->deallocate(addr, c_size);
         }
 
-        uint64_t new_addr = allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
+        uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
         DEBUG_PRINT(
             "[B][destructor]: writing to file "
             "(new_addr=%lu,addr=%lu,original_size=%lu,size=%lu,is_compressed=%d,key.pos=%lu)\n",
             new_addr, addr, b.original_size, b.size, b.is_compressed, key.pos);
-        b.write_to(file, new_addr);
+        b.write_to(context.file, new_addr);
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
-        index->update(key, {new_addr, dec_size});
+        context.index->update(key, {new_addr, dec_size});
 
-        if (is_temporary_index_enabled) {
+        if (context.is_temporary_index_enabled) {
             // save allocated address to temporary_index
-            temporary_index[key] = new_addr;
+            context.temporary_index[key] = new_addr;
         }
     } else {
         if (addr == 0) {
@@ -133,7 +112,7 @@ block::~block() {
         if (is_removed && addr != 0) {
             // this block was created in storage_block_reader::read_block, so we need to deallocate
             // it's memory
-            allocator->deallocate(addr, c_size);
+            context.allocator->deallocate(addr, c_size);
         }
     }
 }
@@ -158,7 +137,7 @@ void block::shrink(uint64_t new_size) {
     //
     // UPD: we are updating size in btree, because otherwise we can't use btree::get_block in
     // compio_insert
-    index->update(key, {addr, new_size});
+    context.index->update(key, {addr, new_size});
 }
 
 void block::remove() { is_removed = true; }
@@ -181,12 +160,8 @@ void block::set_key(const tree_key &new_key) {
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size)
-    : file(file),
-      allocator(allocator),
-      index(index),
-      compressor(compressor),
-      cache(max_size),
-      is_temporary_index_enabled(false) {}
+    : cache(max_size),
+      context({file, allocator, index, compressor, {}, false}) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
@@ -196,15 +171,14 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
         return cache.get(key);
     }
     DEBUG_PRINT("[SBR][read_block]: cache miss\n");
-    if (is_temporary_index_enabled) {
-        auto it = temporary_index.find(key);
-        if (it != temporary_index.end()) {
+    if (context.is_temporary_index_enabled) {
+        auto it = context.temporary_index.find(key);
+        if (it != context.temporary_index.end()) {
             addr = it->second;
             DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
         }
     }
-    auto b = std::make_shared<block>(file, allocator, index, compressor, temporary_index,
-                                     is_temporary_index_enabled, key, addr);
+    auto b = std::make_shared<block>(context, key, addr);
     if (!b->valid()) {
         return nullptr;
     }
@@ -221,13 +195,12 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
                       key.hash, key.pos);
         return cache.get(key);
     }
-    auto b = std::make_shared<block>(file, allocator, index, compressor, temporary_index,
-                                     is_temporary_index_enabled, key, size, false);
+    auto b = std::make_shared<block>(context, key, size, false);
     cache.put(key, b);
 
     // adding element to btree, but without file address (we didn't allocate memory block yet)
     // block::~block will update this element in btree with new address
-    index->insert(key, {0, size});
+    context.index->insert(key, {0, size});
     return b;
 }
 
@@ -236,11 +209,11 @@ void storage_block_reader::clear_cache() {
     cache.clear();
 }
 
-void storage_block_reader::enable_temporary_index() { is_temporary_index_enabled = true; }
+void storage_block_reader::enable_temporary_index() { context.is_temporary_index_enabled = true; }
 
 void storage_block_reader::disable_temporary_index() {
-    is_temporary_index_enabled = false;
-    temporary_index.clear();
+    context.is_temporary_index_enabled = false;
+    context.temporary_index.clear();
 }
 
 void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
@@ -265,10 +238,10 @@ void storage_block_reader::remove_block(std::shared_ptr<block> block) {
     if (cache.exists(key)) {
         cache.remove(key);
     }
-    if (is_temporary_index_enabled) {
-        temporary_index.erase(key);
+    if (context.is_temporary_index_enabled) {
+        context.temporary_index.erase(key);
     }
-    index->remove(key);
+    context.index->remove(key);
 }
 
 bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }
