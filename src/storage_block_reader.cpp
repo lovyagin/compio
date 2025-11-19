@@ -8,14 +8,14 @@ namespace compio {
 
 block::block(FILE *file, block_allocator *allocator, btree *index,
              const compio_compressor *compressor, std::map<tree_key, uint64_t> &temporary_index,
-             const bool &is_temporary_index_enabled, uint64_t addr)
+             const bool &is_temporary_index_enabled, const tree_key &key, uint64_t addr)
     : file(file),
       allocator(allocator),
       index(index),
       compressor(compressor),
       temporary_index(temporary_index),
       is_temporary_index_enabled(is_temporary_index_enabled),
-      key({0, 0}),
+      key(key),
       addr(addr),
       c_size(0),
       dec_data(nullptr),
@@ -29,7 +29,6 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
 
     c_size = b.size;
     dec_size = b.original_size;
-    key = b.index_key;
 
     if (b.is_compressed) {
         dec_data = std::make_unique<uint8_t[]>(dec_size);
@@ -49,7 +48,7 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
 
 block::block(FILE *file, block_allocator *allocator, btree *index,
              const compio_compressor *compressor, std::map<tree_key, uint64_t> &temporary_index,
-             const bool &is_temporary_index_enabled, tree_key key, uint64_t size,
+             const bool &is_temporary_index_enabled, const tree_key &key, uint64_t size,
              std::unique_ptr<uint8_t[]> &&data)
     : file(file),
       allocator(allocator),
@@ -68,9 +67,12 @@ block::block(FILE *file, block_allocator *allocator, btree *index,
 
 block::block(FILE *file, block_allocator *allocator, btree *index,
              const compio_compressor *compressor, std::map<tree_key, uint64_t> &temporary_index,
-             const bool &is_temporary_index_enabled, tree_key key, uint64_t size)
+             const bool &is_temporary_index_enabled, const tree_key &key, uint64_t size,
+             bool unused)
     : block(file, allocator, index, compressor, temporary_index, is_temporary_index_enabled, key,
-            size, std::make_unique<uint8_t[]>(size)) {}
+            size, std::make_unique<uint8_t[]>(size)) {
+    UNUSED(unused);
+}
 
 block::~block() {
     if (!is_valid) {
@@ -80,7 +82,6 @@ block::~block() {
     if (is_modified && !is_removed) {
         storage_block b(compressor->get_bufsize(dec_size));
         b.original_size = dec_size;
-        b.index_key = key;
 
         int ret = compressor->compress(b.data.get(), &b.size, dec_data.get(), dec_size);
         if (ret != 0 || b.size > dec_size) {
@@ -189,7 +190,7 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
         }
     }
     auto b = std::make_shared<block>(file, allocator, index, compressor, temporary_index,
-                                     is_temporary_index_enabled, addr);
+                                     is_temporary_index_enabled, key, addr);
     if (!b->valid()) {
         return nullptr;
     }
@@ -207,7 +208,7 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
         return cache.get(key);
     }
     auto b = std::make_shared<block>(file, allocator, index, compressor, temporary_index,
-                                     is_temporary_index_enabled, key, size);
+                                     is_temporary_index_enabled, key, size, false);
     cache.put(key, b);
 
     // adding element to btree, but without file address (we didn't allocate memory block yet)

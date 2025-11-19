@@ -128,7 +128,6 @@ struct storage_block : public infile_object {
     uint8_t is_compressed;           /**< Is this block compressed */
     uint64_t size;                   /**< Size of data array */
     uint64_t original_size;          /**< Original size (size of uncompressed data) */
-    tree_key index_key;              /**< Index key of this block */
     std::unique_ptr<uint8_t[]> data; /**< Data block */
 
     storage_block();
@@ -151,7 +150,7 @@ struct storage_block : public infile_object {
  */
 #define STORAGE_BLOCK_METASIZE                                                                     \
     (sizeof(storage_block::is_compressed) + sizeof(storage_block::size) +                          \
-     sizeof(storage_block::original_size) + sizeof(storage_block::index_key))
+     sizeof(storage_block::original_size))
 
 } // namespace compio
 

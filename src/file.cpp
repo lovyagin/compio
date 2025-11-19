@@ -143,8 +143,6 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(size, file);
     assert(size != 0);
     lendian_fread_member(original_size, file);
-    lendian_fread_member(index_key.hash, file);
-    lendian_fread_member(index_key.pos, file);
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     lendian_fread(data.get(), 1, size, file);
 }
@@ -160,8 +158,6 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
     lendian_fwrite_member(is_compressed, file);
     lendian_fwrite_member(size, file);
     lendian_fwrite_member(original_size, file);
-    lendian_fwrite_member(index_key.hash, file);
-    lendian_fwrite_member(index_key.pos, file);
     lendian_fwrite(data.get(), 1, size, file);
 }
 
@@ -185,7 +181,6 @@ storage_block::storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size)
     : is_compressed(0),
       size(size),
       original_size(0),
-      index_key({0, 0}),
       data(std::move(data)) {}
 
 storage_block::storage_block(uint64_t size)

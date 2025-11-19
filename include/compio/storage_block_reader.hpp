@@ -36,13 +36,13 @@ class block {
 public:
     block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
           std::map<tree_key, uint64_t> &temporary_index, const bool &is_temporary_index_enabled,
-          uint64_t addr);
+          const tree_key &key, uint64_t addr);
     block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
           std::map<tree_key, uint64_t> &temporary_index, const bool &is_temporary_index_enabled,
-          tree_key key, uint64_t size, std::unique_ptr<uint8_t[]> &&data);
+          const tree_key &key, uint64_t size, std::unique_ptr<uint8_t[]> &&data);
     block(FILE *file, block_allocator *allocator, btree *index, const compio_compressor *compressor,
           std::map<tree_key, uint64_t> &temporary_index, const bool &is_temporary_index_enabled,
-          tree_key key, uint64_t size);
+          const tree_key &key, uint64_t size, bool unused);
     ~block();
 
     const uint8_t *data() const;
