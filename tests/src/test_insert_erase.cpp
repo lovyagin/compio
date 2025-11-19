@@ -9,7 +9,7 @@
 #include "sample_data.hpp"
 #include "test_util.hpp"
 
-class InsertEraseTest : public ::testing::Test {
+class InsertEraseTest : public ::testing::TestWithParam<int> {
 protected:
     compio_config config;
     compio_archive *archive;
@@ -19,6 +19,7 @@ protected:
 
     void SetUp() override {
         compio_build_default_config(&config);
+        config.cache_size__blocks = GetParam();
 
         generate_tmp_fn(fn, sizeof(fn));
 
@@ -130,7 +131,7 @@ protected:
 };
 
 // Basic Insert Tests
-TEST_F(InsertEraseTest, InsertAtBeginning) {
+TEST_P(InsertEraseTest, InsertAtBeginning) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -143,7 +144,7 @@ TEST_F(InsertEraseTest, InsertAtBeginning) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, InsertAtMiddle) {
+TEST_P(InsertEraseTest, InsertAtMiddle) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -156,7 +157,7 @@ TEST_F(InsertEraseTest, InsertAtMiddle) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, InsertAtEnd) {
+TEST_P(InsertEraseTest, InsertAtEnd) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -169,7 +170,7 @@ TEST_F(InsertEraseTest, InsertAtEnd) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, InsertIntoEmptyFile) {
+TEST_P(InsertEraseTest, InsertIntoEmptyFile) {
     // File is already empty
 
     compio_seek(file, 0, COMP_SEEK_SET);
@@ -181,7 +182,7 @@ TEST_F(InsertEraseTest, InsertIntoEmptyFile) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, InsertBeyondFileEnd) {
+TEST_P(InsertEraseTest, InsertBeyondFileEnd) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -195,7 +196,7 @@ TEST_F(InsertEraseTest, InsertBeyondFileEnd) {
 }
 
 // Basic Erase Tests
-TEST_F(InsertEraseTest, EraseFromBeginning) {
+TEST_P(InsertEraseTest, EraseFromBeginning) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -207,7 +208,7 @@ TEST_F(InsertEraseTest, EraseFromBeginning) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, EraseFromMiddle) {
+TEST_P(InsertEraseTest, EraseFromMiddle) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -219,7 +220,7 @@ TEST_F(InsertEraseTest, EraseFromMiddle) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, EraseFromEnd) {
+TEST_P(InsertEraseTest, EraseFromEnd) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -231,7 +232,7 @@ TEST_F(InsertEraseTest, EraseFromEnd) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, EraseEntireFile) {
+TEST_P(InsertEraseTest, EraseEntireFile) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -244,7 +245,7 @@ TEST_F(InsertEraseTest, EraseEntireFile) {
 }
 
 // Edge Cases
-TEST_F(InsertEraseTest, ZeroSizeInsert) {
+TEST_P(InsertEraseTest, ZeroSizeInsert) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -256,7 +257,7 @@ TEST_F(InsertEraseTest, ZeroSizeInsert) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, ZeroSizeErase) {
+TEST_P(InsertEraseTest, ZeroSizeErase) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -268,7 +269,7 @@ TEST_F(InsertEraseTest, ZeroSizeErase) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, SingleByteInsert) {
+TEST_P(InsertEraseTest, SingleByteInsert) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -281,7 +282,7 @@ TEST_F(InsertEraseTest, SingleByteInsert) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, SingleByteErase) {
+TEST_P(InsertEraseTest, SingleByteErase) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -293,7 +294,7 @@ TEST_F(InsertEraseTest, SingleByteErase) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, EraseBeyondFileSize) {
+TEST_P(InsertEraseTest, EraseBeyondFileSize) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -306,7 +307,7 @@ TEST_F(InsertEraseTest, EraseBeyondFileSize) {
 }
 
 // Combined Operations
-TEST_F(InsertEraseTest, InsertThenErase) {
+TEST_P(InsertEraseTest, InsertThenErase) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -326,7 +327,7 @@ TEST_F(InsertEraseTest, InsertThenErase) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, EraseThenInsert) {
+TEST_P(InsertEraseTest, EraseThenInsert) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -345,7 +346,7 @@ TEST_F(InsertEraseTest, EraseThenInsert) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, MultipleConsecutiveInserts) {
+TEST_P(InsertEraseTest, MultipleConsecutiveInserts) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -365,7 +366,7 @@ TEST_F(InsertEraseTest, MultipleConsecutiveInserts) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, MultipleConsecutiveErases) {
+TEST_P(InsertEraseTest, MultipleConsecutiveErases) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -383,7 +384,7 @@ TEST_F(InsertEraseTest, MultipleConsecutiveErases) {
 }
 
 // Position and Cursor Behavior
-TEST_F(InsertEraseTest, CursorPositionAfterInsert) {
+TEST_P(InsertEraseTest, CursorPositionAfterInsert) {
     std::vector<unsigned char> initial = {1, 2, 3};
     WriteInitialData(initial);
 
@@ -396,7 +397,7 @@ TEST_F(InsertEraseTest, CursorPositionAfterInsert) {
     ASSERT_EQ(pos, 3); // Position 1 + 2 inserted bytes
 }
 
-TEST_F(InsertEraseTest, CursorPositionAfterErase) {
+TEST_P(InsertEraseTest, CursorPositionAfterErase) {
     std::vector<unsigned char> initial = {1, 2, 3, 4, 5};
     WriteInitialData(initial);
 
@@ -409,7 +410,7 @@ TEST_F(InsertEraseTest, CursorPositionAfterErase) {
 }
 
 // Block Granularity Tests
-TEST_F(InsertEraseTest, MultiBlockFileInsert) {
+TEST_P(InsertEraseTest, MultiBlockFileInsert) {
     // Create file with many small writes to create multiple blocks
     std::vector<unsigned char> data1 = {1, 2};
     std::vector<unsigned char> data2 = {3, 4};
@@ -429,7 +430,7 @@ TEST_F(InsertEraseTest, MultiBlockFileInsert) {
     VerifyFileContent(expected);
 }
 
-TEST_F(InsertEraseTest, MultiBlockFileErase) {
+TEST_P(InsertEraseTest, MultiBlockFileErase) {
     // Create file with many small writes to create multiple blocks
     std::vector<unsigned char> data1 = {1, 2};
     std::vector<unsigned char> data2 = {3, 4};
@@ -623,3 +624,5 @@ TEST_P(InsertEraseBlockConfigTest, InsertAcrossBlockBoundaries) {
 
 INSTANTIATE_TEST_CASE_P(InsertEraseBlockConfigTests, InsertEraseBlockConfigTest,
                         ::testing::Values(4, 8, 16, 32, 64, 128, 256));
+
+INSTANTIATE_TEST_CASE_P(InsertEraseCacheTests, InsertEraseTest, ::testing::Values(16, 0));
