@@ -77,14 +77,14 @@ struct context_t {
 
 class block {
     context_t &context;
-    tree_key key;
-    uint64_t addr;
-    uint64_t c_size;
-    std::unique_ptr<uint8_t[]> dec_data;
-    uint64_t dec_size;
-    bool is_modified;
-    bool is_removed;
-    bool is_valid;
+    tree_key _key;
+    uint64_t _addr;
+    uint64_t _c_size;
+    std::unique_ptr<uint8_t[]> _data;
+    uint64_t _size;
+    bool _is_modified;
+    bool _is_removed;
+    bool _is_valid;
 
 public:
     block(context_t &context, const tree_key &key, uint64_t addr);
@@ -93,20 +93,25 @@ public:
 
     const uint8_t *data() const;
     uint8_t *data();
-    bool valid() const;
-    uint64_t size() const;
+    bool is_valid() const;
     void shrink(uint64_t new_size);
     void remove();
-    const tree_key &get_key() const;
     void shift_key(int64_t addition);
     void set_key(const tree_key &new_key);
-    uint64_t get_addr() const;
-    uint64_t get_c_size() const;
+    const tree_key &key() const;
+    uint64_t size() const;
+    uint64_t addr() const;
+    uint64_t c_size() const;
 };
 
-struct storage_block_reader {
+class storage_block_reader {
+    cache::lru_cache<tree_key, std::shared_ptr<block>, tree_key_comparator> cache;
+    context_t context;
+
+public:
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                          const compio_compressor *compressor, int max_size);
+
     std::shared_ptr<block> read_block(uint64_t addr, tree_key key);
     std::shared_ptr<block> create_block(uint64_t size, tree_key key);
     void clear_cache();
@@ -115,10 +120,6 @@ struct storage_block_reader {
     void add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max);
     void remove_block(std::shared_ptr<block> block);
     bool cache_contains(const tree_key &key) const;
-
-private:
-    cache::lru_cache<tree_key, std::shared_ptr<block>, tree_key_comparator> cache;
-    context_t context;
 };
 
 } // namespace compio

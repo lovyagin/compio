@@ -8,73 +8,73 @@ namespace compio {
 
 block::block(context_t &context, const tree_key &key, uint64_t addr)
     : context(context),
-      key(key),
-      addr(addr),
-      c_size(0),
-      dec_data(nullptr),
-      dec_size(0),
-      is_modified(false),
-      is_removed(false),
-      is_valid(true) {
+      _key(key),
+      _addr(addr),
+      _c_size(0),
+      _data(nullptr),
+      _size(0),
+      _is_modified(false),
+      _is_removed(false),
+      _is_valid(true) {
 
     storage_block b;
     b.read_from(context.file, addr);
 
-    c_size = b.size;
-    dec_size = b.original_size;
+    _c_size = b.size;
+    _size = b.original_size;
 
     if (b.is_compressed) {
-        dec_data = std::make_unique<uint8_t[]>(dec_size);
-        int ret = context.compressor->decompress(dec_data.get(), &dec_size, b.data.get(), b.size);
+        _data = std::make_unique<uint8_t[]>(_size);
+        int ret = context.compressor->decompress(_data.get(), &_size, b.data.get(), b.size);
         if (ret != 0) {
             WARNING_PRINT(
                 "warning: compressed data is too big after decompression (%lu is not enough)\n",
-                dec_size);
-            is_valid = false;
+                _size);
+            _is_valid = false;
             return;
         }
-        assert(b.original_size == dec_size);
+        assert(b.original_size == _size);
     } else {
-        dec_data = std::move(b.data);
+        _data = std::move(b.data);
     }
 }
 
 block::block(context_t &context, const tree_key &key, uint64_t size, bool unused)
     : context(context),
-      key(key),
-      addr(0),
-      c_size(0),
-      dec_data(std::make_unique<uint8_t[]>(size)),
-      dec_size(size),
-      is_modified(true),
-      is_removed(false),
-      is_valid(true) {
+      _key(key),
+      _addr(0),
+      _c_size(0),
+      _data(std::make_unique<uint8_t[]>(size)),
+      _size(size),
+      _is_modified(true),
+      _is_removed(false),
+      _is_valid(true) {
     UNUSED(unused);
 }
 
 block::~block() {
-    if (!is_valid) {
+    if (!_is_valid) {
         DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
         return;
     }
-    if (is_modified && !is_removed) {
-        storage_block b(context.compressor->get_bufsize(dec_size));
-        b.original_size = dec_size;
+    if (_is_modified && !_is_removed) {
+        storage_block b(context.compressor->get_bufsize(_size));
+        b.original_size = _size;
 
-        int ret = context.compressor->compress(b.data.get(), &b.size, dec_data.get(), dec_size);
-        if (ret != 0 || b.size > dec_size) {
+        int ret = context.compressor->compress(b.data.get(), &b.size, _data.get(), _size);
+        if (ret != 0 || b.size > _size) {
             if (ret != 0) {
                 WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
             }
 
             b.is_compressed = false;
-            b.data = std::move(dec_data);
-            b.size = dec_size;
+            b.data = std::move(_data);
+            b.size = _size;
         } else {
             b.is_compressed = true;
         }
 
-        if (addr != 0) {
+        if (_addr != 0) {
             // block was read from file, so addr was already allocated from allocator previously
 
             // if (c_size >= b.size) {
@@ -82,33 +82,33 @@ block::~block() {
             // }
 
             // though it would be better to pass this logic to allocator, and allocate memory again
-            context.allocator->deallocate(addr, c_size);
+            context.allocator->deallocate(_addr, _c_size);
         }
 
         uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
         DEBUG_PRINT(
             "[B][destructor]: writing to file "
             "(new_addr=%lu,addr=%lu,original_size=%lu,size=%lu,is_compressed=%d,key.pos=%lu)\n",
-            new_addr, addr, b.original_size, b.size, b.is_compressed, key.pos);
+            new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
         b.write_to(context.file, new_addr);
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
-        context.index->update(key, {new_addr, dec_size});
+        context.index->update(_key, {new_addr, _size});
 
         if (context.is_temporary_index_enabled) {
             // save allocated address to temporary_index
-            context.temporary_index[key] = new_addr;
+            context.temporary_index[_key] = new_addr;
         }
     } else {
-        if (addr == 0) {
+        if (_addr == 0) {
             // this block was created in storage_block_reader::create_block, so it's key was
             // inserted to btree
             //
             // not calling index->remove, because storage_block_reader::remove_block calls it
             // index->remove(key);
         }
-        if (is_removed && addr != 0) {
+        if (_is_removed && _addr != 0) {
             // this block was created in storage_block_reader::read_block, so we need to deallocate
             // it's memory
             //
@@ -118,48 +118,48 @@ block::~block() {
     }
 }
 
-const uint8_t *block::data() const { return dec_data.get(); }
+const uint8_t *block::data() const { return _data.get(); }
 
 uint8_t *block::data() {
-    is_modified = true;
-    return dec_data.get();
+    _is_modified = true;
+    return _data.get();
 }
 
-bool block::valid() const { return is_valid; }
+bool block::is_valid() const { return _is_valid; }
 
-uint64_t block::size() const { return dec_size; }
+uint64_t block::size() const { return _size; }
 
-uint64_t block::get_addr() const { return addr; }
+uint64_t block::addr() const { return _addr; }
 
-uint64_t block::get_c_size() const { return c_size; }
+uint64_t block::c_size() const { return _c_size; }
 
 void block::shrink(uint64_t new_size) {
-    assert(new_size < dec_size);
-    is_modified = true;
-    dec_size = new_size;
+    assert(new_size < _size);
+    _is_modified = true;
+    _size = new_size;
     // we're not updating size in btree, because while this block is in cache, read_block()->size()
     // will return correct size, and if block is not in cache, then destructor already updated size
     //
     // UPD: we are updating size in btree, because otherwise we can't use btree::get_block in
     // compio_insert
-    context.index->update(key, {addr, new_size});
+    context.index->update(_key, {_addr, new_size});
 }
 
-void block::remove() { is_removed = true; }
+void block::remove() { _is_removed = true; }
 
-const tree_key &block::get_key() const { return key; }
+const tree_key &block::key() const { return _key; }
 
 void block::shift_key(int64_t addition) {
     assert(addition != 0);
-    is_modified = true;
-    DEBUG_PRINT("[B][shift_key]: key.pos=%lu, shifting with addition=%ld\n", key.pos, addition);
-    key += addition;
+    _is_modified = true;
+    DEBUG_PRINT("[B][shift_key]: key.pos=%lu, shifting with addition=%ld\n", _key.pos, addition);
+    _key += addition;
 }
 
 void block::set_key(const tree_key &new_key) {
-    if (key != new_key) {
-        is_modified = true;
-        key = new_key;
+    if (_key != new_key) {
+        _is_modified = true;
+        _key = new_key;
     }
 }
 
@@ -191,7 +191,7 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
 #endif
     }
     auto b = std::make_shared<block>(context, key, addr);
-    if (!b->valid()) {
+    if (!b->is_valid()) {
         return nullptr;
     }
     cache.put(key, b);
@@ -262,9 +262,9 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
 }
 
 void storage_block_reader::remove_block(std::shared_ptr<block> b) {
-    DEBUG_PRINT("[SBR]removing block with key.pos=%lu\n", b->get_key().pos);
+    DEBUG_PRINT("[SBR]removing block with key.pos=%lu\n", b->key().pos);
     b->remove();
-    const auto &key = b->get_key();
+    const auto &key = b->key();
     if (cache.exists(key)) {
         // when cache_size=0, storage_block_reader returns blocks from read/create, but don't save
         // them in cache, so we should check it
@@ -274,7 +274,7 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
         context.temporary_index.erase(key);
     }
     context.index->remove(key);
-    context.allocator->deallocate(b->get_addr(), b->get_c_size());
+    context.allocator->deallocate(b->addr(), b->c_size());
 }
 
 bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }
