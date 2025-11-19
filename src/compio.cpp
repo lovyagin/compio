@@ -369,6 +369,15 @@ uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
 uint64_t compio_get_size(compio_file *file) { return file->size; }
 
+static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree_val>> range) {
+    for (std::size_t i = 1; i < range.size(); ++i) {
+        // check that there's no gaps between blocks
+        const auto &[key_prev, val_prev] = range[i - 1];
+        const auto &[key, val] = range[i];
+        assert(key.pos == key_prev.pos + val_prev.size);
+    }
+}
+
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
     DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash_tail);
@@ -377,11 +386,7 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
     if (!allow_empty) {
         assert(!file_range.empty());
     }
-    for (std::size_t i = 1; i < file_range.size(); ++i) {
-        const auto &[key_prev, val_prev] = file_range[i - 1];
-        const auto &[key, val] = file_range[i];
-        assert(key.pos == key_prev.pos + val_prev.size);
-    }
+    validate_no_gaps_in_range(file_range);
     for (const auto &[key, val] : file_range) {
         assert(key.hash == file->hash_tail);
     }
@@ -427,13 +432,9 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         const tree_key key_max = {file->hash_tail, write_end};
         auto range = archive->index->get_range(key_min, key_max);
         assert(!range.empty());
-        for (std::size_t i = 1; i < range.size(); ++i) {
-            assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
-        }
-        if (!range.empty()) {
-            assert(range.front().first.pos <= write_start);
-            assert(range.back().first.pos + range.back().second.size >= write_start);
-        }
+        assert(range.front().first.pos <= write_start);
+        assert(range.back().first.pos + range.back().second.size >= write_start);
+        validate_no_gaps_in_range(range);
 
         // enable temporary index, so it will fix expired tree_vals, that we will have in our range
         block_reader->enable_temporary_index();
@@ -730,12 +731,9 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     const tree_key key_max = {file->hash_tail, erase_end};
     auto range = archive->index->get_range(key_min, key_max);
     assert(!range.empty());
-
-    for (std::size_t i = 1; i < range.size(); ++i) {
-        assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
-    }
     assert(range.front().first.pos <= erase_start);
     assert(range.back().first.pos + range.back().second.size >= erase_end);
+    validate_no_gaps_in_range(range);
 
     uint64_t bytes_erased = 0;
 
