@@ -704,6 +704,10 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         return 0;
     }
 
+    if (file->cursor > file->size) {
+        return 0;
+    }
+
     size = std::max(UINT64_C(0), std::min(size, file->size - file->cursor));
     if (size == 0) {
         return 0;
