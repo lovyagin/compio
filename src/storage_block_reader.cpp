@@ -224,11 +224,28 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
                                         const tree_key &key_max) {
     DEBUG_PRINT("[SBR][add_to_range]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos,
                 key_max.pos);
-    // manually update block::key for entries in cache
-    auto it_start = cache._cache_items_map.lower_bound(key_min);
-    auto it_end = cache._cache_items_map.upper_bound(key_max);
-    for (auto it = it_start; it != it_end; ++it) {
-        it->second->second->shift_key(addition);
+    {
+        // shift keys in temporary index
+        auto it_start = context.temporary_index.lower_bound(key_min);
+        auto it_end = context.temporary_index.upper_bound(key_max);
+        std::vector<std::pair<tree_key, uint64_t>> items_to_update;
+        for (auto it = it_start; it != it_end; ++it) {
+            items_to_update.push_back(*it);
+        }
+        context.temporary_index.erase(it_start, it_end);
+        for (const auto &[key, addr] : items_to_update) {
+            assert(context.temporary_index.find(key + addition) == context.temporary_index.end());
+            context.temporary_index[key + addition] = addr;
+        }
+    }
+
+    {
+        // manually update block::key for entries in cache
+        auto it_start = cache._cache_items_map.lower_bound(key_min);
+        auto it_end = cache._cache_items_map.upper_bound(key_max);
+        for (auto it = it_start; it != it_end; ++it) {
+            it->second->second->shift_key(addition);
+        }
     }
 
     // and then update keys themselves
