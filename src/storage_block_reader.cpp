@@ -111,7 +111,9 @@ block::~block() {
         if (is_removed && addr != 0) {
             // this block was created in storage_block_reader::read_block, so we need to deallocate
             // it's memory
-            context.allocator->deallocate(addr, c_size);
+            //
+            // not deallocating, because storage_block_reader::remove_block does that
+            // context.allocator->deallocate(addr, c_size);
         }
     }
 }
@@ -126,6 +128,10 @@ uint8_t *block::data() {
 bool block::valid() const { return is_valid; }
 
 uint64_t block::size() const { return dec_size; }
+
+uint64_t block::get_addr() const { return addr; }
+
+uint64_t block::get_c_size() const { return c_size; }
 
 void block::shrink(uint64_t new_size) {
     assert(new_size < dec_size);
@@ -252,10 +258,10 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
     cache.add_to_range(addition, key_min, key_max);
 }
 
-void storage_block_reader::remove_block(std::shared_ptr<block> block) {
-    DEBUG_PRINT("[SBR]removing block with key.pos=%lu\n", block->get_key().pos);
-    block->remove();
-    const auto &key = block->get_key();
+void storage_block_reader::remove_block(std::shared_ptr<block> b) {
+    DEBUG_PRINT("[SBR]removing block with key.pos=%lu\n", b->get_key().pos);
+    b->remove();
+    const auto &key = b->get_key();
     if (cache.exists(key)) {
         cache.remove(key);
     }
@@ -263,6 +269,7 @@ void storage_block_reader::remove_block(std::shared_ptr<block> block) {
         context.temporary_index.erase(key);
     }
     context.index->remove(key);
+    context.allocator->deallocate(b->get_addr(), b->get_c_size());
 }
 
 bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }

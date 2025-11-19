@@ -100,6 +100,8 @@ public:
     const tree_key &get_key() const;
     void shift_key(int64_t addition);
     void set_key(const tree_key &new_key);
+    uint64_t get_addr() const;
+    uint64_t get_c_size() const;
 };
 
 struct storage_block_reader {
