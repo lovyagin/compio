@@ -39,8 +39,7 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
     }
 }
 
-block::block(context_t &context, const tree_key &key, uint64_t size,
-             bool unused)
+block::block(context_t &context, const tree_key &key, uint64_t size, bool unused)
     : context(context),
       key(key),
       addr(0),
@@ -177,6 +176,11 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
             addr = it->second;
             DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
         }
+#ifndef NDEBUG
+        auto val = context.index->get(key);
+        assert(val.has_value());
+        assert(val.value().addr == addr);
+#endif
     }
     auto b = std::make_shared<block>(context, key, addr);
     if (!b->valid()) {

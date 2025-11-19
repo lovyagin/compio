@@ -402,12 +402,6 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         const tree_key key_max = {file->hash_tail, write_end};
         auto range = archive->index->get_range(key_min, key_max);
         assert(!range.empty());
-
-        DEBUG_PRINT("[CW]b-tree range:\n");
-        for (const auto &[key, val] : range) {
-            DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
-                        val.size);
-        }
         for (std::size_t i = 1; i < range.size(); ++i) {
             assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
         }
@@ -531,12 +525,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     auto range = archive->index->get_range(key_min, key_max);
     assert(!range.empty());
 
-    DEBUG_PRINT("[CR]b-tree range:\n");
-    for (const auto &[key, val] : range) {
-        DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
-                    val.size);
-    }
-
     for (std::size_t i = 1; i < range.size(); ++i) {
         assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
     }
@@ -630,9 +618,9 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         assert(left_key.pos + left_b->size() > file->cursor);
         const uint64_t left_size = file->cursor - left_key.pos;
         const uint64_t right_size = left_b->size() - left_size;
+        left_b->shrink(left_size);
         const auto right_b = block_reader->create_block(right_size, cursor_key);
         std::copy_n(left_b->data() + left_size, right_size, right_b->data());
-        left_b->shrink(left_size);
     }
 
     // shift blocks after cursor
@@ -702,12 +690,6 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     const tree_key key_max = {file->hash_tail, erase_end};
     auto range = archive->index->get_range(key_min, key_max);
     assert(!range.empty());
-
-    DEBUG_PRINT("[CE]b-tree range:\n");
-    for (const auto &[key, val] : range) {
-        DEBUG_PRINT("\t(key.pos=%lu) --- (val.addr=%lu, val.size=%lu)\n", key.pos, val.addr,
-                    val.size);
-    }
 
     for (std::size_t i = 1; i < range.size(); ++i) {
         assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);

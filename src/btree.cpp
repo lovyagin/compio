@@ -86,7 +86,7 @@ void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_va
 }
 
 void btree::insert(const tree_key &key, const tree_val &value) {
-    DEBUG_PRINT("[BTREE]: insert(key={%lu,%lu},value={%lu,%lu})\n", key.hash, key.pos, value.addr,
+    DEBUG_PRINT("[BTREE]: insert(key={...,%lu},value={%lu,%lu})\n", key.pos, value.addr,
                 value.size);
     auto root = read_root();
     if (RO(root)->num_keys == (2 * degree - 1)) {
@@ -156,7 +156,7 @@ void btree::_remove(shared_node &node, const tree_key &key) {
 }
 
 void btree::remove(const tree_key &key) {
-    DEBUG_PRINT("[BTREE]: remove(key={%lu,%lu})\n", key.hash, key.pos);
+    DEBUG_PRINT("[BTREE]: remove(key={...,%lu})\n", key.pos);
     auto root = read_root();
     _remove(root, key);
     if (root->num_keys == 0 && !root->is_leaf) {
@@ -205,6 +205,11 @@ std::vector<std::pair<tree_key, tree_val>> btree::get_range(const tree_key &key_
     std::vector<std::pair<tree_key, tree_val>> result;
     auto root = read_root();
     _get_range(root, key_min, key_max, result);
+    DEBUG_PRINT("[BTREE]: get_range(key_min={...,%lu},key_max={...,%lu}) ->\n", key_min.pos,
+                key_max.pos);
+    for (const auto &[key, val] : result) {
+        DEBUG_PRINT("\t{...,%lu} -> {%lu,%lu}\n", key.pos, val.addr, val.size);
+    }
     return result;
 }
 
@@ -234,8 +239,8 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
 }
 
 void btree::update(const tree_key &key, const tree_val &new_value) {
-    DEBUG_PRINT("[BTREE]: update(key={%lu,%lu},new_value={%lu,%lu})\n", key.hash, key.pos,
-                new_value.addr, new_value.size);
+    DEBUG_PRINT("[BTREE]: update(key={...,%lu},new_value={%lu,%lu})\n", key.pos, new_value.addr,
+                new_value.size);
     auto root = read_root();
     if (!_update(root, key, new_value)) {
         WARNING_PRINT("warning: trying to update non-existing key\n");
@@ -251,10 +256,13 @@ std::optional<tree_val> btree::get(const tree_key &key) {
             RO(current)->keys.begin();
 
         if (idx < RO(current)->num_keys && RO(current)->keys[idx] == key) {
-            return RO(current)->values[idx];
+            const auto val = RO(current)->values[idx];
+            DEBUG_PRINT("[BTREE]: get(key={...,%lu}) -> {%lu,%lu}\n", key.pos, val.addr, val.size);
+            return val;
         } else if (!RO(current)->is_leaf) {
             current = read_child(current, idx);
         } else {
+            DEBUG_PRINT("[BTREE]: get(key={...,%lu}) -> nullopt\n", key.pos);
             return std::nullopt;
         }
     }
@@ -267,11 +275,15 @@ std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &ke
     assert(range.size() < 2);
     if (!range.empty()) {
         if (key == range[0].first) {
+            DEBUG_PRINT("[BTREE]: get_block(key={...,%lu}) -> nullopt\n", key.pos);
             return std::nullopt;
         } else {
+            DEBUG_PRINT("[BTREE]: get_block(key={...,%lu}) -> (key={...,%lu},val={%lu,%lu})\n",
+                        key.pos, range[0].first.pos, range[0].second.addr, range[0].second.size);
             return range[0];
         }
     } else {
+        DEBUG_PRINT("[BTREE]: get_block(key={...,%lu}) -> nullopt\n", key.pos);
         return std::nullopt;
     }
 }
@@ -312,10 +324,12 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
 }
 
 void btree::add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max) {
+    DEBUG_PRINT("[BTREE]: add_to_range(addition=%ld,key_min={...,%lu},key_max={...,%lu})\n",
+                addition, key_min.pos, key_max.pos);
     if (key_min > key_max) {
         WARNING_PRINT("warning: passed invalid range into btree::add_pos_to_keys_in_range "
-                      "(key_min={%lu,%lu} > {%lu,%lu}=key_max)\n",
-                      key_min.hash, key_min.pos, key_max.hash, key_max.pos);
+                      "(key_min={...,%lu} > {...,%lu}=key_max)\n",
+                      key_min.pos, key_max.pos);
         return;
     }
 
