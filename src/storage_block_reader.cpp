@@ -175,18 +175,18 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
       is_temporary_index_enabled(false) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
-    DEBUG_PRINT("[sbr][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
+    DEBUG_PRINT("[SBR][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
                 key.pos);
     if (cache.exists(key)) {
-        DEBUG_PRINT("[sbr][read_block]: cache hit\n");
+        DEBUG_PRINT("[SBR][read_block]: cache hit\n");
         return cache.get(key);
     }
-    DEBUG_PRINT("[sbr][read_block]: cache miss\n");
+    DEBUG_PRINT("[SBR][read_block]: cache miss\n");
     if (is_temporary_index_enabled) {
         auto it = temporary_index.find(key);
         if (it != temporary_index.end()) {
             addr = it->second;
-            DEBUG_PRINT("[sbr][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
+            DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
         }
     }
     auto b = std::make_shared<block>(file, allocator, index, compressor, temporary_index,
@@ -199,7 +199,7 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
 }
 
 std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
-    DEBUG_PRINT("[sbr][create_block]: size=%lu, key.hash=%lu, key.pos=%lu\n", size, key.hash,
+    DEBUG_PRINT("[SBR][create_block]: size=%lu, key.hash=%lu, key.pos=%lu\n", size, key.hash,
                 key.pos);
     if (cache.exists(key)) {
         WARNING_PRINT("warning: trying to create block with key (%lu, %lu), that "
@@ -218,7 +218,7 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 }
 
 void storage_block_reader::clear_cache() {
-    DEBUG_PRINT("[sbr][clear_cache]\n");
+    DEBUG_PRINT("[SBR][clear_cache]\n");
     cache.clear();
 }
 
@@ -231,11 +231,14 @@ void storage_block_reader::disable_temporary_index() {
 
 void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
                                         const tree_key &key_max) {
-    DEBUG_PRINT("[sbr]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos, key_max.pos);
+    DEBUG_PRINT("[SBR][add_to_range]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos,
+                key_max.pos);
+
     cache.add_to_range(addition, key_min, key_max);
 }
 
 void storage_block_reader::remove_block(std::shared_ptr<block> block) {
+    DEBUG_PRINT("[SBR]removing block with key.pos=%lu\n", block->get_key().pos);
     block->remove();
     const auto &key = block->get_key();
     if (cache.exists(key)) {
