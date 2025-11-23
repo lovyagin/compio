@@ -230,47 +230,65 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
     // ------------------------------------------------------------------------
 
     std::vector<size_t> indices_to_delete;
-
-    for (size_t i = 0; i < files.size(); i++) {
-        double delete_prob = 0.0;
-
-        switch (files[i].size_category) {
-            case SMALL:
-                delete_prob = params.delete_prob_small;
-                break;
-            case MEDIUM:
-                delete_prob = params.delete_prob_medium;
-                break;
-            case LARGE:
-                delete_prob = params.delete_prob_large;
-                break;
-        }
-
-        if (prob_dist(gen) < delete_prob) {
-            indices_to_delete.push_back(i);
-        }
-    }
-
-    // Ensure minimum deletion ratio to guarantee fragmentation
     size_t min_deletions = static_cast<size_t>(files.size() * params.min_delete_ratio);
-    while (indices_to_delete.size() < min_deletions && indices_to_delete.size() < files.size()) {
-        std::uniform_int_distribution<size_t> idx_dist(0, files.size() - 1);
-        size_t idx = idx_dist(gen);
-        if (std::find(indices_to_delete.begin(), indices_to_delete.end(), idx) == indices_to_delete.end()) {
-            indices_to_delete.push_back(idx);
-        }
-    }
 
-    // If deleting from middle, sort and keep middle range
-    if (params.delete_from_middle && indices_to_delete.size() > 10) {
-        std::sort(indices_to_delete.begin(), indices_to_delete.end());
-        size_t start = indices_to_delete.size() / 4;
-        size_t end = 3 * indices_to_delete.size() / 4;
-        std::vector<size_t> middle_indices(
-            indices_to_delete.begin() + static_cast<long>(start),
-            indices_to_delete.begin() + static_cast<long>(end)
-        );
-        indices_to_delete = middle_indices;
+    if (params.delete_from_middle) {
+        // Delete from physical middle third of created files
+        // (files are created sequentially, so index order approximates physical order)
+        size_t start_idx = files.size() / 3;
+        size_t end_idx = 2 * files.size() / 3;
+
+        // Collect candidates from middle third
+        std::vector<size_t> middle_candidates;
+        for (size_t i = start_idx; i < end_idx; i++) {
+            middle_candidates.push_back(i);
+        }
+
+        // Select files to delete based on probabilities, but only from middle third
+        for (size_t idx : middle_candidates) {
+            double delete_prob = 0.0;
+            switch (files[idx].size_category) {
+                case SMALL: delete_prob = params.delete_prob_small; break;
+                case MEDIUM: delete_prob = params.delete_prob_medium; break;
+                case LARGE: delete_prob = params.delete_prob_large; break;
+            }
+
+            if (prob_dist(gen) < delete_prob) {
+                indices_to_delete.push_back(idx);
+            }
+        }
+
+        // Ensure we delete enough from middle to meet min_delete_ratio
+        std::shuffle(middle_candidates.begin(), middle_candidates.end(), gen);
+        for (size_t idx : middle_candidates) {
+            if (indices_to_delete.size() >= min_deletions) break;
+            if (std::find(indices_to_delete.begin(), indices_to_delete.end(), idx) == indices_to_delete.end()) {
+                indices_to_delete.push_back(idx);
+            }
+        }
+    } else {
+        // Random deletion across all files
+        for (size_t i = 0; i < files.size(); i++) {
+            double delete_prob = 0.0;
+            switch (files[i].size_category) {
+                case SMALL: delete_prob = params.delete_prob_small; break;
+                case MEDIUM: delete_prob = params.delete_prob_medium; break;
+                case LARGE: delete_prob = params.delete_prob_large; break;
+            }
+
+            if (prob_dist(gen) < delete_prob) {
+                indices_to_delete.push_back(i);
+            }
+        }
+
+        // Ensure minimum deletion ratio
+        while (indices_to_delete.size() < min_deletions && indices_to_delete.size() < files.size()) {
+            std::uniform_int_distribution<size_t> idx_dist(0, files.size() - 1);
+            size_t idx = idx_dist(gen);
+            if (std::find(indices_to_delete.begin(), indices_to_delete.end(), idx) == indices_to_delete.end()) {
+                indices_to_delete.push_back(idx);
+            }
+        }
     }
 
     // Perform deletions
@@ -328,29 +346,45 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
         fclose(fp);
     }
 
-    // Calculate metrics
-    result.wasted_space = result.final_size - result.size_after_deletion;
-    if (result.size_after_deletion > 0) {
-        result.overhead_percent = 100.0 * static_cast<double>(result.wasted_space) /
-                                 static_cast<double>(result.size_after_deletion);
+    compio_fragmentation_stats frag_stats = {};
+    if (compio_get_fragmentation_stats(archive, &frag_stats) == COMPIO_SUCCESS) {
+        // Real fragmentation metrics from allocator
+        result.file_slots_fragmented = static_cast<double>(frag_stats.num_free_regions);
+        result.fragmentation_level = static_cast<double>(frag_stats.fragmentation_percent);
+
+        // Calculate overhead based on free space fragmentation
+        // More free regions = more fragmentation = higher overhead
+        if (frag_stats.num_free_regions > 0) {
+            // Overhead is the inability to use free space efficiently
+            // If we have many small free regions, they can't be used for large allocations
+            result.overhead_percent = static_cast<double>(frag_stats.fragmentation_percent);
+            result.wasted_space = frag_stats.total_free_bytes;
+        } else {
+            result.overhead_percent = 0.0;
+            result.wasted_space = 0;
+        }
+
+        result.fragmentation_ratio = frag_stats.num_free_regions > 0 ?
+            static_cast<double>(frag_stats.num_free_regions) / static_cast<double>(params.total_files) : 0.0;
+    } else {
+        // Fallback to old metric if allocator stats not available
+        result.wasted_space = result.final_size - result.size_after_deletion;
+        if (result.size_after_deletion > 0) {
+            result.overhead_percent = 100.0 * static_cast<double>(result.wasted_space) /
+                                     static_cast<double>(result.size_after_deletion);
+        }
+
+        if (result.files_deleted > 0) {
+            double deletion_impact = static_cast<double>(result.files_deleted) / static_cast<double>(params.total_files);
+            double overhead_impact = std::min(100.0, result.overhead_percent) / 100.0;
+            result.fragmentation_level = deletion_impact * overhead_impact * 100.0;
+            if (result.fragmentation_level > 100.0) result.fragmentation_level = 100.0;
+        }
+
+        result.file_slots_fragmented = static_cast<double>(result.files_deleted) *
+                                      (1.0 + result.overhead_percent / 100.0);
+        result.fragmentation_ratio = result.file_slots_fragmented / static_cast<double>(params.total_files);
     }
-
-    // Improved fragmentation metric: combines deletion rate, overhead, and size ratio mismatch
-    if (result.files_deleted > 0) {
-        double deletion_impact = static_cast<double>(result.files_deleted) / static_cast<double>(params.total_files);
-        double overhead_impact = std::min(100.0, result.overhead_percent) / 100.0;
-
-        // Fragmentation is high when we delete many files AND have significant overhead
-        // This reflects the "holes in the middle" scenario
-        result.fragmentation_level = deletion_impact * overhead_impact * 100.0;
-        if (result.fragmentation_level > 100.0) result.fragmentation_level = 100.0;
-    }
-
-    // Estimate number of fragmented file slots (simplified)
-    // More files deleted and higher overhead = more fragmentation
-    result.file_slots_fragmented = static_cast<double>(result.files_deleted) *
-                                  (1.0 + result.overhead_percent / 100.0);
-    result.fragmentation_ratio = result.file_slots_fragmented / static_cast<double>(params.total_files);
 
     auto test_end = std::chrono::high_resolution_clock::now();
     result.time_taken_ms = std::chrono::duration<double, std::milli>(test_end - test_start).count();

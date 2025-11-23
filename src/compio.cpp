@@ -286,6 +286,29 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     return archive->header->ftable.remove(name);
 }
 
+int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation_stats *stats) {
+    if (!archive || !stats) {
+        return COMPIO_ERROR;
+    }
+
+    if (!archive->allocator) {
+        return COMPIO_ERROR;
+    }
+
+    // Get stats from allocator
+    auto internal_stats = archive->allocator->get_fragmentation_stats();
+
+    // Copy to C structure
+    stats->num_free_regions = internal_stats.num_free_regions;
+    stats->total_free_bytes = internal_stats.total_free_bytes;
+    stats->largest_free_region = internal_stats.largest_free_region;
+    stats->smallest_free_region = internal_stats.smallest_free_region;
+    stats->avg_free_region_size = internal_stats.avg_free_region_size;
+    stats->fragmentation_percent = internal_stats.fragmentation_percent;
+
+    return COMPIO_SUCCESS;
+}
+
 int compio_close_file(compio_file *file) {
     if (!file) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");

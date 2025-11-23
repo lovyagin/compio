@@ -91,6 +91,24 @@ public:
     void print_list() const;
 
     /**
+     * @brief Statistics about free blocks fragmentation
+     */
+    struct fragmentation_stats {
+        size_t num_free_regions;      /**< Number of separate free regions */
+        size_t total_free_bytes;       /**< Total free space in bytes */
+        size_t largest_free_region;    /**< Size of largest contiguous free block */
+        size_t smallest_free_region;   /**< Size of smallest free block */
+        double avg_free_region_size;   /**< Average size of free regions */
+        uint8_t fragmentation_percent; /**< Overall fragmentation percentage (0-100) */
+    };
+
+    /**
+     * @brief Get detailed fragmentation statistics
+     * @return Structure with fragmentation metrics
+     */
+    fragmentation_stats get_fragmentation_stats() const;
+
+    /**
      * @brief Get cached fragmentation level
      * @return Cached fragmentation percentage (0-100)
      */
@@ -290,6 +308,14 @@ public:
      * @return Fragmentation percentage (0-100)
      */
     [[nodiscard]] uint8_t get_fragmentation() const;
+
+    /**
+     * @brief Get detailed fragmentation statistics
+     * @return Structure with fragmentation metrics
+     */
+    [[nodiscard]] free_blocks_manager::fragmentation_stats get_fragmentation_stats() const {
+        return blocks_manager_.get_fragmentation_stats();
+    }
 
     /**
      * @brief Initialize allocator with archive configuration
