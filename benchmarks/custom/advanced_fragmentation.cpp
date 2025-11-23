@@ -238,14 +238,24 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
         size_t start_idx = files.size() / 3;
         size_t end_idx = 2 * files.size() / 3;
 
-        // Collect candidates from middle third
+        // IMPORTANT: We want to delete min_delete_ratio of ALL files, but ONLY from the middle third
+        // So we need to delete aggressively from the middle to reach the target
+
+        // Collect all candidates from middle third
         std::vector<size_t> middle_candidates;
         for (size_t i = start_idx; i < end_idx; i++) {
             middle_candidates.push_back(i);
         }
 
-        // Select files to delete based on probabilities, but only from middle third
+        // Shuffle to randomize which files from middle we delete
+        std::shuffle(middle_candidates.begin(), middle_candidates.end(), gen);
+
+        // Delete files from middle until we reach min_deletions
+        // This ensures we ACTUALLY delete the target percentage, all from the middle
         for (size_t idx : middle_candidates) {
+            if (indices_to_delete.size() >= min_deletions) break;
+
+            // Apply size-based probability as a filter
             double delete_prob = 0.0;
             switch (files[idx].size_category) {
                 case SMALL: delete_prob = params.delete_prob_small; break;
@@ -253,13 +263,13 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
                 case LARGE: delete_prob = params.delete_prob_large; break;
             }
 
-            if (prob_dist(gen) < delete_prob) {
+            // If probability is high (>0.5), always delete; otherwise use probability
+            if (delete_prob > 0.5 || prob_dist(gen) < delete_prob * 2.0) {
                 indices_to_delete.push_back(idx);
             }
         }
 
-        // Ensure we delete enough from middle to meet min_delete_ratio
-        std::shuffle(middle_candidates.begin(), middle_candidates.end(), gen);
+        // If still not enough, just take remaining files from middle to meet quota
         for (size_t idx : middle_candidates) {
             if (indices_to_delete.size() >= min_deletions) break;
             if (std::find(indices_to_delete.begin(), indices_to_delete.end(), idx) == indices_to_delete.end()) {
@@ -445,7 +455,7 @@ std::vector<FragmentationParams> generate_parameter_grid() {
                     params.large_file_stddev = 3.5;
 
                     // File distribution - more small files to create fragmentation
-                    params.total_files = 300;          // Increased for more slots to fragment
+                    params.total_files = 60;           // Reduced to stay under COMPIO_MAX_FILES=64 limit
                     params.small_file_prob = 0.65;     // 65% small (increased further)
                     params.medium_file_prob = 0.20;    // 20% medium, 15% large
 
