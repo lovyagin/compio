@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #define COMPIO_MAX_FILES 64      /**< Maximum number of files in archive */
 #define COMPIO_FNAME_MAX_SIZE 32 /**< File name maximum length */
@@ -310,6 +311,31 @@ int compio_close_file(compio_file *file);
  * @return int
  */
 int compio_close_archive(compio_archive *archive);
+
+/**
+ * @brief Statistics about allocator fragmentation
+ */
+typedef struct compio_fragmentation_stats {
+    size_t num_free_regions;      /**< Number of separate free regions */
+    size_t total_free_bytes;       /**< Total free space in bytes */
+    size_t largest_free_region;    /**< Size of largest contiguous free block */
+    size_t smallest_free_region;   /**< Size of smallest free block */
+    double avg_free_region_size;   /**< Average size of free regions */
+    uint8_t fragmentation_percent; /**< Overall fragmentation percentage (0-100) */
+} compio_fragmentation_stats;
+
+/**
+ * @brief Get detailed fragmentation statistics from archive allocator
+ *
+ * This function provides insight into the internal state of the block allocator,
+ * showing how fragmented the free space is. High fragmentation (many small free
+ * regions) can impact allocation performance and space efficiency.
+ *
+ * @param archive opened archive
+ * @param stats pointer to structure to fill with statistics
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ */
+int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation_stats *stats);
 
 #ifdef __cplusplus
 }

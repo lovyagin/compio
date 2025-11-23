@@ -305,6 +305,34 @@ void free_blocks_manager::print_list() const {
 
 uint8_t free_blocks_manager::get_cached_fragmentation() const { return cached_fragmentation_; }
 
+free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_stats() const {
+    fragmentation_stats stats = {};
+
+    if (!head_) {
+        return stats;
+    }
+
+    size_t block_count = 0;
+    uint64_t largest_block = 0;
+    uint64_t smallest_block = UINT64_MAX;
+
+    for (free_block *current = head_; current; current = current->next) {
+        block_count++;
+        largest_block = std::max(largest_block, current->size);
+        smallest_block = std::min(smallest_block, current->size);
+    }
+
+    stats.num_free_regions = block_count;
+    stats.total_free_bytes = total_free_;
+    stats.largest_free_region = largest_block;
+    stats.smallest_free_region = (block_count > 0) ? smallest_block : 0;
+    stats.avg_free_region_size = (block_count > 0) ?
+        static_cast<double>(total_free_) / block_count : 0.0;
+    stats.fragmentation_percent = cached_fragmentation_;
+
+    return stats;
+}
+
 void free_blocks_manager::update_fragmentation() {
     cached_fragmentation_ = calculate_fragmentation();
 }
