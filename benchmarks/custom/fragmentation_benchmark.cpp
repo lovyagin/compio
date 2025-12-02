@@ -821,6 +821,12 @@ int main(int argc, char* argv[]) {
     std::cout << "ADVANCED FRAGMENTATION TESTING SUITE\n";
     std::cout << "========================================\n\n";
 
+    std::cout << "Metrics explanation:\n";
+    std::cout << "  OH (Overhead)    - Wasted space percentage due to fragmentation\n";
+    std::cout << "  Del (Deleted)    - Number of files deleted to create fragmentation\n";
+    std::cout << "  ETA              - Estimated Time to complete All tests (seconds)\n";
+    std::cout << "  avg              - Running average overhead across all tests\n\n";
+
     std::cout << "Generating comprehensive test grid...\n";
     auto param_grid = generate_parameter_grid();
     std::cout << "Total configurations: " << param_grid.size() << "\n";
@@ -843,12 +849,27 @@ int main(int argc, char* argv[]) {
     int test_num = 0;
     int progress_step = std::max(1, static_cast<int>(param_grid.size() / 20));
 
+    double total_overhead = 0.0;
+    int overhead_count = 0;
+
     for (const auto& params : param_grid) {
         test_num++;
 
         if (test_num % progress_step == 0 || test_num == 1 || test_num == static_cast<int>(param_grid.size())) {
+            // Calculate ETA
+            auto now = std::chrono::high_resolution_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
+            double avg_time_per_test = test_num > 0 ? static_cast<double>(elapsed) / test_num : 0;
+            int remaining_tests = param_grid.size() - test_num;
+            int eta_seconds = static_cast<int>(avg_time_per_test * remaining_tests);
+
             std::cout << "[" << std::setw(3) << (test_num * 100 / param_grid.size()) << "%] "
-                      << test_num << "/" << param_grid.size() << " ... " << std::flush;
+                      << test_num << "/" << param_grid.size();
+
+            if (test_num > 1 && eta_seconds > 0) {
+                std::cout << " (ETA: " << eta_seconds << "s)";
+            }
+            std::cout << " ... " << std::flush;
         }
 
         std::string temp_file = "temp_frag_test_" + std::to_string(test_num) + ".compio";
@@ -857,10 +878,14 @@ int main(int argc, char* argv[]) {
 
         results.push_back({params, result});
 
+        total_overhead += result.overhead_percent;
+        overhead_count++;
+
         if (test_num % progress_step == 0 || test_num == static_cast<int>(param_grid.size())) {
-            std::cout << "Overhead: " << std::fixed << std::setprecision(1) << result.overhead_percent << "%, "
-                      << "Frag: " << result.fragmentation_level << ", "
-                      << "Deleted: " << result.files_deleted << " files\n";
+            double current_avg = total_overhead / overhead_count;
+            std::cout << "OH: " << std::fixed << std::setprecision(1) << result.overhead_percent << "% "
+                      << "(avg: " << current_avg << "%), "
+                      << "Del: " << result.files_deleted << "\n";
         }
     }
 
