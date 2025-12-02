@@ -233,49 +233,56 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
     size_t min_deletions = static_cast<size_t>(files.size() * params.min_delete_ratio);
 
     if (params.delete_from_middle) {
-        // Delete from physical middle third of created files
-        // (files are created sequentially, so index order approximates physical order)
+
+        // Strategy: Delete files with GAPS between them from middle region
+        // This creates fragmentation: small free regions scattered throughout middle
+        // Unlike deleting consecutive files which creates ONE large free block
+
         size_t start_idx = files.size() / 3;
         size_t end_idx = 2 * files.size() / 3;
 
-        // IMPORTANT: We want to delete min_delete_ratio of ALL files, but ONLY from the middle third
-        // So we need to delete aggressively from the middle to reach the target
-
-        // Collect all candidates from middle third
+        // Collect candidates from middle third, respecting size-based deletion probabilities
         std::vector<size_t> middle_candidates;
         for (size_t i = start_idx; i < end_idx; i++) {
-            middle_candidates.push_back(i);
-        }
-
-        // Shuffle to randomize which files from middle we delete
-        std::shuffle(middle_candidates.begin(), middle_candidates.end(), gen);
-
-        // Delete files from middle until we reach min_deletions
-        // This ensures we ACTUALLY delete the target percentage, all from the middle
-        for (size_t idx : middle_candidates) {
-            if (indices_to_delete.size() >= min_deletions) break;
-
-            // Apply size-based probability as a filter
             double delete_prob = 0.0;
-            switch (files[idx].size_category) {
+            switch (files[i].size_category) {
                 case SMALL: delete_prob = params.delete_prob_small; break;
                 case MEDIUM: delete_prob = params.delete_prob_medium; break;
                 case LARGE: delete_prob = params.delete_prob_large; break;
             }
 
-            // If probability is high (>0.5), always delete; otherwise use probability
-            if (delete_prob > 0.5 || prob_dist(gen) < delete_prob * 2.0) {
+            // Use probability to select which files are candidates
+            if (prob_dist(gen) < delete_prob) {
+                middle_candidates.push_back(i);
+            }
+        }
+
+        // Shuffle to randomize which candidates we take
+        std::shuffle(middle_candidates.begin(), middle_candidates.end(), gen);
+
+        // Take as many as we can from candidates, but ensure we meet min_deletions
+        for (size_t idx : middle_candidates) {
+            if (indices_to_delete.size() >= min_deletions) break;
+            indices_to_delete.push_back(idx);
+        }
+
+        // If we don't have enough candidates, expand to ALL middle files to meet quota
+        if (indices_to_delete.size() < min_deletions) {
+            std::vector<size_t> all_middle;
+            for (size_t i = start_idx; i < end_idx; i++) {
+                if (std::find(indices_to_delete.begin(), indices_to_delete.end(), i) == indices_to_delete.end()) {
+                    all_middle.push_back(i);
+                }
+            }
+            std::shuffle(all_middle.begin(), all_middle.end(), gen);
+            for (size_t idx : all_middle) {
+                if (indices_to_delete.size() >= min_deletions) break;
                 indices_to_delete.push_back(idx);
             }
         }
 
-        // If still not enough, just take remaining files from middle to meet quota
-        for (size_t idx : middle_candidates) {
-            if (indices_to_delete.size() >= min_deletions) break;
-            if (std::find(indices_to_delete.begin(), indices_to_delete.end(), idx) == indices_to_delete.end()) {
-                indices_to_delete.push_back(idx);
-            }
-        }
+        // Sort indices to delete them in order (this creates gaps if we skip some)
+        std::sort(indices_to_delete.begin(), indices_to_delete.end());
     } else {
         // Random deletion across all files
         for (size_t i = 0; i < files.size(); i++) {
