@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "compio/debug_print.hpp"
+#include "compio/sha256.hpp"
 #include "compio.h"
 
 using namespace compio;
@@ -180,8 +181,18 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(size, file);
     assert(size != 0);
     lendian_fread_member(original_size, file);
+
+    // Read checksum
+    lendian_fread(checksum, 1, 64, file);
+    checksum[64] = '\0';
+
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     lendian_fread(data.get(), 1, size, file);
+
+    // Verify checksum
+    if (!verify_checksum()) {
+        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%lu\n", addr);
+    }
 }
 
 void storage_block::write_to(FILE *file, uint64_t addr) const {
@@ -192,10 +203,18 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
     assert(is_compressed || size == original_size);
     if (fseek(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
+
+    // Calculate checksum before writing (non-const, so we cast)
+    const_cast<storage_block*>(this)->calculate_checksum();
+
     lendian_fwrite(&storage_block_signature, sizeof(storage_block_signature), 1, file);
     lendian_fwrite_member(is_compressed, file);
     lendian_fwrite_member(size, file);
     lendian_fwrite_member(original_size, file);
+
+    // Write checksum
+    lendian_fwrite(checksum, 1, 64, file);
+
     lendian_fwrite(data.get(), 1, size, file);
 }
 
@@ -256,4 +275,25 @@ int files_table::remove(const char *name) {
         }
     }
     return -1;
+}
+
+void storage_block::calculate_checksum() {
+    if (!data || size == 0) {
+        memset(checksum, '0', 64);
+        checksum[64] = '\0';
+        return;
+    }
+
+    std::string hash = SHA256::compute(data.get(), size);
+    strncpy(checksum, hash.c_str(), 64);
+    checksum[64] = '\0';
+}
+
+bool storage_block::verify_checksum() const {
+    if (!data || size == 0) {
+        return true;
+    }
+
+    std::string computed = SHA256::compute(data.get(), size);
+    return strncmp(checksum, computed.c_str(), 64) == 0;
 }
