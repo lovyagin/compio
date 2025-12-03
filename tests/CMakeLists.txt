@@ -9,6 +9,7 @@ add_executable(compio_gtest
     src/test_allocator_serialization.cpp
     src/test_compression_type.cpp
     src/test_compressor.cpp
+    src/test_data_integrity.cpp
     src/test_library.cpp
     src/test_file_removal.cpp
     src/test_btree.cpp
