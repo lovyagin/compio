@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "compio.h"
@@ -173,6 +174,14 @@ public:
      * @return True if load successful
      */
     bool load_from_file(compio_archive *archive);
+
+    /**
+     * @brief Verify the integrity of a block using its checksum
+     * @param data Pointer to the block data
+     * @param size Size of the block
+     * @param expected_checksum Expected checksum value
+     */
+    void verify_block_integrity(const uint8_t *data, size_t size, const std::string &expected_checksum);
 
 private:
     /**
@@ -371,6 +380,8 @@ private:
      * @brief Perform defragmentation of the storage
      */
     void perform_defragmentation();
+
+    friend class TestAllocatorAccess;
 };
 
 } // namespace compio

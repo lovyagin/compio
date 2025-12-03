@@ -16,6 +16,7 @@
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
 #include "compio/file.hpp"
+#include "compio/sha256.hpp"
 #include "compio/utils.hpp"
 
 namespace compio {
@@ -495,8 +496,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
         WARNING_PRINT(
-            "warning: fwrite failed to write all bytes in allocator.save_state (%lu < %lu)\n",
-            written, size);
+            "warning: fwrite failed to write all bytes in allocator.save_state (%zu < %u)\n", written, size);
         return false;
     }
 
@@ -811,6 +811,20 @@ void block_allocator::perform_defragmentation() {
     blocks_manager_.save_to_file(archive_);
 
     DEBUG_PRINT("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
+}
+
+// Utility function to calculate checksum
+std::string calculate_checksum(const uint8_t *data, size_t size) {
+    return SHA256::compute(data, size);
+}
+
+// Extend free_blocks_manager to include checksum verification
+void free_blocks_manager::verify_block_integrity(const uint8_t *data, size_t size, const std::string &expected_checksum) {
+    std::string actual_checksum = calculate_checksum(data, size);
+    if (actual_checksum != expected_checksum) {
+        std::cerr << "Checksum mismatch detected!" << std::endl;
+        // Handle error (e.g., log, throw exception, etc.)
+    }
 }
 
 } // namespace compio

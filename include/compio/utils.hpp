@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 namespace compio {
 
@@ -36,6 +37,14 @@ uint64_t fnv1a(const char *s);
  * @return true if file is empty, false otherwise
  */
 bool is_file_empty(FILE *file);
+
+/**
+ * @brief Calculate checksum of data
+ * @param data Pointer to the data
+ * @param size Size of the data
+ * @return Checksum as a string
+ */
+std::string calculate_checksum(const uint8_t *data, size_t size);
 
 } // namespace compio
 
