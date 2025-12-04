@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 #include "compio/debug_print.hpp"
-#include "compio/sha256.hpp"
+#include "compio/utils.hpp"
 #include "compio.h"
 
 using namespace compio;
@@ -181,10 +181,7 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(size, file);
     assert(size != 0);
     lendian_fread_member(original_size, file);
-
-    // Read checksum
-    lendian_fread(checksum, 1, 64, file);
-    checksum[64] = '\0';
+    lendian_fread_member(checksum, file);
 
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     lendian_fread(data.get(), 1, size, file);
@@ -211,9 +208,7 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
     lendian_fwrite_member(is_compressed, file);
     lendian_fwrite_member(size, file);
     lendian_fwrite_member(original_size, file);
-
-    // Write checksum
-    lendian_fwrite(checksum, 1, 64, file);
+    lendian_fwrite_member(checksum, file);
 
     lendian_fwrite(data.get(), 1, size, file);
 }
@@ -279,21 +274,18 @@ int files_table::remove(const char *name) {
 
 void storage_block::calculate_checksum() {
     if (!data || size == 0) {
-        memset(checksum, '0', 64);
-        checksum[64] = '\0';
+        checksum = 0;
         return;
     }
 
-    std::string hash = SHA256::compute(data.get(), size);
-    strncpy(checksum, hash.c_str(), 64);
-    checksum[64] = '\0';
+    checksum = fnv1a_32(data.get(), size);
 }
 
 bool storage_block::verify_checksum() const {
     if (!data || size == 0) {
-        return true;
+        return checksum == 0;
     }
 
-    std::string computed = SHA256::compute(data.get(), size);
-    return strncmp(checksum, computed.c_str(), 64) == 0;
+    uint32_t computed = fnv1a_32(data.get(), size);
+    return checksum == computed;
 }

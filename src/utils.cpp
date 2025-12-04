@@ -43,6 +43,22 @@ uint64_t fnv1a(const char *s) {
     return hash;
 }
 
+uint64_t fnv1a(const uint8_t *data, size_t size) {
+    uint64_t hash = 0xcbf29ce484222325;
+    for (size_t i = 0; i < size; ++i) {
+        hash = (hash ^ data[i]) * 0x100000001b3;
+    }
+    return hash;
+}
+
+uint32_t fnv1a_32(const uint8_t *data, size_t size) {
+    uint32_t hash = 0x811c9dc5;
+    for (size_t i = 0; i < size; ++i) {
+        hash = (hash ^ data[i]) * 0x01000193;
+    }
+    return hash;
+}
+
 bool is_file_empty(FILE *file) {
     fseek(file, 0, SEEK_END);
     long fsize = ftell(file);

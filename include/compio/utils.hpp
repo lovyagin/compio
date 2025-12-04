@@ -32,6 +32,22 @@ uint8_t parse_mode(const char *mode);
 uint64_t fnv1a(const char *s);
 
 /**
+ * @brief Hashes binary data via fnv1a algorithm
+ * @param data Pointer to binary data
+ * @param size Size of data in bytes
+ * @return resulting hash
+ */
+uint64_t fnv1a(const uint8_t *data, size_t size);
+
+/**
+ * @brief Hashes binary data via 32-bit fnv1a algorithm (more space-efficient)
+ * @param data Pointer to binary data
+ * @param size Size of data in bytes
+ * @return resulting hash
+ */
+uint32_t fnv1a_32(const uint8_t *data, size_t size);
+
+/**
  * @brief Checks if file is empty
  * @param file Opened file
  * @return true if file is empty, false otherwise
