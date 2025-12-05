@@ -130,6 +130,7 @@ struct storage_block : public infile_object {
     uint64_t size;                   /**< Size of data array */
     uint64_t original_size;          /**< Original size (size of uncompressed data) */
     std::unique_ptr<uint8_t[]> data; /**< Data block */
+    uint32_t checksum;               /**< FNV-1a 32-bit checksum (4 bytes) */
 
     storage_block();
 
@@ -144,6 +145,17 @@ struct storage_block : public infile_object {
 
     void read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr) const override;
+
+    /**
+     * @brief Calculate and store SHA-256 checksum of the data
+     */
+    void calculate_checksum();
+
+    /**
+     * @brief Verify data integrity against stored checksum
+     * @return true if checksum matches, false otherwise
+     */
+    bool verify_checksum() const;
 };
 
 /**
@@ -151,7 +163,8 @@ struct storage_block : public infile_object {
  */
 #define STORAGE_BLOCK_METASIZE                                                                     \
     (sizeof(uint8_t) /* signature */ + sizeof(storage_block::is_compressed) +                      \
-     sizeof(storage_block::size) + sizeof(storage_block::original_size))
+     sizeof(storage_block::size) + sizeof(storage_block::original_size) +                          \
+     sizeof(uint32_t) /* FNV-1a 32-bit checksum */)
 
 } // namespace compio
 
