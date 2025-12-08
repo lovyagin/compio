@@ -8,6 +8,23 @@
  * 3. Observe fragmentation as larger blocks cannot fit in old gaps
  *
  * This creates realistic fragmentation without artificial file deletion.
+ *
+ * METRICS EXPLANATION:
+ * - CompRatio: Fraction of random bytes (0.0 = all zeros/compressible, 1.0 = all random)
+ * - Size(KB): Physical archive file size on disk
+ * - Growth(KB): How much the archive grew since previous round
+ * - FreeRgns: Number of separate free memory regions (holes) in the archive
+ * - Frag%: Fragmentation level (0-100%), based on:
+ *     - Number of free regions (more regions = more fragmented)
+ *     - Size dispersion of free blocks (varied sizes = fragmented)
+ *     - Gaps between free blocks
+ * - Overhd%: Percentage of wasted space (free bytes / total size)
+ * - Write(ms): Average time to write one file
+ *
+ * TEST DIFFERENCES:
+ * Test 1: BEST_FIT, 100 files x 16KB, 10 rounds, compression drift 0.05->0.95
+ * Test 2: FIRST_FIT (compare allocation strategy)
+ * Test 3: BEST_FIT, 50 files x 32KB, 20 rounds, MORE AGGRESSIVE drift 0.02->0.98
  */
 
 #include <algorithm>
@@ -21,6 +38,8 @@
 #include <iomanip>
 
 #include "compio.h"
+#include "compio/compio_file.hpp"
+#include "compio/allocator.hpp"
 
 // ----------------------------------------------------------------------------
 // Configuration
@@ -69,6 +88,13 @@ void generate_data_with_ratio(std::vector<uint8_t>& data, double compress_ratio,
 struct Metrics {
     size_t physical_size;
     double avg_write_time_ms;
+
+    // Fragmentation metrics
+    size_t num_free_regions;
+    size_t total_free_bytes;
+    size_t largest_free_region;
+    uint8_t fragmentation_percent;
+    double overhead_percent;  // (total_size - used_size) / total_size * 100
 };
 
 Metrics collect_metrics(const std::string& archive_path, compio_archive* archive,
@@ -86,6 +112,20 @@ Metrics collect_metrics(const std::string& archive_path, compio_archive* archive
     }
 
     m.avg_write_time_ms = write_time_ms / num_files;
+
+    // Get fragmentation statistics from allocator
+    if (archive && archive->allocator) {
+        auto stats = archive->allocator->get_fragmentation_stats();
+        m.num_free_regions = stats.num_free_regions;
+        m.total_free_bytes = stats.total_free_bytes;
+        m.largest_free_region = stats.largest_free_region;
+        m.fragmentation_percent = stats.fragmentation_percent;
+
+        // Calculate overhead: wasted space percentage
+        if (m.physical_size > 0) {
+            m.overhead_percent = 100.0 * m.total_free_bytes / m.physical_size;
+        }
+    }
 
     return m;
 }
@@ -145,6 +185,10 @@ void run_compression_drift_test(const DriftParams& params) {
     Metrics initial = collect_metrics(filename, archive, write_time, params.num_files);
 
     std::cout << "  Physical size: " << initial.physical_size / 1024 << " KB\n";
+    std::cout << "  Free space: " << initial.total_free_bytes / 1024 << " KB ("
+              << std::fixed << std::setprecision(1) << initial.overhead_percent << "% overhead)\n";
+    std::cout << "  Free regions: " << initial.num_free_regions << "\n";
+    std::cout << "  Fragmentation: " << static_cast<int>(initial.fragmentation_percent) << "%\n";
     std::cout << "  Avg write time: " << std::setprecision(3)
               << initial.avg_write_time_ms << " ms/file\n";
 
@@ -153,20 +197,26 @@ void run_compression_drift_test(const DriftParams& params) {
     // ------------------------------------------------------------------------
 
     std::cout << "\nPhase 2: Rewriting files with gradually decreasing compressibility...\n\n";
-    std::cout << std::setw(8) << "Round"
-              << std::setw(12) << "CompRatio"
-              << std::setw(15) << "Size(KB)"
-              << std::setw(15) << "Growth(KB)"
-              << std::setw(15) << "AvgWrite(ms)"
+    std::cout << std::setw(6) << "Round"
+              << std::setw(10) << "CompRatio"
+              << std::setw(12) << "Size(KB)"
+              << std::setw(11) << "Growth(KB)"
+              << std::setw(10) << "FreeRgns"
+              << std::setw(9) << "Frag%"
+              << std::setw(11) << "Overhd%"
+              << std::setw(12) << "Write(ms)"
               << "\n";
-    std::cout << std::string(65, '-') << "\n";
+    std::cout << std::string(81, '-') << "\n";
 
     // Print initial state
-    std::cout << std::setw(8) << 0
-              << std::setw(12) << std::fixed << std::setprecision(2) << params.initial_compress_ratio
-              << std::setw(15) << initial.physical_size / 1024
-              << std::setw(15) << "-"
-              << std::setw(15) << std::setprecision(3) << initial.avg_write_time_ms
+    std::cout << std::setw(6) << 0
+              << std::setw(10) << std::fixed << std::setprecision(2) << params.initial_compress_ratio
+              << std::setw(12) << initial.physical_size / 1024
+              << std::setw(11) << "-"
+              << std::setw(10) << initial.num_free_regions
+              << std::setw(9) << static_cast<int>(initial.fragmentation_percent)
+              << std::setw(11) << std::setprecision(1) << initial.overhead_percent
+              << std::setw(12) << std::setprecision(2) << initial.avg_write_time_ms
               << "\n";
 
     size_t prev_size = initial.physical_size;
@@ -199,11 +249,14 @@ void run_compression_drift_test(const DriftParams& params) {
 
         long long growth = static_cast<long long>(m.physical_size) - static_cast<long long>(prev_size);
 
-        std::cout << std::setw(8) << round
-                  << std::setw(12) << std::fixed << std::setprecision(2) << compress_ratio
-                  << std::setw(15) << m.physical_size / 1024
-                  << std::setw(15) << (growth > 0 ? "+" : "") << growth / 1024
-                  << std::setw(15) << std::setprecision(3) << m.avg_write_time_ms
+        std::cout << std::setw(6) << round
+                  << std::setw(10) << std::fixed << std::setprecision(2) << compress_ratio
+                  << std::setw(12) << m.physical_size / 1024
+                  << std::setw(11) << (growth > 0 ? "+" : "") << growth / 1024
+                  << std::setw(10) << m.num_free_regions
+                  << std::setw(9) << static_cast<int>(m.fragmentation_percent)
+                  << std::setw(11) << std::setprecision(1) << m.overhead_percent
+                  << std::setw(12) << std::setprecision(2) << m.avg_write_time_ms
                   << "\n";
 
         prev_size = m.physical_size;
@@ -212,6 +265,14 @@ void run_compression_drift_test(const DriftParams& params) {
     compio_close_archive(archive);
     remove(filename.c_str());
 
+    // Print summary
+    std::cout << "\n--- Summary ---\n";
+    std::cout << "Archive grew from " << initial.physical_size / 1024 << " KB to "
+              << prev_size / 1024 << " KB ("
+              << std::fixed << std::setprecision(1)
+              << (100.0 * prev_size / initial.physical_size - 100.0) << "% growth)\n";
+    std::cout << "This demonstrates fragmentation: larger compressed blocks cannot reuse\n";
+    std::cout << "space from smaller blocks, forcing allocator to append to file end.\n";
     std::cout << "\n";
 }
 
