@@ -90,7 +90,6 @@ add_library(compio SHARED
     src/compressor.cpp
     src/file.cpp
     src/infile_object.cpp
-    src/segregated_allocator.cpp
     src/sha256.cpp
     src/storage_block_reader.cpp
     src/utils.cpp
