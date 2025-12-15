@@ -47,7 +47,7 @@ void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
         merge_blocks(prev, offset, size, next);
     } else {
         // Create new block if no merging possible
-        auto *new_block = new free_block{offset, size, nullptr, nullptr};
+        auto *new_block = new free_block{offset, size, nullptr, nullptr, nullptr, nullptr};
         insert_ordered_block(new_block);
     }
 
@@ -178,7 +178,7 @@ void free_blocks_manager::merge_blocks(free_block *prev, uint64_t offset, uint64
         size_idx_.insert(next);
     } else {
         // No blocks to merge with, create new block
-        auto *new_block = new free_block{offset, size, nullptr, nullptr};
+        auto *new_block = new free_block{offset, size, nullptr, nullptr, nullptr, nullptr};
         insert_ordered_block(new_block);
     }
 }
