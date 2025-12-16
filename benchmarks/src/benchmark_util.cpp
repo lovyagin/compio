@@ -48,6 +48,12 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config) 
                 compio_build_zlib_compressor(&config->compressor);
             } else if (value == "dummy") {
                 compio_build_dummy_compressor(&config->compressor);
+            } else if (value == "lz4") {
+                compio_build_lz4_compressor(&config->compressor);
+            } else if (value == "zstd") {
+                compio_build_zstd_compressor(&config->compressor);
+            } else if (value == "brotli") {
+                compio_build_brotli_compressor(&config->compressor);
             } else {
                 goto error_key_value;
             }
@@ -59,8 +65,10 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config) 
             config->b_tree_degree = std::atoi(value.c_str());
         } else if (key == "block_size") {
             config->block_size = std::atoi(value.c_str());
-            config->block_size__minimum = 0;
-            config->block_size__maximum = config->block_size * 4;
+        } else if (key == "block_size__minimum") {
+            config->block_size__minimum = std::atoi(value.c_str());
+        } else if (key == "block_size__maximum") {
+            config->block_size__maximum = std::atoi(value.c_str());
         } else if (key == "fill_holes_with_zeros") {
             if (value == "true") {
                 config->fill_holes_with_zeros = true;
