@@ -32,6 +32,7 @@ endif()
 option(COMPIO_DEBUG_PRINT "compio: enable DEBUG prints" OFF)
 option(COMPIO_WARNING_PRINT "compio: enable WARNING prints" ON)
 option(COMPIO_BENCHMARK_COUNTERS "compio: enable filesystem operations counting for benchmarking" OFF)
+option(COMPIO_BENCHMARK_BLOCKS_COUNTER "compio: enable blocks counting for benchmarking" OFF)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     if (NOT DEFINED COMPIO_DEBUG_PRINT)
@@ -59,6 +60,11 @@ endif()
 if (COMPIO_BENCHMARK_COUNTERS)
     message("Building with COMPIO_BENCHMARK_COUNTERS")
     add_compile_options(-DCOMPIO_BENCHMARK_COUNTERS)
+endif()
+
+if (COMPIO_BENCHMARK_BLOCKS_COUNTER)
+    message("Building with COMPIO_BENCHMARK_BLOCKS_COUNTER")
+    add_compile_options(-DCOMPIO_BENCHMARK_BLOCKS_COUNTER)
 endif()
 
 
@@ -111,6 +117,7 @@ target_compile_definitions(compio PRIVATE
     $<$<BOOL:${COMPIO_DEBUG_PRINT}>:COMPIO_DEBUG_PRINT=1>
     $<$<BOOL:${COMPIO_WARNING_PRINT}>:COMPIO_WARNING_PRINT=1>
     $<$<BOOL:${COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER}>:COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER=1>
+    $<$<BOOL:${COMPIO_BENCHMARK_BLOCKS_COUNTER}>:COMPIO_BENCHMARK_BLOCKS_COUNTER=1>
 )
 
 # --- Dependencies

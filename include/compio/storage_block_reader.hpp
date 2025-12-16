@@ -362,6 +362,11 @@ public:
     bool cache_contains(const tree_key &key) const;
 };
 
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+/** Number of blocks in current archive (used in benchmarking) */
+extern long long bm_n_blocks;
+#endif
+
 } // namespace compio
 
 #endif // STORAGE_BLOCK_READER_HPP_

@@ -6,6 +6,10 @@
 
 namespace compio {
 
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+long long bm_n_blocks = 0;
+#endif
+
 block::block(context_t &context, const tree_key &key, uint64_t addr)
     : context(context),
       _key(key),
@@ -214,6 +218,9 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     // block::~block will update this element in btree with new address (or delete it if block will
     // be removed, thought we don't remove newly created blocks anywhere)
     context.index->insert(key, {0, size});
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+    ++bm_n_blocks;
+#endif
     return b;
 }
 
@@ -275,6 +282,9 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
     }
     context.index->remove(key);
     context.allocator->deallocate(b->addr(), b->c_size());
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+    --bm_n_blocks;
+#endif
 }
 
 bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }
