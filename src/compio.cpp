@@ -54,8 +54,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       config(*config),
       index(nullptr),
       block_reader(nullptr),
-      mode_b(mode_b),
-      allocator(nullptr) {
+      allocator(nullptr),
+      mode_b(mode_b) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
