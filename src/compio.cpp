@@ -99,8 +99,11 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: cache_size__blocks=%d < 0\n", c->cache_size__blocks);
         return false;
     }
-    if (c->cache_size__nodes < 0) {
-        WARNING_PRINT("warning: cache_size__nodes=%d < 0\n", c->cache_size__nodes);
+    if (c->cache_size__nodes < 4) {
+        // with too small cache_size__nodes a bug appears, when nodes get evicted from cache, 
+        // but still exist in local variables of some function, and if that function modifies 
+        // that node, but some other function will try to read that node from file, it would get it's old version
+        WARNING_PRINT("warning: cache_size__nodes=%d < 4\nplease use cache_size__nodes >= 4 ", c->cache_size__nodes);
         return false;
     }
     return true;
