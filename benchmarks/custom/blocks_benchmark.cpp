@@ -4,6 +4,7 @@
 #include <random>
 #include <vector>
 #include <string>
+#include <chrono>
 
 #include "compio.h"
 #include "sample_data.hpp"
@@ -34,6 +35,14 @@ int main(int argc, char **argv) {
     
     std::vector<long long> block_counts;
     block_counts.reserve(n_operations);
+    
+    std::vector<double> insert_bps;
+    std::vector<double> erase_bps;
+    insert_bps.reserve(n_operations);
+    erase_bps.reserve(n_operations);
+    
+    double last_insert_bps = 0.0;
+    double last_erase_bps = 0.0;
     
     compio_config config;
     compio_build_default_config(&config);
@@ -70,23 +79,49 @@ int main(int argc, char **argv) {
             size_t insert_size = target_size - current_size;
             size_t pos = rng() % (current_size + 1);
             compio_seek(file, pos, COMPIO_SEEK_SET);
+            
+            auto start_time = std::chrono::high_resolution_clock::now();
             auto bytes = compio_insert(big_buffer.data(), insert_size, file);
+            auto end_time = std::chrono::high_resolution_clock::now();
+            
             if (bytes != insert_size) {
                 failed = true;
                 break;
             }
+            
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+            double bps = (bytes > 0) ? (bytes * 1000000.0) / duration.count() : 0.0;
+            last_insert_bps = bps;
+            
+            block_counts.push_back(compio::bm_n_blocks);
+            insert_bps.push_back(bps);
+            erase_bps.push_back(last_erase_bps);
         } else if (target_size < current_size) {
             size_t erase_size = current_size - target_size;
             size_t pos = rng() % (current_size - erase_size + 1);
             compio_seek(file, pos, COMPIO_SEEK_SET);
+            
+            auto start_time = std::chrono::high_resolution_clock::now();
             auto bytes = compio_erase(erase_size, file);
+            auto end_time = std::chrono::high_resolution_clock::now();
+            
             if (bytes != erase_size) {
                 failed = true;
                 break;
             }
+            
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+            double bps = (bytes > 0) ? (bytes * 1000000.0) / duration.count() : 0.0;
+            last_erase_bps = bps;
+            
+            block_counts.push_back(compio::bm_n_blocks);
+            insert_bps.push_back(last_insert_bps);
+            erase_bps.push_back(bps);
+        } else {
+            block_counts.push_back(compio::bm_n_blocks);
+            insert_bps.push_back(last_insert_bps);
+            erase_bps.push_back(last_erase_bps);
         }
-        
-        block_counts.push_back(compio::bm_n_blocks);
     }
     
     if (failed) {
@@ -102,9 +137,9 @@ int main(int argc, char **argv) {
     
     if (!block_counts.empty()) {
         std::ofstream csv(out_file);
-        csv << "n_blocks\n";
+        csv << "n_blocks,insert_bps,erase_bps\n";
         for (size_t i = 0; i < block_counts.size(); ++i) {
-            csv << block_counts[i] << "\n";
+            csv << block_counts[i] << "," << insert_bps[i] << "," << erase_bps[i] << "\n";
         }
     }
     
