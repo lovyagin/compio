@@ -63,6 +63,7 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
+    DEBUG_PRINT("[BTREE]: insert_nonfull(node.addr=%ld, key={...%ld, %ld}, value={%ld, %ld})\n", node.addr(), key.hash % 100, key.pos, value.addr, value.size);
     if (RO(node)->is_leaf) {
         if (idx < RO(node)->num_keys && RO(node)->keys[idx] == key) {
             WARNING_PRINT("warning: trying to insert already existing key\n");
@@ -358,6 +359,7 @@ void btree::print() { _print(read_root(), 0); }
 void btree::clear_cache() { reader.clear_cache(); }
 
 void btree::split_child(shared_node &parent, shared_node &child, const uint64_t idx) {
+    DEBUG_PRINT("[BTREE]: split_child(parent.addr=%ld, child.addr=%ld, idx=%ld)\n", parent.addr(), child.addr(), idx);
     auto new_node = create_node();
 
     new_node->is_leaf = child->is_leaf;
