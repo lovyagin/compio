@@ -50,8 +50,8 @@ int main(int argc, char **argv) {
     
     compio_config config;
     compio_build_default_config(&config);
-    config.cache_size__nodes = 4;
-    config.cache_size__blocks = 0;
+    config.cache_size__nodes = 128;
+    config.cache_size__blocks = 1024;
     
     compio_archive *archive = compio_open_archive(fn.c_str(), "w+", &config);
     if (!archive) {
