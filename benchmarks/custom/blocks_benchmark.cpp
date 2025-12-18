@@ -15,6 +15,10 @@ int main(int argc, char **argv) {
         std::cerr << "usage: ./blocks_benchmark <n_operations> <target_mean> <target_stddev> <out_file>\n";
         return -1;
     }
+
+#ifndef NDEBUG
+    std::cerr << "WARNING: the program was build in Debug mode, so perfomance measurements might be unreliable\n";
+#endif
     
     const std::size_t n_operations = std::atoi(argv[1]);
     const std::size_t target_mean = std::atoi(argv[2]);
