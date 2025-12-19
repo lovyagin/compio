@@ -19,7 +19,7 @@ struct User {
     };
 
     User(int seed, const char *sample_data, std::size_t sample_data_size, std::size_t file_size,
-         double stddev, double switch_p)
+         double stddev, std::size_t n_switch)
         : rng(seed),
           file_size(file_size),
           stddev(stddev),
@@ -27,12 +27,14 @@ struct User {
           sample_data_size(sample_data_size),
           mean_d(0, file_size - 1),
           pos_d(0., stddev),
-          switch_d(switch_p),
+          n_ops_until_switch(n_switch),
+          n_switch(n_switch),
           current_mean(mean_d(rng)) {}
 
     Operation get_op() {
-        if (switch_d(rng)) {
+        if (--n_ops_until_switch == 0) {
             current_mean = mean_d(rng);
+            n_ops_until_switch = n_switch;
         }
         const auto [left, right] = get_range();
         std::size_t size = std::min(right - left, sample_data_size);
@@ -67,7 +69,8 @@ private:
     std::uniform_int_distribution<std::size_t> mean_d;
     std::uniform_int_distribution<std::size_t> data_pos_d;
     std::normal_distribution<double> pos_d;
-    std::bernoulli_distribution switch_d;
+    std::size_t n_ops_until_switch;
+    std::size_t n_switch;
 
     double current_mean;
 };
@@ -79,7 +82,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
     const std::size_t n_operations = state.range(1);
     const std::size_t file_size = state.range(2);
     const double stddev = state.range(3);
-    const double switch_p = state.range(4) / 100.;
+    const std::size_t n_switch = state.range(4);
 
     std::string fn = get_temporary_filename();
 
@@ -115,7 +118,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
         fclose(file);
     }
 
-    User user(0, html_data, sizeof(html_data), file_size, stddev, switch_p);
+    User user(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
 
@@ -172,7 +175,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     const std::size_t n_operations = state.range(1);
     const std::size_t file_size = state.range(2);
     const double stddev = state.range(3);
-    const double switch_p = state.range(4) / 100.;
+    const std::size_t n_switch = state.range(4);
 
     std::string fn = get_temporary_filename();
 
@@ -217,7 +220,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         compio_close_archive(archive);
     }
 
-    User user(0, html_data, sizeof(html_data), file_size, stddev, switch_p);
+    User user(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
     double total_node_cache_hit_probability = 0.;
@@ -302,7 +305,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {false, true}, {1 << 10}, {1 << 20}, {1 << 13}, {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100},
+    {false, true}, {1 << 10}, {1 << 20}, {1 << 13}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
