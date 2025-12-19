@@ -9,7 +9,7 @@
 
 #include "compio.h"
 
-#include "sample_data.hpp"
+#include "varied_sample_data.hpp"
 
 struct UsageStrategy {
     struct Operation {
@@ -83,6 +83,8 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
     const double gamma_shape = state.range(4);
     const double gamma_scale = state.range(5);
     const double region_size = state.range(6);
+    const char *data = reinterpret_cast<const char*>(state.range(7));
+    const std::size_t data_size = state.range(8);
 
     std::string fn = get_temporary_filename();
 
@@ -179,6 +181,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     const double gamma_shape = state.range(4);
     const double gamma_scale = state.range(5);
     const double region_size = state.range(6);
+    const char *data = reinterpret_cast<const char*>(state.range(7));
+    const std::size_t data_size = state.range(8);
 
     std::string fn = get_temporary_filename();
 
@@ -311,7 +315,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 
 const std::vector<std::vector<int64_t>> params_grid = {
     {false, true}, {1 << 11}, {1 << 20}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
-    {2},           {2048},    {1 << 13},
+    {2},           {2048},    {1 << 13}, {reinterpret_cast<int64_t>(data_0)}, {sizeof(data_0)}
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
