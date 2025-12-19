@@ -19,14 +19,15 @@ node_reader::node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size)
       cache(max_size) {}
 
 shared_node node_reader::read_node(uint64_t addr) {
-    if (!cache.exists(addr)) {
+    auto node = cache.get(addr);
+    if (!node.has_value()) {
         auto result = shared_node(file, addr, new index_node(tree_degree));
         result.read();     // read from file (because constructor with obj& does not read)
         result.unmodify(); // constructor with obj& sets modified=true
         cache.put(addr, result);
         return result;
     } else {
-        return cache.get(addr);
+        return *node.value();
     }
 }
 

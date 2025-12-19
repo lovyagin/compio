@@ -5,6 +5,7 @@
  * Modifications:
  * + Added methods: remove, clear, is_full, pop_back, pop, add_to_range
  * + Replaced unordered_map with map
+ * + Added hit probability measurement
  *
  * Copyright (c) 2014, lamerman
  * All rights reserved.
@@ -41,6 +42,7 @@
 #include <cstddef>
 #include <list>
 #include <map>
+#include <optional>
 #include <stdexcept>
 
 namespace cache {
@@ -70,13 +72,15 @@ public:
         }
     }
 
-    const value_t &get(const key_t &key) {
+    std::optional<const value_t *> get(const key_t &key) {
+        ++_total_count;
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
-            throw std::range_error("There is no such key in cache");
+            return std::nullopt;
         } else {
+            ++_hit_count;
             _cache_items_list.splice(_cache_items_list.begin(), _cache_items_list, it->second);
-            return it->second->second;
+            return &it->second->second;
         }
     }
 
@@ -151,9 +155,15 @@ public:
         }
     }
 
+    double get_hit_probability() const {
+        return static_cast<double>(_hit_count) / _total_count;
+    }
+
     std::list<key_value_pair_t> _cache_items_list;
     std::map<key_t, list_iterator_t, comparator> _cache_items_map;
     size_t _max_size;
+    size_t _hit_count;
+    size_t _total_count;
 };
 
 } // namespace cache
