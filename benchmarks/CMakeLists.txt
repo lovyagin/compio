@@ -7,6 +7,7 @@ add_executable(compio_benchmarks
     src/consecutive_write.cpp
     src/random_read.cpp
     src/random_write.cpp
+    src/optimal_usage.cpp
     src/allocator_benchmark.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
