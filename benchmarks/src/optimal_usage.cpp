@@ -2,6 +2,8 @@
 #include <benchmark/benchmark.h>
 #include <random>
 
+#include "compio/compio_file.hpp"
+
 #include "benchmark_util.hpp"
 
 #include "compio.h"
@@ -217,6 +219,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     User user(0, html_data, sizeof(html_data), file_size, stddev, switch_p);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
+    double total_node_cache_hit_probability = 0.;
+    double total_block_cache_hit_probability = 0.;
 
     for (auto _ : state) {
         compio_archive *archive = compio_open_archive(fn.c_str(), is_write ? "w" : "r", &config);
@@ -266,6 +270,9 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
             break;
         }
 
+        total_node_cache_hit_probability += archive->index->get_cache_hit_probability();
+        total_block_cache_hit_probability += archive->block_reader->get_cache_hit_probability();
+
         compio_close_file(file);
         compio_close_archive(archive);
     }
@@ -273,6 +280,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     state.SetBytesProcessed(total_bytes_processed);
     state.counters["file_size"] = benchmark::Counter(
         get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["node_cache_hit"] = total_node_cache_hit_probability / state.iterations();
+    state.counters["block_cache_hit"] = total_block_cache_hit_probability / state.iterations();
     remove(fn.c_str());
 }
 
