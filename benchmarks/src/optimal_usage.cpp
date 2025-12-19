@@ -11,14 +11,14 @@
 
 #include "sample_data.hpp"
 
-struct User {
+struct UsageStrategy {
     struct Operation {
         std::size_t pos;
         std::size_t size;
         const char *data;
     };
 
-    User(int seed, const char *sample_data, std::size_t sample_data_size, std::size_t file_size,
+    UsageStrategy(int seed, const char *sample_data, std::size_t sample_data_size, std::size_t file_size,
          double stddev, std::size_t n_switch)
         : rng(seed),
           file_size(file_size),
@@ -118,7 +118,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
         fclose(file);
     }
 
-    User user(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
+    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
 
@@ -131,7 +131,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
 
         bool failed = false;
         for (std::size_t i = 0; i < n_operations; ++i) {
-            const auto op = user.get_op();
+            const auto op = strategy.get_op();
             if (fseek(file, op.pos, SEEK_SET) != 0) {
                 fclose(file);
                 state.SkipWithError("fseek failed");
@@ -220,7 +220,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         compio_close_archive(archive);
     }
 
-    User user(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
+    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
     double total_node_cache_hit_probability = 0.;
@@ -247,7 +247,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 
         bool failed = false;
         for (std::size_t i = 0; i < n_operations; ++i) {
-            const auto op = user.get_op();
+            const auto op = strategy.get_op();
             if (compio_seek(file, op.pos, COMPIO_SEEK_SET) != 0) {
                 compio_close_file(file);
                 compio_close_archive(archive);
@@ -305,7 +305,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {false, true}, {1 << 10}, {1 << 20}, {1 << 13}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
+    {false, true}, {1 << 11}, {1 << 20}, {1 << 13}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
