@@ -18,61 +18,59 @@ struct UsageStrategy {
         const char *data;
     };
 
-    UsageStrategy(int seed, const char *sample_data, std::size_t sample_data_size, std::size_t file_size,
-         double stddev, std::size_t n_switch)
+    UsageStrategy(int seed, const char *sample_data, std::size_t sample_data_size,
+                  std::size_t file_size, double gamma_shape, double gamma_scale,
+                  std::size_t region_size, std::size_t n_switch)
         : rng(seed),
           file_size(file_size),
-          stddev(stddev),
           sample_data(sample_data),
           sample_data_size(sample_data_size),
-          mean_d(0, file_size - 1),
-          pos_d(0., stddev),
+          gamma_shape(gamma_shape),
+          gamma_scale(gamma_scale),
+          region_size(std::min(region_size, file_size)),
+          region_start_dist(0, file_size - region_size),
           n_ops_until_switch(n_switch),
-          n_switch(n_switch),
-          current_mean(mean_d(rng)) {}
+          n_switch(n_switch) {
+        region_start = region_start_dist(rng);
+    }
 
     Operation get_op() {
         if (--n_ops_until_switch == 0) {
-            current_mean = mean_d(rng);
+            region_start = region_start_dist(rng);
             n_ops_until_switch = n_switch;
         }
-        const auto [left, right] = get_range();
-        std::size_t size = std::min(right - left, sample_data_size);
-        data_pos_d = std::uniform_int_distribution<std::size_t>(0, sample_data_size - size);
-        return Operation{left, size, sample_data + data_pos_d(rng)};
+
+        double gamma_sample = gamma_dist(rng);
+        std::size_t max_possible = std::min(region_size, sample_data_size);
+        std::size_t size =
+            static_cast<std::size_t>(std::min(gamma_sample, static_cast<double>(max_possible)));
+        if (size == 0)
+            size = 1;
+
+        std::uniform_int_distribution<std::size_t> offset_dist(0, region_size - size);
+        std::size_t offset = offset_dist(rng);
+
+        std::uniform_int_distribution<std::size_t> data_pos_dist(0, sample_data_size - size);
+
+        return Operation{region_start + offset, size, sample_data + data_pos_dist(rng)};
     }
 
 private:
-    std::size_t get_pos() {
-        double pos = -1;
-        while (pos < 0 || pos > file_size - 1) {
-            pos = current_mean + pos_d(rng);
-        }
-        return std::round(pos);
-    }
-
-    std::pair<std::size_t, std::size_t> get_range() {
-        std::size_t a = get_pos(), b = get_pos();
-        if (a > b) {
-            return {b, a};
-        } else {
-            return {a, b};
-        }
-    }
-
     std::minstd_rand rng;
     std::size_t file_size;
-    std::size_t stddev;
     const char *sample_data;
     std::size_t sample_data_size;
 
-    std::uniform_int_distribution<std::size_t> mean_d;
-    std::uniform_int_distribution<std::size_t> data_pos_d;
-    std::normal_distribution<double> pos_d;
+    double gamma_shape;
+    double gamma_scale;
+    std::gamma_distribution<double> gamma_dist{gamma_shape, gamma_scale};
+
+    std::size_t region_size;
+    std::uniform_int_distribution<std::size_t> region_start_dist;
+    std::size_t region_start;
+
     std::size_t n_ops_until_switch;
     std::size_t n_switch;
-
-    double current_mean;
 };
 
 extern compio_config config;
@@ -81,8 +79,10 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
     const bool is_write = state.range(0);
     const std::size_t n_operations = state.range(1);
     const std::size_t file_size = state.range(2);
-    const double stddev = state.range(3);
-    const std::size_t n_switch = state.range(4);
+    const std::size_t n_switch = state.range(3);
+    const double gamma_shape = state.range(4);
+    const double gamma_scale = state.range(5);
+    const double region_size = state.range(6);
 
     std::string fn = get_temporary_filename();
 
@@ -118,7 +118,8 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
         fclose(file);
     }
 
-    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
+    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, gamma_shape, gamma_scale,
+                           region_size, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
 
@@ -174,8 +175,10 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     const bool is_write = state.range(0);
     const std::size_t n_operations = state.range(1);
     const std::size_t file_size = state.range(2);
-    const double stddev = state.range(3);
-    const std::size_t n_switch = state.range(4);
+    const std::size_t n_switch = state.range(3);
+    const double gamma_shape = state.range(4);
+    const double gamma_scale = state.range(5);
+    const double region_size = state.range(6);
 
     std::string fn = get_temporary_filename();
 
@@ -220,7 +223,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         compio_close_archive(archive);
     }
 
-    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, stddev, n_switch);
+    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, gamma_shape, gamma_scale,
+                           region_size, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
     double total_node_cache_hit_probability = 0.;
@@ -297,7 +301,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         static_cast<double>(compio::bm_n_compressed_bytes - compressed_bytes) / state.iterations(),
         benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
     state.counters["decompressed_bytes"] = benchmark::Counter(
-        static_cast<double>(compio::bm_n_decompressed_bytes - decompressed_bytes) / state.iterations(),
+        static_cast<double>(compio::bm_n_decompressed_bytes - decompressed_bytes) /
+            state.iterations(),
         benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 #endif
 
@@ -305,7 +310,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {false, true}, {1 << 11}, {1 << 20}, {1 << 13}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
+    {false, true}, {1 << 11}, {1 << 20}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
+    {2},           {2048},    {1 << 13},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
