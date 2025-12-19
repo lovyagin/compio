@@ -3,6 +3,7 @@
 #include <random>
 
 #include "compio/compio_file.hpp"
+#include "compio/storage_block_reader.hpp"
 
 #include "benchmark_util.hpp"
 
@@ -222,6 +223,11 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     double total_node_cache_hit_probability = 0.;
     double total_block_cache_hit_probability = 0.;
 
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+    long long compressed_bytes = compio::bm_n_compressed_bytes;
+    long long decompressed_bytes = compio::bm_n_decompressed_bytes;
+#endif
+
     for (auto _ : state) {
         compio_archive *archive = compio_open_archive(fn.c_str(), is_write ? "w" : "r", &config);
         if (!archive) {
@@ -282,6 +288,16 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
     state.counters["node_cache_hit"] = total_node_cache_hit_probability / state.iterations();
     state.counters["block_cache_hit"] = total_block_cache_hit_probability / state.iterations();
+
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+    state.counters["compressed_bytes"] = benchmark::Counter(
+        static_cast<double>(compio::bm_n_compressed_bytes - compressed_bytes) / state.iterations(),
+        benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["decompressed_bytes"] = benchmark::Counter(
+        static_cast<double>(compio::bm_n_decompressed_bytes - decompressed_bytes) / state.iterations(),
+        benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+#endif
+
     remove(fn.c_str());
 }
 

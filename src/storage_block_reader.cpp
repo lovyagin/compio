@@ -10,6 +10,11 @@ namespace compio {
 long long bm_n_blocks = 0;
 #endif
 
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+long long bm_n_compressed_bytes = 0;
+long long bm_n_decompressed_bytes = 0;
+#endif
+
 block::block(context_t &context, const tree_key &key, uint64_t addr)
     : context(context),
       _key(key),
@@ -37,6 +42,9 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
             _is_valid = false;
             return;
         }
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+        bm_n_decompressed_bytes += _size;
+#endif
         assert(b.original_size == _size);
     } else {
         _data = std::move(b.data);
@@ -75,6 +83,9 @@ block::~block() {
             b.data = std::move(_data);
             b.size = _size;
         } else {
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+            bm_n_compressed_bytes += _size;
+#endif
             b.is_compressed = true;
         }
 

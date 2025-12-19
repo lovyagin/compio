@@ -374,6 +374,13 @@ public:
 extern long long bm_n_blocks;
 #endif
 
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+/** Number of compressed bytes (used in benchmarking) */
+extern long long bm_n_compressed_bytes;
+/** Number of decompressed bytes (used in benchmarking) */
+extern long long bm_n_decompressed_bytes;
+#endif
+
 } // namespace compio
 
 #endif // STORAGE_BLOCK_READER_HPP_
