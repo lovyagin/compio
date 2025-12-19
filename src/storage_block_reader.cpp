@@ -231,6 +231,8 @@ void storage_block_reader::clear_cache() {
     cache.clear();
 }
 
+double storage_block_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
+
 void storage_block_reader::enable_temporary_index() { context.is_temporary_index_enabled = true; }
 
 void storage_block_reader::disable_temporary_index() {

@@ -308,6 +308,13 @@ public:
     void clear_cache();
 
     /**
+     * @brief Get cache hit probability
+     * 
+     * @return double Cache hit probability
+     */
+    double get_cache_hit_probability() const;
+
+    /**
      * @brief Enable temporary indexing
      *
      * Activates the temporary index mechanism which stores updated file

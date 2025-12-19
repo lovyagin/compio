@@ -47,6 +47,8 @@ void node_reader::remove_node(const shared_node &node) {
 
 void node_reader::clear_cache() { cache.clear(); }
 
+double node_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
+
 btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
              block_allocator *allocator, FILE *file, uint64_t cache_size)
     : degree(degree),
@@ -358,6 +360,8 @@ void btree::_print(shared_node node, uint64_t depth) {
 void btree::print() { _print(read_root(), 0); }
 
 void btree::clear_cache() { reader.clear_cache(); }
+
+double btree::get_cache_hit_probability() const { return reader.get_cache_hit_probability(); }
 
 void btree::split_child(shared_node &parent, shared_node &child, const uint64_t idx) {
     DEBUG_PRINT("[BTREE]: split_child(parent.addr=%ld, child.addr=%ld, idx=%ld)\n", parent.addr(), child.addr(), idx);
