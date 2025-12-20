@@ -5,6 +5,10 @@
 #include "compio/compio_file.hpp"
 #include "compio/storage_block_reader.hpp"
 
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
+#include "compio/infile_object.hpp"
+#endif
+
 #include "benchmark_util.hpp"
 
 #include "compio.h"
@@ -166,8 +170,9 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
     }
 
     state.SetBytesProcessed(total_bytes_processed);
-    state.counters["file_size"] = benchmark::Counter(
-        get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["file_size"] = get_file_size(fn.c_str());
+    state.counters[is_write ? "n_bytes_written" : "n_bytes_read"] =
+        static_cast<double>(total_bytes_processed) / state.iterations();
     remove(fn.c_str());
 }
 
@@ -231,8 +236,13 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     double total_block_cache_hit_probability = 0.;
 
 #ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
-    long long compressed_bytes = compio::bm_n_compressed_bytes;
-    long long decompressed_bytes = compio::bm_n_decompressed_bytes;
+    long long n_bytes_compressed = compio::bm_n_compressed_bytes;
+    long long n_bytes_decompressed = compio::bm_n_decompressed_bytes;
+#endif
+
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
+    int n_bytes_read = get_n_read_bytes();
+    int n_bytes_written = get_n_written_bytes();
 #endif
 
     for (auto _ : state) {
@@ -291,19 +301,24 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     }
 
     state.SetBytesProcessed(total_bytes_processed);
-    state.counters["file_size"] = benchmark::Counter(
-        get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["file_size"] = get_file_size(fn.c_str());
     state.counters["node_cache_hit"] = total_node_cache_hit_probability / state.iterations();
     state.counters["block_cache_hit"] = total_block_cache_hit_probability / state.iterations();
 
 #ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
-    state.counters["compressed_bytes"] = benchmark::Counter(
-        static_cast<double>(compio::bm_n_compressed_bytes - compressed_bytes) / state.iterations(),
-        benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
-    state.counters["decompressed_bytes"] = benchmark::Counter(
-        static_cast<double>(compio::bm_n_decompressed_bytes - decompressed_bytes) /
-            state.iterations(),
-        benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+    state.counters["n_bytes_compressed"] =
+        static_cast<double>(compio::bm_n_compressed_bytes - n_bytes_compressed) /
+        state.iterations();
+    state.counters["n_bytes_decompressed"] =
+        static_cast<double>(compio::bm_n_decompressed_bytes - n_bytes_decompressed) /
+        state.iterations();
+#endif
+
+#ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
+    state.counters["n_bytes_written"] =
+        static_cast<double>(get_n_written_bytes() - n_bytes_written) / state.iterations();
+    state.counters["n_bytes_read"] =
+        static_cast<double>(get_n_read_bytes() - n_bytes_read) / state.iterations();
 #endif
 
     remove(fn.c_str());
