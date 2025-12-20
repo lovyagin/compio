@@ -72,7 +72,7 @@ def create_plots(input_csv, output_file=None, smooth_window=3):
     fig.suptitle("Insert/Erase Fragmentation Issues", fontsize=18)
     
     # Plot 1: Number of blocks by n_operations
-    ax1.plot(df['n_operations'], df['n_blocks'], linewidth=1)
+    ax1.plot(df['n_operations'], smooth_data(df['n_blocks'], 151), linewidth=1.5)
     
     ax1.set_ylabel('Number of Blocks')
     ax1.grid(True, alpha=0.3)
