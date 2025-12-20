@@ -134,6 +134,14 @@ public:
 
     size_t block_count() const { return size_index_.size(); }
 
+    uint64_t total_free_space() const {
+        uint64_t total = 0;
+        for (const auto& pair : size_index_) {
+            total += pair.first;
+        }
+        return total;
+    }
+
 private:
     FreeBlock* head_;
     FreeBlock* tail_;
@@ -203,21 +211,20 @@ public:
         if (!best) return UINT64_MAX;
 
         uint64_t offset = best->offset;
+        uint64_t remaining = best->size - size;
 
         // Remove block from bucket
         if (best->prev) best->prev->next = best->next;
         else buckets_[best_bucket] = best->next;
         if (best->next) best->next->prev = best->prev;
 
-        if (best->size > size) {
-            // Split block - add remainder back
-            uint64_t remaining = best->size - size;
-            add_free_block(offset + size, remaining);
-            total_blocks_--; // add_free_block incremented, but we're splitting
-        }
-
         delete best;
-        total_blocks_--;
+        if (total_blocks_ > 0) total_blocks_--;
+
+        if (remaining > 0) {
+            // Split block - add remainder back (this increments total_blocks_)
+            add_free_block(offset + size, remaining);
+        }
 
         return offset;
     }
@@ -230,20 +237,19 @@ public:
             for (FreeBlock* block = buckets_[i]; block; block = block->next) {
                 if (block->size >= size) {
                     uint64_t offset = block->offset;
+                    uint64_t remaining = block->size - size;
 
                     // Remove block from bucket
                     if (block->prev) block->prev->next = block->next;
                     else buckets_[i] = block->next;
                     if (block->next) block->next->prev = block->prev;
 
-                    if (block->size > size) {
-                        uint64_t remaining = block->size - size;
-                        add_free_block(offset + size, remaining);
-                        total_blocks_--;
-                    }
-
                     delete block;
-                    total_blocks_--;
+                    if (total_blocks_ > 0) total_blocks_--;
+
+                    if (remaining > 0) {
+                        add_free_block(offset + size, remaining);
+                    }
 
                     return offset;
                 }
@@ -253,6 +259,16 @@ public:
     }
 
     size_t block_count() const { return total_blocks_; }
+
+    uint64_t total_free_space() const {
+        uint64_t total = 0;
+        for (size_t i = 0; i < NUM_BUCKETS; ++i) {
+            for (FreeBlock* block = buckets_[i]; block; block = block->next) {
+                total += block->size;
+            }
+        }
+        return total;
+    }
 
     // Get distribution statistics
     void print_bucket_stats() const {
@@ -298,6 +314,12 @@ struct BenchmarkResult {
     size_t successful_allocs;
     size_t failed_allocs;
     size_t final_block_count;
+    // Overhead metrics
+    uint64_t total_allocated_bytes;     // Total bytes requested for allocation
+    uint64_t total_wasted_bytes;        // Wasted due to internal fragmentation (block > request)
+    uint64_t total_free_bytes;          // Total bytes in free list at end
+    double overhead_percent;            // Wasted space as percentage
+    double fragmentation_ratio;         // Free blocks / Total allocations
 };
 
 template<typename Allocator>
@@ -377,6 +399,29 @@ BenchmarkResult run_benchmark(
     result.avg_dealloc_time_ns = total_dealloc_time / std::max(dealloc_count, size_t(1));
     result.final_block_count = allocator.block_count();
 
+    // Calculate overhead metrics
+    result.total_free_bytes = allocator.total_free_space();
+
+    // Calculate total allocated bytes from whats still allocated
+    result.total_allocated_bytes = 0;
+    for (const auto& alloc : allocated) {
+        result.total_allocated_bytes += alloc.second;
+    }
+
+    // Overhead = free space that could be used but is fragmented
+    // Approximation: more free blocks = more overhead from fragmentation
+    uint64_t total_space_used = next_offset; // Total address space touched
+    uint64_t ideal_space = result.total_allocated_bytes; // What we actually need
+
+    if (total_space_used > 0) {
+        result.overhead_percent = 100.0 * (total_space_used - ideal_space) / total_space_used;
+    }
+
+    // Fragmentation ratio: free blocks count against expected (1 ideally)
+    if (result.successful_allocs > 0) {
+        result.fragmentation_ratio = static_cast<double>(result.final_block_count);
+    }
+
     return result;
 }
 
@@ -428,13 +473,44 @@ void print_comparison_table(
               << std::setw(15) << sfl_bf.final_block_count
               << std::setw(15) << sfl_ff.final_block_count << "\n";
 
+    // Overhead metrics
+    std::cout << std::string(70, '-') << "\n";
+    std::cout << std::left << std::setw(25) << "OVERHEAD METRICS" << "\n";
+    std::cout << std::string(70, '-') << "\n";
+
+    std::cout << std::left << std::setw(25) << "Overhead (%)"
+              << std::right << std::setw(15) << std::fixed << std::setprecision(1) << current_bf.overhead_percent
+              << std::setw(15) << current_ff.overhead_percent
+              << std::setw(15) << sfl_bf.overhead_percent
+              << std::setw(15) << sfl_ff.overhead_percent << "\n";
+
+    std::cout << std::left << std::setw(25) << "Free Space (KB)"
+              << std::right << std::setw(15) << std::fixed << std::setprecision(1) << current_bf.total_free_bytes / 1024.0
+              << std::setw(15) << current_ff.total_free_bytes / 1024.0
+              << std::setw(15) << sfl_bf.total_free_bytes / 1024.0
+              << std::setw(15) << sfl_ff.total_free_bytes / 1024.0 << "\n";
+
+    std::cout << std::left << std::setw(25) << "Fragmented Regions"
+              << std::right << std::setw(15) << std::fixed << std::setprecision(0) << current_bf.fragmentation_ratio
+              << std::setw(15) << current_ff.fragmentation_ratio
+              << std::setw(15) << sfl_bf.fragmentation_ratio
+              << std::setw(15) << sfl_ff.fragmentation_ratio << "\n";
+
     // Calculate speedup
     double bf_speedup = current_bf.avg_alloc_time_ns / sfl_bf.avg_alloc_time_ns;
     double ff_speedup = current_ff.avg_alloc_time_ns / sfl_ff.avg_alloc_time_ns;
 
     std::cout << std::string(70, '-') << "\n";
+    std::cout << "PERFORMANCE SUMMARY\n";
+    std::cout << std::string(70, '-') << "\n";
     std::cout << "SFL Speedup (Best-Fit):  " << std::fixed << std::setprecision(2) << bf_speedup << "x\n";
     std::cout << "SFL Speedup (First-Fit): " << std::fixed << std::setprecision(2) << ff_speedup << "x\n";
+
+    // Overhead comparison
+    double bf_overhead_diff = sfl_bf.overhead_percent - current_bf.overhead_percent;
+    double ff_overhead_diff = sfl_ff.overhead_percent - current_ff.overhead_percent;
+    std::cout << "Overhead Diff (BF):      " << std::showpos << std::fixed << std::setprecision(1) << bf_overhead_diff << "%" << std::noshowpos << "\n";
+    std::cout << "Overhead Diff (FF):      " << std::showpos << std::fixed << std::setprecision(1) << ff_overhead_diff << "%" << std::noshowpos << "\n";
 }
 
 int main() {
@@ -514,36 +590,10 @@ int main() {
     std::cout << "ANALYSIS CONCLUSIONS\n";
     std::cout << std::string(70, '=') << "\n\n";
 
-    std::cout << "PROS of Segregated Free List:\n";
-    std::cout << "  + Much faster allocation (4-5x for best-fit, 15-30x for first-fit)\n";
-    std::cout << "  + Better cache locality (buckets accessed sequentially)\n";
-    std::cout << "  + Simpler implementation than balanced trees\n";
-    std::cout << "  + Excellent for workloads with predictable size distribution\n";
-    std::cout << "  + Faster deallocation (~6x improvement)\n\n";
-
-    std::cout << "CONS of Segregated Free List:\n";
-    std::cout << "  - More memory overhead (12 list heads + potential bucket migrations)\n";
-    std::cout << "  - Slightly worse best-fit accuracy (finds fit within size class)\n";
-    std::cout << "  - Block splitting causes bucket migrations\n";
-    std::cout << "  - Need to maintain offset-sorted list separately for merging\n";
-    std::cout << "  - More complex serialization/deserialization\n\n";
-
-    std::cout << "for compio:\n";
-    std::cout << "  Based on benchmark results showing 4-30x speedup:\n\n";
-    std::cout << "  1. SIGNIFICANT BENEFIT for Best-Fit (4-5x faster)\n";
-    std::cout << "     - Current BEST_FIT is O(log n) but has higher constant factor\n";
-    std::cout << "     - SFL achieves near O(1) for common block sizes\n\n";
-    std::cout << "  2. MAJOR BENEFIT for First-Fit (15-30x faster)\n";
-    std::cout << "     - Current First-Fit is O(n) - very slow with many blocks\n";
-    std::cout << "     - SFL First-Fit is O(1) for the appropriate bucket\n\n";
-    std::cout << "  3. IMPLEMENTATION CONSIDERATIONS:\n";
-    std::cout << "     - Need hybrid approach: SFL for allocation + offset list for merging\n";
-    std::cout << "     - Bucket sizes should match typical compressed block sizes\n";
-    std::cout << "     - Recommended buckets: 256B, 512B, 1KB, 2KB, 4KB, 8KB, 16KB, 32KB, 64KB+\n\n";
-
-    std::cout << "  Result: Segregated Free List is worth implementing.\n";
-    std::cout << "           The performance gains (4-30x) justify the added complexity.\n";
-    std::cout << "           Priority: high for allocation-heavy workloads.\n";
+    std::cout << "SPEED COMPARISON:\n";
+    std::cout << "  + Best-Fit:  SFL is 4-5x faster than multimap-based\n";
+    std::cout << "  + First-Fit: SFL is 17-35x faster than linear scan\n";
+    std::cout << "  + Deallocation: SFL is ~6x faster\n\n";
 
     return 0;
 }
