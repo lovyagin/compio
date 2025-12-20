@@ -1,5 +1,4 @@
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
-#include <fstream>
 #include <iostream>
 #include <random>
 #include <vector>
@@ -12,7 +11,7 @@
 
 int main(int argc, char **argv) {
     if (argc < 5) {
-        std::cerr << "usage: ./blocks_benchmark <n_operations> <target_mean> <target_stddev> <out_file>\n";
+        std::cerr << "usage: ./blocks_benchmark <n_operations> <target_mean> <target_stddev> <seed>\n";
         return -1;
     }
 
@@ -23,11 +22,11 @@ int main(int argc, char **argv) {
     const std::size_t n_operations = std::atoi(argv[1]);
     const std::size_t target_mean = std::atoi(argv[2]);
     const std::size_t target_stddev = std::atoi(argv[3]);
-    const char *out_file = argv[4];
+    const std::size_t seed = std::atoi(argv[4]);
     
     std::string fn = "tmp_blocks_benchmark_XXXXXX.compio";
     
-    std::minstd_rand0 rng(0);
+    std::minstd_rand0 rng(seed);
     std::normal_distribution<double> size_dist(target_mean, target_stddev);
     
     std::size_t max_size = target_mean + 5 * target_stddev;
@@ -140,10 +139,9 @@ int main(int argc, char **argv) {
     compio_close_archive(archive);
     
     if (!block_counts.empty()) {
-        std::ofstream csv(out_file);
-        csv << "n_blocks,insert_bps,erase_bps\n";
+        std::cout << "n_blocks,insert_bps,erase_bps\n";
         for (size_t i = 0; i < block_counts.size(); ++i) {
-            csv << block_counts[i] << "," << insert_bps[i] << "," << erase_bps[i] << "\n";
+            std::cout << block_counts[i] << "," << insert_bps[i] << "," << erase_bps[i] << "\n";
         }
     }
     
