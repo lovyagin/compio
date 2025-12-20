@@ -595,5 +595,86 @@ int main() {
     std::cout << "  + First-Fit: SFL is 17-35x faster than linear scan\n";
     std::cout << "  + Deallocation: SFL is ~6x faster\n\n";
 
+    // ========================================================================
+    // OVERHEAD COMPARISON SUMMARY TABLE
+    // ========================================================================
+    std::cout << std::string(70, '=') << "\n";
+    std::cout << "OVERHEAD COMPARISON SUMMARY\n";
+    std::cout << std::string(70, '=') << "\n";
+
+    std::cout << std::left << std::setw(30) << "Scenario"
+              << std::right << std::setw(13) << "Current BF"
+              << std::setw(13) << "SFL BF Δ"
+              << std::setw(13) << "SFL FF Δ" << "\n";
+    std::cout << std::string(70, '-') << "\n";
+
+    // Re-run benchmarks to collect overhead data
+    struct OverheadData {
+        std::string scenario;
+        double current_oh;
+        double sfl_bf_diff;
+        double sfl_ff_diff;
+    };
+    std::vector<OverheadData> overhead_data;
+
+    // Scenario 1: Uniform small blocks
+    {
+        std::vector<uint64_t> sizes = {512, 1024, 2048, 4096};
+        auto current_bf = run_benchmark<CurrentAllocator>(NUM_OPERATIONS, sizes, true);
+        auto sfl_bf = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, true);
+        auto sfl_ff = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, false);
+        overhead_data.push_back({"Uniform Small",
+                                 current_bf.overhead_percent,
+                                 sfl_bf.overhead_percent - current_bf.overhead_percent,
+                                 sfl_ff.overhead_percent - current_bf.overhead_percent});
+    }
+
+    // Scenario 2: Mixed sizes
+    {
+        std::vector<uint64_t> sizes = {128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
+        auto current_bf = run_benchmark<CurrentAllocator>(NUM_OPERATIONS, sizes, true);
+        auto sfl_bf = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, true);
+        auto sfl_ff = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, false);
+        overhead_data.push_back({"Mixed Sizes",
+                                 current_bf.overhead_percent,
+                                 sfl_bf.overhead_percent - current_bf.overhead_percent,
+                                 sfl_ff.overhead_percent - current_bf.overhead_percent});
+    }
+
+    // Scenario 3: Large blocks
+    {
+        std::vector<uint64_t> sizes = {8192, 16384, 32768, 65536, 131072};
+        auto current_bf = run_benchmark<CurrentAllocator>(NUM_OPERATIONS, sizes, true);
+        auto sfl_bf = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, true);
+        auto sfl_ff = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, false);
+        overhead_data.push_back({"Large Blocks",
+                                 current_bf.overhead_percent,
+                                 sfl_bf.overhead_percent - current_bf.overhead_percent,
+                                 sfl_ff.overhead_percent - current_bf.overhead_percent});
+    }
+
+    // Scenario 4: High fragmentation
+    {
+        std::vector<uint64_t> sizes;
+        for (int i = 0; i < 80; ++i) sizes.push_back(256);
+        for (int i = 0; i < 15; ++i) sizes.push_back(4096);
+        for (int i = 0; i < 5; ++i) sizes.push_back(65536);
+        auto current_bf = run_benchmark<CurrentAllocator>(NUM_OPERATIONS, sizes, true);
+        auto sfl_bf = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, true);
+        auto sfl_ff = run_benchmark<SegregatedFreeList>(NUM_OPERATIONS, sizes, false);
+        overhead_data.push_back({"High Fragmentation",
+                                 current_bf.overhead_percent,
+                                 sfl_bf.overhead_percent - current_bf.overhead_percent,
+                                 sfl_ff.overhead_percent - current_bf.overhead_percent});
+    }
+
+    // Print overhead comparison
+    for (const auto& data : overhead_data) {
+        std::cout << std::left << std::setw(30) << data.scenario
+                  << std::right << std::setw(12) << std::fixed << std::setprecision(1) << data.current_oh << "%"
+                  << std::setw(12) << std::showpos << data.sfl_bf_diff << "%" << std::noshowpos
+                  << std::setw(12) << std::showpos << data.sfl_ff_diff << "%" << std::noshowpos << "\n";
+    }
+
     return 0;
 }
