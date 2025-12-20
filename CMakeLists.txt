@@ -34,6 +34,7 @@ option(COMPIO_WARNING_PRINT "compio: enable WARNING prints" ON)
 option(COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER "compio: enable filesystem operations counting for benchmarking" OFF)
 option(COMPIO_BENCHMARK_BLOCKS_COUNTER "compio: enable blocks counting for benchmarking" OFF)
 option(COMPIO_BENCHMARK_COMPRESSION_BYTES "compio: enable compression bytes counting" OFF)
+option(COMPIO_DISABLE_INSERT_ERASE "compio: disable insert/erase operations" OFF)
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     if (NOT DEFINED COMPIO_DEBUG_PRINT)
@@ -71,6 +72,11 @@ endif()
 if (COMPIO_BENCHMARK_COMPRESSION_BYTES)
     message("Building with COMPIO_BENCHMARK_COMPRESSION_BYTES")
     add_compile_options(-DCOMPIO_BENCHMARK_COMPRESSION_BYTES)
+endif()
+
+if (COMPIO_DISABLE_INSERT_ERASE)
+    message("Building with COMPIO_DISABLE_INSERT_ERASE")
+    add_compile_options(-DCOMPIO_DISABLE_INSERT_ERASE)
 endif()
 
 
@@ -125,6 +131,7 @@ target_compile_definitions(compio PRIVATE
     $<$<BOOL:${COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER}>:COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER=1>
     $<$<BOOL:${COMPIO_BENCHMARK_BLOCKS_COUNTER}>:COMPIO_BENCHMARK_BLOCKS_COUNTER=1>
     $<$<BOOL:${COMPIO_BENCHMARK_COMPRESSION_BYTES}>:COMPIO_BENCHMARK_COMPRESSION_BYTES=1>
+    $<$<BOOL:${COMPIO_DISABLE_INSERT_ERASE}>:COMPIO_DISABLE_INSERT_ERASE=1>
 )
 
 # --- Dependencies
