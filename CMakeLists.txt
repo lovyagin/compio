@@ -31,7 +31,7 @@ endif()
 
 option(COMPIO_DEBUG_PRINT "compio: enable DEBUG prints" OFF)
 option(COMPIO_WARNING_PRINT "compio: enable WARNING prints" ON)
-option(COMPIO_BENCHMARK_COUNTERS "compio: enable filesystem operations counting for benchmarking" OFF)
+option(COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER "compio: enable filesystem operations counting for benchmarking" OFF)
 option(COMPIO_BENCHMARK_BLOCKS_COUNTER "compio: enable blocks counting for benchmarking" OFF)
 option(COMPIO_BENCHMARK_COMPRESSION_BYTES "compio: enable compression bytes counting" OFF)
 
@@ -58,9 +58,9 @@ if (COMPIO_DEBUG_PRINT)
     add_compile_options(-DCOMPIO_DEBUG_PRINT)
 endif()
 
-if (COMPIO_BENCHMARK_COUNTERS)
-    message("Building with COMPIO_BENCHMARK_COUNTERS")
-    add_compile_options(-DCOMPIO_BENCHMARK_COUNTERS)
+if (COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER)
+    message("Building with COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER")
+    add_compile_options(-DCOMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER)
 endif()
 
 if (COMPIO_BENCHMARK_BLOCKS_COUNTER)
