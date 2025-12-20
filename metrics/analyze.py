@@ -12,6 +12,8 @@ mpl.rcParams['font.size'] = 10
 mpl.rcParams['axes.titlesize'] = 12
 mpl.rcParams['axes.labelsize'] = 11
 
+plt.style.use('seaborn-v0_8-whitegrid')
+
 class BenchmarkAnalyzer:
     def __init__(self):
         self.data = {}
@@ -176,6 +178,7 @@ class BenchmarkAnalyzer:
             ax.grid(True, alpha=0.3)
             ax.legend()
             ax.set_xlim(0.8, 600)
+            ax.set_ylim(min(comp_new) - 2, max(comp_old) + 2)
         
         # Plot 1B: Decompression work for reads
         ax = axes[0, 1]
@@ -187,7 +190,7 @@ class BenchmarkAnalyzer:
             decomp_new = [d['n_bytes_decompressed_mean'] / 1e6 for d in data_new]
             
             ax.plot(n_switch_old, decomp_old, 'o-', label='old compio', linewidth=2)
-            ax.plot(n_switch_new, decomp_new, 's-', label='new compio', linewidth=2)
+            ax.plot(n_switch_new, decomp_new, 's--', label='new compio', linewidth=2)
             ax.set_xscale('log')
             ax.set_xlabel('n_switch (log scale)')
             ax.set_ylabel('Bytes Decompressed (MB)')
