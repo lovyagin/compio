@@ -157,8 +157,7 @@ class BenchmarkAnalyzer:
     def figure1_cache_redesign(self):
         """Create Figure 1: Cache Redesign Improvement (2x2 grid)."""
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle('Figure 1: Cache Redesign Performance Improvement (HTML Data, zlib)', 
-                    fontsize=14, fontweight='bold')
+        fig.suptitle('Cache Redesign Performance Improvement', fontsize=14, fontweight='bold')
         
         # Plot 1A: Compression work for writes
         ax = axes[0, 0]
@@ -252,8 +251,7 @@ class BenchmarkAnalyzer:
     def figure2_io_reduction(self):
         """Create Figure 2: I/O Reduction Mechanism (1x2 grid)."""
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-        fig.suptitle('Figure 2: I/O Reduction vs Cache Hit Rate (HTML Data, zlib)', 
-                    fontsize=14, fontweight='bold')
+        fig.suptitle('I/O Reduction vs Cache Hit Rate', fontsize=14, fontweight='bold')
         
         # Plot 2A: Write I/O reduction
         ax = axes[0]
@@ -330,11 +328,9 @@ class BenchmarkAnalyzer:
     def figure3_algorithm_comparison(self):
         """Create Figure 3: Algorithm Comparison vs Stdio (1x2 grid)."""
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-        fig.suptitle('Figure 3: Algorithm Comparison vs Stdio (HTML Data, All Compressors)', 
-                    fontsize=14, fontweight='bold')
+        fig.suptitle('Algorithm Comparison vs Stdio (HTML Data)', fontsize=14, fontweight='bold')
         
-        algorithms = ['zlib', 'lz4', 'zstd']
-        markers = {'zlib': 'o', 'lz4': 's', 'zstd': '^'}
+        algorithms = ['zlib', 'zstd', 'lz4']
         
         # Plot 3A: Read break-even
         ax = axes[0]
@@ -367,7 +363,7 @@ class BenchmarkAnalyzer:
                         transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
                         
                         ax.plot(transformed_hits, throughput_ratios, 
-                               marker=markers[algo], label=algo, linewidth=2)
+                               marker="o", label=algo, linewidth=2)
         
         ax.axhline(y=1.0, color='r', linestyle='--', alpha=0.7, label='Break-even')
         ax.set_ylabel('Throughput Ratio\n(compio / stdio)')
@@ -406,7 +402,7 @@ class BenchmarkAnalyzer:
                         transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
                         
                         ax.plot(transformed_hits, throughput_ratios, 
-                               marker=markers[algo], label=algo, linewidth=2)
+                               marker="o", label=algo, linewidth=2)
         
         ax.axhline(y=1.0, color='r', linestyle='--', alpha=0.7, label='Break-even')
         ax.set_ylabel('Throughput Ratio\n(compio / stdio)')
@@ -421,7 +417,7 @@ class BenchmarkAnalyzer:
     def figure4_cache_behavior(self):
         """Create Figure 4: Cache Utilization vs Access Locality."""
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-        fig.suptitle('Figure 4: Cache Utilization vs Access Locality (HTML Data, zlib)', 
+        fig.suptitle('Cache Utilization vs Access Locality', 
                     fontsize=14, fontweight='bold')
         
         n_switch_read, data_read = self.get_data_for_plot('zlib', 0)
@@ -442,7 +438,7 @@ class BenchmarkAnalyzer:
         ax.grid(True, alpha=0.3)
         ax.legend()
         ax.set_xlim(0.8, 600)
-        ax.set_ylim(0, 100)
+        ax.set_ylim(0, 110)
         
         plt.tight_layout()
         plt.savefig('figure4_cache_behavior.png', bbox_inches='tight', dpi=300)
