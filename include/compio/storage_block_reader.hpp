@@ -308,6 +308,13 @@ public:
     void clear_cache();
 
     /**
+     * @brief Get cache hit probability
+     * 
+     * @return double Cache hit probability
+     */
+    double get_cache_hit_probability() const;
+
+    /**
      * @brief Enable temporary indexing
      *
      * Activates the temporary index mechanism which stores updated file
@@ -361,6 +368,18 @@ public:
      */
     bool cache_contains(const tree_key &key) const;
 };
+
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+/** Number of blocks in current archive (used in benchmarking) */
+extern long long bm_n_blocks;
+#endif
+
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+/** Number of compressed bytes (used in benchmarking) */
+extern long long bm_n_compressed_bytes;
+/** Number of decompressed bytes (used in benchmarking) */
+extern long long bm_n_decompressed_bytes;
+#endif
 
 } // namespace compio
 

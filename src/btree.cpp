@@ -19,14 +19,15 @@ node_reader::node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size)
       cache(max_size) {}
 
 shared_node node_reader::read_node(uint64_t addr) {
-    if (!cache.exists(addr)) {
+    auto node = cache.get(addr);
+    if (!node.has_value()) {
         auto result = shared_node(file, addr, new index_node(tree_degree));
         result.read();     // read from file (because constructor with obj& does not read)
         result.unmodify(); // constructor with obj& sets modified=true
         cache.put(addr, result);
         return result;
     } else {
-        return cache.get(addr);
+        return *node.value();
     }
 }
 
@@ -46,6 +47,8 @@ void node_reader::remove_node(const shared_node &node) {
 
 void node_reader::clear_cache() { cache.clear(); }
 
+double node_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
+
 btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
              block_allocator *allocator, FILE *file, uint64_t cache_size)
     : degree(degree),
@@ -63,6 +66,7 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
+    DEBUG_PRINT("[BTREE]: insert_nonfull(node.addr=%ld, key={...%ld, %ld}, value={%ld, %ld})\n", node.addr(), key.hash % 100, key.pos, value.addr, value.size);
     if (RO(node)->is_leaf) {
         if (idx < RO(node)->num_keys && RO(node)->keys[idx] == key) {
             WARNING_PRINT("warning: trying to insert already existing key\n");
@@ -357,7 +361,10 @@ void btree::print() { _print(read_root(), 0); }
 
 void btree::clear_cache() { reader.clear_cache(); }
 
+double btree::get_cache_hit_probability() const { return reader.get_cache_hit_probability(); }
+
 void btree::split_child(shared_node &parent, shared_node &child, const uint64_t idx) {
+    DEBUG_PRINT("[BTREE]: split_child(parent.addr=%ld, child.addr=%ld, idx=%ld)\n", parent.addr(), child.addr(), idx);
     auto new_node = create_node();
 
     new_node->is_leaf = child->is_leaf;

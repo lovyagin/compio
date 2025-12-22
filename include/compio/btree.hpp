@@ -78,6 +78,13 @@ struct node_reader {
      */
     void clear_cache();
 
+    /**
+     * @brief Get cache hit probability
+     * 
+     * @return double Cache hit probability
+     */
+    double get_cache_hit_probability() const;
+
 private:
     /** @brief The degree of the B-Tree (branching factor) */
     uint64_t tree_degree;
@@ -208,6 +215,13 @@ struct btree {
      * from file. Useful for memory management or consistency operations.
      */
     void clear_cache();
+
+    /**
+     * @brief Get cache hit probability
+     * 
+     * @return double Cache hit probability
+     */
+    double get_cache_hit_probability() const;
 
 private:
     /** @brief The degree of the B-Tree (branching factor) */

@@ -54,8 +54,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       config(*config),
       index(nullptr),
       block_reader(nullptr),
-      mode_b(mode_b),
-      allocator(nullptr) {
+      allocator(nullptr),
+      mode_b(mode_b) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
@@ -99,8 +99,11 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: cache_size__blocks=%d < 0\n", c->cache_size__blocks);
         return false;
     }
-    if (c->cache_size__nodes < 0) {
-        WARNING_PRINT("warning: cache_size__nodes=%d < 0\n", c->cache_size__nodes);
+    if (c->cache_size__nodes < 4) {
+        // with too small cache_size__nodes a bug appears, when nodes get evicted from cache, 
+        // but still exist in local variables of some function, and if that function modifies 
+        // that node, but some other function will try to read that node from file, it would get it's old version
+        WARNING_PRINT("warning: cache_size__nodes=%d < 4\nplease use cache_size__nodes >= 4 ", c->cache_size__nodes);
         return false;
     }
     return true;
@@ -415,16 +418,23 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
     if (!file_range.empty()) {
         // check that blocks cover the whole file
         assert(file_range.front().first.pos == 0);
+#ifdef COMPIO_DISABLE_INSERT_ERASE
+        assert(file_range.back().first.pos + file_range.back().second.size >= file->size);
+#else
         assert(file_range.back().first.pos + file_range.back().second.size == file->size);
+#endif
     }
 #endif
 }
 
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu)\n", file->cursor, size);
+    DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
 
     const auto archive = file->archive;
     const auto block_reader = archive->block_reader;
+    const uint64_t block_size = archive->config.block_size;
+    const uint64_t block_size__minimum = archive->config.block_size__minimum;
+    const uint64_t block_size__maximum = archive->config.block_size__maximum;
 
     if (archive->mode_b & mode_bit::r) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
@@ -444,13 +454,22 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
+    // actual range in file, where we need to write (write-range)
     const uint64_t write_start = file->cursor;
     const uint64_t write_end = write_start + size;
 
     auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
     uint64_t ptr_bytes_written = 0;
 
-    if (write_start < file->size) {
+#ifdef COMPIO_DISABLE_INSERT_ERASE
+    const uint64_t last_block_end = ((file->size + block_size - 1) / block_size) * block_size;
+#else
+    const uint64_t last_block_end = file->size;
+#endif
+
+    // if write-range intersects existing blocks, we need to modify them
+    if (write_start < last_block_end) {
+        // get blocks range from b-tree
         const tree_key key_min = {file->hash, write_start};
         const tree_key key_max = {file->hash, write_end};
         auto range = archive->index->get_range(key_min, key_max);
@@ -462,7 +481,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         // enable temporary index, so it will fix expired tree_vals, that we will have in our range
         block_reader->enable_temporary_index();
         for (const auto &[key, val] : range) {
-            // update existing blocks with new data
+            // read and decompress block from file
             DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
                         val.size);
             const auto b = block_reader->read_block(val.addr, key);
@@ -476,40 +495,52 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
             }
             assert(b->size() == val.size);
 
+            // actual block range within file (block-range)
             const uint64_t block_start = key.pos;
             const uint64_t block_end = key.pos + b->size();
+            
+            // block-range and write-range intersection
             const uint64_t copy_end = std::min(write_end, block_end);
             const uint64_t copy_start = std::max(write_start, block_start);
             assert(copy_end > copy_start); // if not, btree::get_range is broken
+
+            // number of actual bytes from ptr, that we need to copy
             const uint64_t copy_size = copy_end - copy_start;
+            // write offset within block-range
             const uint64_t dec_offset =
                 (write_start > block_start) ? (write_start - block_start) : 0;
-            DEBUG_PRINT("[CW]copying data of size %ld to block (offset=%ld)\n", copy_size,
-                        dec_offset);
+            DEBUG_PRINT("[CW] EXISTING BLOCK DATA: (%lu, %lu, %lu)\n", dec_offset, copy_size, b->size() - dec_offset - copy_size);
 
             std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
             p_ptr += copy_size;
             ptr_bytes_written += copy_size;
             file->cursor += copy_size;
-            assert(file->cursor <= file->size);
+            file_table_item->size = file->size = std::max(file->cursor, file->size);
         }
         block_reader->disable_temporary_index();
     }
 
     // TODO: write new data into last block if size is small
 
+    // if we still have bytes in ptr, we need to create new blocks
     if (ptr_bytes_written < size) {
         // append blocks to the end of the file
-        uint64_t n_zeros = (file->cursor > file->size) ? (file->cursor - file->size) : 0;
-        const uint64_t ptr_bytes_left = size - ptr_bytes_written;
-        uint64_t total_bytes_left = n_zeros + ptr_bytes_left;
-        uint64_t cursor = file->size;
 
-        const uint64_t block_size = archive->config.block_size;
-        const uint64_t block_size__minimum = archive->config.block_size__minimum;
-        const uint64_t block_size__maximum = archive->config.block_size__maximum;
+        // last block already has zero padding from the right, 
+        // so we shift file->size directly to it's end
+        file_table_item->size = file->size = last_block_end; 
+
+        // total number of zeros we need to fill in
+        uint64_t n_zeros = (write_start > last_block_end) ? (write_start - last_block_end) : 0;
+        // total number of bytes we need to append to file
+        uint64_t total_bytes_left = n_zeros + (size - ptr_bytes_written);
+        uint64_t new_block_start = last_block_end;
+
         while (total_bytes_left > 0) {
             uint64_t current_block_size;
+#ifdef COMPIO_DISABLE_INSERT_ERASE
+            current_block_size = block_size;
+#else
             if (total_bytes_left < block_size ||
                 total_bytes_left - block_size < block_size__minimum) {
                 current_block_size = total_bytes_left;
@@ -518,29 +549,33 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
             }
             assert(current_block_size <= block_size__maximum);
             assert(current_block_size <= total_bytes_left);
+#endif
 
-            const uint64_t dec_offset = std::min(n_zeros, current_block_size);
-            const uint64_t copy_size = current_block_size - dec_offset;
+            // size of zero-padding from the left
+            const uint64_t left_pad = std::min(n_zeros, current_block_size);
+            // number of actual bytes from ptr, that we need to copy
+            const uint64_t copy_size = std::min(current_block_size - left_pad, size - ptr_bytes_written);
+            // size of zero-padding from the right
+            const uint64_t right_pad = current_block_size - left_pad - copy_size;
+            DEBUG_PRINT("[CW] NEW BLOCK DATA: (%lu, %lu, %lu)\n", left_pad, copy_size, right_pad);
 
-            const tree_key key{file->hash, cursor};
+            const tree_key key{file->hash, new_block_start};
             DEBUG_PRINT("[CW]creating block ({%lu,%lu}-{?,%lu})\n", key.hash, key.pos,
                         current_block_size);
             const auto b = block_reader->create_block(current_block_size, key);
 
-            DEBUG_PRINT("[CW]filling %ld bytes of new block with zeros\n", dec_offset);
-            std::fill_n(b->data(), dec_offset, 0);
-            DEBUG_PRINT("[CW]copying data of size %ld to new block (offset=%ld)\n", copy_size,
-                        dec_offset);
-            std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
+            std::fill_n(b->data(), left_pad, 0);
+            std::copy_n(p_ptr, copy_size, b->data() + left_pad);
+            std::fill_n(b->data() + left_pad + copy_size, right_pad, 0);
+
             p_ptr += copy_size;
             ptr_bytes_written += copy_size;
-            cursor += current_block_size;
+            new_block_start += current_block_size;
             file->cursor += copy_size;
 
-            n_zeros -= dec_offset;
-            total_bytes_left -= current_block_size;
-            file->size += current_block_size;
-            file_table_item->size += current_block_size;
+            n_zeros -= left_pad;
+            total_bytes_left -= left_pad + copy_size;
+            file_table_item->size = file->size += left_pad + copy_size;
         }
     }
 
@@ -551,7 +586,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu)\n", file->cursor, size);
+    DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
 
     const auto *archive = file->archive;
     const auto block_reader = archive->block_reader;
@@ -603,7 +638,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
-        const uint64_t copy_end = std::min(read_end, block_end);
+        const uint64_t copy_end = std::min(std::min(read_end, block_end), file->size);
         const uint64_t copy_start = std::max(read_start, block_start);
         assert(copy_end > copy_start); // if not, btree::get_range is broken
         const uint64_t copy_size = copy_end - copy_start;
@@ -626,6 +661,11 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_insert(cursor=%lu, size=%lu)\n", file->cursor, size);
+
+#ifdef COMPIO_DISABLE_INSERT_ERASE
+    WARNING_PRINT("warning: insert operations are disabled (COMPIO_DISABLE_INSERT_ERASE)\n");
+    return 0;
+#endif
 
     // behave the same as compio_write, when inserting after file end
     if (file->cursor >= file->size) {
@@ -719,6 +759,11 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
 uint64_t compio_erase(uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
+
+#ifdef COMPIO_DISABLE_INSERT_ERASE
+    WARNING_PRINT("warning: erase operations are disabled (COMPIO_DISABLE_INSERT_ERASE)\n");
+    return 0;
+#endif
 
     auto *archive = file->archive;
     const auto block_reader = archive->block_reader;

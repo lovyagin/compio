@@ -265,7 +265,11 @@ TEST_P(RandomUsageTest, RandomUsage) {
     auto [max_file_size, n_operations, n_repetitions] = GetParam();
 
     std::minstd_rand rng;
+#ifdef COMPIO_DISABLE_INSERT_ERASE
+    std::uniform_int_distribution<int> d_op(0, 3);
+#else
     std::uniform_int_distribution<int> d_op(0, 5);
+#endif
     std::uniform_int_distribution<int> d_pos(0, max_file_size - 2);
 
     for (int k = 0; k < n_repetitions; ++k) {
@@ -300,7 +304,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
 
                     ASSERT_EQ(compio_read(buffer.data(), size, file), actual_read_size);
                     for (int i = 0; i < actual_read_size; ++i) {
-                        ASSERT_EQ(buffer[i], file_data[cursor + i]);
+                        ASSERT_EQ(buffer[i], file_data[cursor + i]) << "; i=" << i;
                     }
                     cursor += actual_read_size;
                 }

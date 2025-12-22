@@ -6,6 +6,15 @@
 
 namespace compio {
 
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+long long bm_n_blocks = 0;
+#endif
+
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+long long bm_n_compressed_bytes = 0;
+long long bm_n_decompressed_bytes = 0;
+#endif
+
 block::block(context_t &context, const tree_key &key, uint64_t addr)
     : context(context),
       _key(key),
@@ -33,6 +42,9 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
             _is_valid = false;
             return;
         }
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+        bm_n_decompressed_bytes += _size;
+#endif
         assert(b.original_size == _size);
     } else {
         _data = std::move(b.data);
@@ -71,6 +83,9 @@ block::~block() {
             b.data = std::move(_data);
             b.size = _size;
         } else {
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+            bm_n_compressed_bytes += _size;
+#endif
             b.is_compressed = true;
         }
 
@@ -171,9 +186,10 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
                 key.pos);
-    if (cache.exists(key)) {
+    auto b_cached = cache.get(key);
+    if (b_cached.has_value()) {
         DEBUG_PRINT("[SBR][read_block]: cache hit\n");
-        return cache.get(key);
+        return *b_cached.value();
     }
     DEBUG_PRINT("[SBR][read_block]: cache miss\n");
     if (context.is_temporary_index_enabled) {
@@ -201,11 +217,12 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
 std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
     DEBUG_PRINT("[SBR][create_block]: size=%lu, key.hash=%lu, key.pos=%lu\n", size, key.hash,
                 key.pos);
-    if (cache.exists(key)) {
+    auto b_cached = cache.get(key);
+    if (b_cached.has_value()) {
         WARNING_PRINT("warning: trying to create block with key (%lu, %lu), that "
                       "already exists in storage_block_reader.cache\n",
                       key.hash, key.pos);
-        return cache.get(key);
+        return *b_cached.value();
     }
     auto b = std::make_shared<block>(context, key, size, false);
     cache.put(key, b);
@@ -214,6 +231,9 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     // block::~block will update this element in btree with new address (or delete it if block will
     // be removed, thought we don't remove newly created blocks anywhere)
     context.index->insert(key, {0, size});
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+    ++bm_n_blocks;
+#endif
     return b;
 }
 
@@ -221,6 +241,8 @@ void storage_block_reader::clear_cache() {
     DEBUG_PRINT("[SBR][clear_cache]\n");
     cache.clear();
 }
+
+double storage_block_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
 
 void storage_block_reader::enable_temporary_index() { context.is_temporary_index_enabled = true; }
 
@@ -275,6 +297,9 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
     }
     context.index->remove(key);
     context.allocator->deallocate(b->addr(), b->c_size());
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+    --bm_n_blocks;
+#endif
 }
 
 bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }
