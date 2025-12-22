@@ -155,97 +155,155 @@ class BenchmarkAnalyzer:
         return transformed_hits
     
     def figure1_cache_redesign(self):
-        """Create Figure 1: Cache Redesign Improvement (2x2 grid)."""
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle('Cache Redesign Performance Improvement', fontsize=14, fontweight='bold')
+        """Create Figure 1: Cache Redesign Improvement (2 separate 1x2 figures)."""
         
-        # Plot 1A: Compression work for writes
-        ax = axes[0, 0]
-        n_switch_old, data_old = self.get_data_for_plot('old_zlib', 1)
-        n_switch_new, data_new = self.get_data_for_plot('zlib', 1)
+        # First figure: Read performance (1x2 grid)
+        fig_read, axes_read = plt.subplots(1, 2, figsize=(14, 6))
+        fig_read.suptitle('Cache Redesign: Read Performance', fontsize=14, fontweight='bold')
         
-        if n_switch_old and n_switch_new:
-            comp_old = [d['n_bytes_compressed_mean'] / 1e6 for d in data_old]
-            comp_new = [d['n_bytes_compressed_mean'] / 1e6 for d in data_new]
-            
-            ax.plot(n_switch_old, comp_old, 'o-', label='old compio', linewidth=2)
-            ax.plot(n_switch_new, comp_new, 's-', label='new compio', linewidth=2)
-            ax.set_xscale('log')
-            ax.set_xlabel('n_switch (log scale)')
-            ax.set_ylabel('Bytes Compressed (MB)')
-            ax.set_title('Compression Work: Write Operations')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            ax.set_xlim(0.8, 600)
-            ax.set_ylim(min(comp_new) - 2, max(comp_old) + 2)
-        
-        # Plot 1B: Decompression work for reads
-        ax = axes[0, 1]
+        # Plot 1A: Decompression work for reads
+        ax = axes_read[0]
         n_switch_old, data_old = self.get_data_for_plot('old_zlib', 0)
         n_switch_new, data_new = self.get_data_for_plot('zlib', 0)
         
         if n_switch_old and n_switch_new:
-            decomp_old = [d['n_bytes_decompressed_mean'] / 1e6 for d in data_old]
-            decomp_new = [d['n_bytes_decompressed_mean'] / 1e6 for d in data_new]
+            # Match old and new data by n_switch
+            matched_old_data = []
+            matched_new_data = []
+            cache_hits = []
             
-            ax.plot(n_switch_old, decomp_old, 'o-', label='old compio', linewidth=2)
-            ax.plot(n_switch_new, decomp_new, 's--', label='new compio', linewidth=2)
-            ax.set_xscale('log')
-            ax.set_xlabel('n_switch (log scale)')
-            ax.set_ylabel('Bytes Decompressed (MB)')
-            ax.set_title('Decompression Work: Read Operations')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            ax.set_xlim(0.8, 600)
-        
-        # Plot 1C: Write performance
-        ax = axes[1, 0]
-        n_switch_old_write, data_old_write = self.get_data_for_plot('old_zlib', 1)
-        n_switch_new_write, data_new_write = self.get_data_for_plot('zlib', 1)
-        
-        if n_switch_old_write and n_switch_new_write:
-            throughput_old = [d['bytes_per_second_mean'] / (1024**3) for d in data_old_write]
-            throughput_new = [d['bytes_per_second_mean'] / (1024**3) for d in data_new_write]
-            std_old = [d['bytes_per_second_std'] / (1024**3) for d in data_old_write]
-            std_new = [d['bytes_per_second_std'] / (1024**3) for d in data_new_write]
+            for i, n_switch in enumerate(n_switch_new):
+                if n_switch in n_switch_old:
+                    old_idx = n_switch_old.index(n_switch)
+                    matched_old_data.append(data_old[old_idx])
+                    matched_new_data.append(data_new[i])
+                    cache_hits.append(data_new[i]['block_cache_hit_mean'] * 100)
             
-            ax.errorbar(n_switch_old_write, throughput_old, yerr=std_old, 
-                       fmt='o-', label='old compio', capsize=3, linewidth=2)
-            ax.errorbar(n_switch_new_write, throughput_new, yerr=std_new, 
-                       fmt='s-', label='new compio', capsize=3, linewidth=2)
-            ax.set_xscale('log')
-            ax.set_xlabel('n_switch (log scale)')
-            ax.set_ylabel('Throughput (GiB/s)')
-            ax.set_title('Write Performance')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            ax.set_xlim(0.8, 600)
+            if matched_old_data and matched_new_data:
+                decomp_old = [d['n_bytes_decompressed_mean'] / 1e6 for d in matched_old_data]
+                decomp_new = [d['n_bytes_decompressed_mean'] / 1e6 for d in matched_new_data]
+                
+                transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
+                
+                ax.plot(transformed_hits, decomp_old, 'o-', label='old compio', linewidth=2)
+                ax.plot(transformed_hits, decomp_new, 's--', label='new compio', linewidth=2)
+                ax.set_ylabel('Bytes Decompressed (MB)')
+                ax.set_title('Decompression Work: Read Operations')
+                ax.grid(True, alpha=0.3)
+                ax.legend()
         
-        # Plot 1D: Read performance
-        ax = axes[1, 1]
+        # Plot 1B: Read performance
+        ax = axes_read[1]
         n_switch_old_read, data_old_read = self.get_data_for_plot('old_zlib', 0)
         n_switch_new_read, data_new_read = self.get_data_for_plot('zlib', 0)
         
         if n_switch_old_read and n_switch_new_read:
-            throughput_old = [d['bytes_per_second_mean'] / (1024**3) for d in data_old_read]
-            throughput_new = [d['bytes_per_second_mean'] / (1024**3) for d in data_new_read]
-            std_old = [d['bytes_per_second_std'] / (1024**3) for d in data_old_read]
-            std_new = [d['bytes_per_second_std'] / (1024**3) for d in data_new_read]
+            # Match old and new data by n_switch
+            matched_old_data = []
+            matched_new_data = []
+            cache_hits = []
             
-            ax.errorbar(n_switch_old_read, throughput_old, yerr=std_old, 
-                       fmt='o-', label='old compio', capsize=3, linewidth=2)
-            ax.errorbar(n_switch_new_read, throughput_new, yerr=std_new, 
-                       fmt='s-', label='new compio', capsize=3, linewidth=2)
-            ax.set_xscale('log')
-            ax.set_xlabel('n_switch (log scale)')
-            ax.set_ylabel('Throughput (GiB/s)')
-            ax.set_title('Read Performance')
-            ax.grid(True, alpha=0.3)
-            ax.legend()
-            ax.set_xlim(0.8, 600)
+            for i, n_switch in enumerate(n_switch_new_read):
+                if n_switch in n_switch_old_read:
+                    old_idx = n_switch_old_read.index(n_switch)
+                    matched_old_data.append(data_old_read[old_idx])
+                    matched_new_data.append(data_new_read[i])
+                    cache_hits.append(data_new_read[i]['block_cache_hit_mean'] * 100)
+            
+            if matched_old_data and matched_new_data:
+                throughput_old = [d['bytes_per_second_mean'] / (1024**3) for d in matched_old_data]
+                throughput_new = [d['bytes_per_second_mean'] / (1024**3) for d in matched_new_data]
+                std_old = [d['bytes_per_second_std'] / (1024**3) for d in matched_old_data]
+                std_new = [d['bytes_per_second_std'] / (1024**3) for d in matched_new_data]
+                
+                transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
+                
+                ax.errorbar(transformed_hits, throughput_old, yerr=std_old,
+                           fmt='o-', label='old compio', capsize=3, linewidth=2)
+                ax.errorbar(transformed_hits, throughput_new, yerr=std_new,
+                           fmt='s-', label='new compio', capsize=3, linewidth=2)
+                ax.set_ylabel('Throughput (GiB/s)')
+                ax.set_title('Read Performance')
+                ax.grid(True, alpha=0.3)
+                ax.legend()
         
         plt.tight_layout()
-        plt.savefig('figure1_cache_redesign.png', bbox_inches='tight', dpi=300)
+        plt.savefig('figure1_read_performance.png', bbox_inches='tight', dpi=300)
+        plt.close()
+        
+        # Second figure: Write performance (1x2 grid)
+        fig_write, axes_write = plt.subplots(1, 2, figsize=(14, 6))
+        fig_write.suptitle('Cache Redesign: Write Performance', fontsize=14, fontweight='bold')
+        
+        # Plot 1C: Compression work for writes
+        ax = axes_write[0]
+        n_switch_old, data_old = self.get_data_for_plot('old_zlib', 1)
+        n_switch_new, data_new = self.get_data_for_plot('zlib', 1)
+        
+        if n_switch_old and n_switch_new:
+            # Match old and new data by n_switch
+            matched_old_data = []
+            matched_new_data = []
+            cache_hits = []
+            
+            for i, n_switch in enumerate(n_switch_new):
+                if n_switch in n_switch_old:
+                    old_idx = n_switch_old.index(n_switch)
+                    matched_old_data.append(data_old[old_idx])
+                    matched_new_data.append(data_new[i])
+                    cache_hits.append(data_new[i]['block_cache_hit_mean'] * 100)
+            
+            if matched_old_data and matched_new_data:
+                comp_old = [d['n_bytes_compressed_mean'] / 1e6 for d in matched_old_data]
+                comp_new = [d['n_bytes_compressed_mean'] / 1e6 for d in matched_new_data]
+                
+                transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
+                
+                ax.plot(transformed_hits, comp_old, 'o-', label='old compio', linewidth=2)
+                ax.plot(transformed_hits, comp_new, 's-', label='new compio', linewidth=2)
+                ax.set_ylabel('Bytes Compressed (MB)')
+                ax.set_title('Compression Work: Write Operations')
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+                ax.set_ylim(min(comp_new) - 2, max(comp_old) + 2)
+        
+        # Plot 1D: Write performance
+        ax = axes_write[1]
+        n_switch_old_write, data_old_write = self.get_data_for_plot('old_zlib', 1)
+        n_switch_new_write, data_new_write = self.get_data_for_plot('zlib', 1)
+        
+        if n_switch_old_write and n_switch_new_write:
+            # Match old and new data by n_switch
+            matched_old_data = []
+            matched_new_data = []
+            cache_hits = []
+            
+            for i, n_switch in enumerate(n_switch_new_write):
+                if n_switch in n_switch_old_write:
+                    old_idx = n_switch_old_write.index(n_switch)
+                    matched_old_data.append(data_old_write[old_idx])
+                    matched_new_data.append(data_new_write[i])
+                    cache_hits.append(data_new_write[i]['block_cache_hit_mean'] * 100)
+            
+            if matched_old_data and matched_new_data:
+                throughput_old = [d['bytes_per_second_mean'] / (1024**3) for d in matched_old_data]
+                throughput_new = [d['bytes_per_second_mean'] / (1024**3) for d in matched_new_data]
+                std_old = [d['bytes_per_second_std'] / (1024**3) for d in matched_old_data]
+                std_new = [d['bytes_per_second_std'] / (1024**3) for d in matched_new_data]
+                
+                transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
+                
+                ax.errorbar(transformed_hits, throughput_old, yerr=std_old,
+                           fmt='o-', label='old compio', capsize=3, linewidth=2)
+                ax.errorbar(transformed_hits, throughput_new, yerr=std_new,
+                           fmt='s-', label='new compio', capsize=3, linewidth=2)
+                ax.set_ylabel('Throughput (GiB/s)')
+                ax.set_title('Write Performance')
+                ax.grid(True, alpha=0.3)
+                ax.legend()
+        
+        plt.tight_layout()
+        plt.savefig('figure1_write_performance.png', bbox_inches='tight', dpi=300)
         plt.close()
     
     def figure2_io_reduction(self):
