@@ -390,6 +390,29 @@ class BenchmarkAnalyzer:
         
         algorithms = ['zlib', 'zstd', 'lz4']
         
+        compression_ratios = {}
+        for algo in algorithms:
+            if algo in self.data:
+                n_switch_compio, data_compio = self.get_data_for_plot(algo, 1)
+                n_switch_stdio, data_stdio = self.get_data_for_plot('stdio', 1)
+                
+                if n_switch_compio and n_switch_stdio:
+                    compio_file_sizes = []
+                    stdio_file_sizes = []
+                    
+                    for i, n_switch in enumerate(n_switch_compio):
+                        if n_switch in n_switch_stdio:
+                            stdio_idx = n_switch_stdio.index(n_switch)
+                            compio_file_sizes.append(data_compio[i]['file_size_mean'])
+                            stdio_file_sizes.append(data_stdio[stdio_idx]['file_size_mean'])
+                    
+                    if compio_file_sizes and stdio_file_sizes:
+                        avg_compio = compio_file_sizes[len(compio_file_sizes) // 2 - 1]
+                        avg_stdio = stdio_file_sizes[len(stdio_file_sizes) // 2 - 1]
+                        if avg_stdio > 0:
+                            ratio = avg_stdio / avg_compio
+                            compression_ratios[algo] = ratio
+
         # Plot 3A: Read break-even
         ax = axes[0]
         
@@ -420,8 +443,11 @@ class BenchmarkAnalyzer:
                         
                         transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
                         
-                        ax.plot(transformed_hits, throughput_ratios, 
-                               marker="o", label=algo, linewidth=2)
+                        label = algo
+                        if algo in compression_ratios:
+                            label = f"{algo} ({compression_ratios[algo]:.1f} comp. ratio)"
+                        ax.plot(transformed_hits, throughput_ratios,
+                               marker="o", label=label, linewidth=2)
         
         ax.axhline(y=1.0, color='r', linestyle='--', alpha=0.7, label='Break-even')
         ax.set_ylabel('Throughput Ratio\n(compio / stdio)')
@@ -459,8 +485,11 @@ class BenchmarkAnalyzer:
                         
                         transformed_hits = self.setup_cache_hit_axis(ax, cache_hits)
                         
-                        ax.plot(transformed_hits, throughput_ratios, 
-                               marker="o", label=algo, linewidth=2)
+                        label = algo
+                        if algo in compression_ratios:
+                            label = f"{algo} ({compression_ratios[algo]:.1f} comp. ratio)"
+                        ax.plot(transformed_hits, throughput_ratios,
+                               marker="o", label=label, linewidth=2)
         
         ax.axhline(y=1.0, color='r', linestyle='--', alpha=0.7, label='Break-even')
         ax.set_ylabel('Throughput Ratio\n(compio / stdio)')
