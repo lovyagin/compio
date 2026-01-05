@@ -1,0 +1,1340 @@
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                188.3          597.8           39.9           34.5
+Avg Dealloc Time (ns)              224.2          265.9           36.1           35.9
+Successful Allocs                  28117          28065          28067          27915
+Failed Allocs                       1799           1579           1741           1634
+Final Free Blocks                      7             21             19             24
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.4            1.3            1.4
+Free Space (KB)                     18.0           27.5           15.5           26.0
+Fragmented Regions                     7             21             19             24
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.73x
+SFL Speedup (First-Fit): 17.34x
+Overhead Diff (BF):      -0.0%
+Overhead Diff (FF):      +0.0%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                208.5         1192.4           54.9           39.1
+Avg Dealloc Time (ns)              243.3          600.1           39.9           38.4
+Successful Allocs                  28712          28781          28981          28805
+Failed Allocs                        826            812            927            853
+Final Free Blocks                     21            323             15             16
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.3            0.8            0.3            0.4
+Free Space (KB)                     37.9          315.6           73.4          106.2
+Fragmented Regions                    21            323             15             16
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  3.80x
+SFL Speedup (First-Fit): 30.46x
+Overhead Diff (BF):      +0.0%
+Overhead Diff (FF):      -0.4%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                194.0          687.7           42.7           38.2
+Avg Dealloc Time (ns)              236.7          306.0           37.2           37.0
+Successful Allocs                  28282          28330          28201          28364
+Failed Allocs                       1391           1320           1366           1401
+Final Free Blocks                      7             35              7             11
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.1            0.4            0.2            0.1
+Free Space (KB)                    232.0         1152.0          432.0          312.0
+Fragmented Regions                     7             35              7             11
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.54x
+SFL Speedup (First-Fit): 18.02x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                180.5         2089.0           42.9           80.5
+Avg Dealloc Time (ns)              224.6          281.3           30.4           31.1
+Successful Allocs                  29318          29407          29537          29371
+Failed Allocs                        232            214            242            361
+Final Free Blocks                      8             33              4            948
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.9            1.1            0.6           42.5
+Free Space (KB)                    192.8          248.8          104.5        21078.5
+Fragmented Regions                     8             33              4            948
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.21x
+SFL Speedup (First-Fit): 25.95x
+Overhead Diff (BF):      -0.3%
+Overhead Diff (FF):      +41.4%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.3%        +0.1%        -0.0%
+Mixed Sizes                            0.3%        +0.1%        +0.1%
+Large Blocks                           0.1%        +0.1%        +0.1%
+High Fragmentation                     1.1%        -0.6%       +36.7%
+=== RUN 1 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                183.8          567.2           39.1           34.9
+Avg Dealloc Time (ns)              221.0          250.3           35.1           36.0
+Successful Allocs                  28045          28173          28009          28031
+Failed Allocs                       1711           1615           1638           1644
+Final Free Blocks                      5              9              6             12
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.3            1.3            1.4
+Free Space (KB)                     10.5           14.5           12.0           29.5
+Fragmented Regions                     5              9              6             12
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.70x
+SFL Speedup (First-Fit): 16.24x
+Overhead Diff (BF):      +0.0%
+Overhead Diff (FF):      +0.2%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                210.7         1079.0           50.3           37.8
+Avg Dealloc Time (ns)              240.3          544.1           37.0           37.2
+Successful Allocs                  28735          29011          28778          28737
+Failed Allocs                        844            875            845            793
+Final Free Blocks                     22            245             11             13
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.4            0.5            0.3            0.3
+Free Space (KB)                    105.6          158.6           59.1           58.0
+Fragmented Regions                    22            245             11             13
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.19x
+SFL Speedup (First-Fit): 28.53x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                190.7          664.7           42.8           37.8
+Avg Dealloc Time (ns)              225.3          310.1           37.2           36.9
+Successful Allocs                  28292          28410          28395          28244
+Failed Allocs                       1407           1398           1473           1317
+Final Free Blocks                      6             26              7              6
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.2            0.3            0.2            0.1
+Free Space (KB)                    424.0         1080.0          544.0          328.0
+Fragmented Regions                     6             26              7              6
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.46x
+SFL Speedup (First-Fit): 17.61x
+Overhead Diff (BF):      +0.0%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                179.2         2215.1           43.8           77.8
+Avg Dealloc Time (ns)              226.7          288.9           31.2           30.8
+Successful Allocs                  29468          29276          29379          29316
+Failed Allocs                        220            226            236            366
+Final Free Blocks                     16             92             12            844
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.9            2.2            0.8           40.5
+Free Space (KB)                    197.2          624.8          174.5        20567.2
+Fragmented Regions                    16             92             12            844
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.09x
+SFL Speedup (First-Fit): 28.46x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      +38.4%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.3%        +0.1%        -0.0%
+Mixed Sizes                            0.5%        -0.0%        -0.1%
+Large Blocks                           0.1%        -0.0%        -0.0%
+High Fragmentation                     0.9%        -0.5%       +41.6%
+=== RUN 2 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                181.8          606.2           40.0           33.8
+Avg Dealloc Time (ns)              232.1          261.5           36.0           35.9
+Successful Allocs                  27949          28049          28062          27927
+Failed Allocs                       1615           1572           1727           1598
+Final Free Blocks                      4             31              5             11
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.4            1.3            1.4
+Free Space (KB)                      9.0           35.0           13.0           16.5
+Fragmented Regions                     4             31              5             11
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.54x
+SFL Speedup (First-Fit): 17.91x
+Overhead Diff (BF):      -0.0%
+Overhead Diff (FF):      -0.1%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                208.5         1106.8           50.8           37.9
+Avg Dealloc Time (ns)              241.0          559.2           37.2           37.0
+Successful Allocs                  28903          28975          28829          28883
+Failed Allocs                        913            850            928            878
+Final Free Blocks                     13            255             19             11
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.5            0.5            0.3            0.3
+Free Space (KB)                    159.8          152.2           61.6           43.6
+Fragmented Regions                    13            255             19             11
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.10x
+SFL Speedup (First-Fit): 29.21x
+Overhead Diff (BF):      -0.2%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                189.4          675.3           42.8           39.6
+Avg Dealloc Time (ns)              235.4          299.8           37.3           38.2
+Successful Allocs                  28348          28251          28228          28341
+Failed Allocs                       1455           1292           1404           1380
+Final Free Blocks                      9             26             13              6
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.2            0.2            0.2            0.1
+Free Space (KB)                    536.0          488.0          552.0          192.0
+Fragmented Regions                     9             26             13              6
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.43x
+SFL Speedup (First-Fit): 17.05x
+Overhead Diff (BF):      +0.0%
+Overhead Diff (FF):      -0.1%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                182.1         2109.0           41.9           82.3
+Avg Dealloc Time (ns)              211.8          272.1           30.4           31.0
+Successful Allocs                  29518          29395          29465          29364
+Failed Allocs                        238            219            246            368
+Final Free Blocks                     10             18              5            987
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.5            0.7            0.4           39.8
+Free Space (KB)                    401.8          143.5           70.2        20150.0
+Fragmented Regions                    10             18              5            987
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.35x
+SFL Speedup (First-Fit): 25.61x
+Overhead Diff (BF):      -1.1%
+Overhead Diff (FF):      +39.1%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.3%        -0.0%        -0.0%
+Mixed Sizes                            0.4%        -0.0%        +0.2%
+Large Blocks                           0.1%        +0.0%        +0.1%
+High Fragmentation                     1.2%        -0.4%       +41.5%
+=== RUN 3 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                188.6          551.4           39.2           34.3
+Avg Dealloc Time (ns)              215.6          248.7           34.9           35.5
+Successful Allocs                  28014          28121          28044          27956
+Failed Allocs                       1698           1596           1708           1590
+Final Free Blocks                      4             39             20              3
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.5            1.5            1.2
+Free Space (KB)                     11.5           40.0           36.0            3.5
+Fragmented Regions                     4             39             20              3
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.81x
+SFL Speedup (First-Fit): 16.09x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                210.2         1099.4           50.2           38.2
+Avg Dealloc Time (ns)              244.6          537.4           36.9           36.9
+Successful Allocs                  28959          28822          28819          28995
+Failed Allocs                        894            812            899            868
+Final Free Blocks                     22            294             12             12
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.6            0.8            0.3            0.4
+Free Space (KB)                    216.4          342.2           51.2           98.0
+Fragmented Regions                    22            294             12             12
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.19x
+SFL Speedup (First-Fit): 28.81x
+Overhead Diff (BF):      -0.3%
+Overhead Diff (FF):      -0.5%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                191.2          702.0           42.7           37.8
+Avg Dealloc Time (ns)              227.7          313.2           37.0           36.7
+Successful Allocs                  28195          28250          28227          28485
+Failed Allocs                       1396           1302           1407           1415
+Final Free Blocks                     12             16             20             19
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.2            0.1            0.2            0.2
+Free Space (KB)                    448.0          272.0          744.0          800.0
+Fragmented Regions                    12             16             20             19
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.47x
+SFL Speedup (First-Fit): 18.56x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      +0.1%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                179.0         2053.2           42.6           75.3
+Avg Dealloc Time (ns)              216.8          270.3           30.4           30.7
+Successful Allocs                  29273          29622          29502          29389
+Failed Allocs                        213            230            238            351
+Final Free Blocks                      7             47             12            858
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.0            1.0            1.9           41.5
+Free Space (KB)                    225.5          257.8          514.8        19990.8
+Fragmented Regions                     7             47             12            858
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.20x
+SFL Speedup (First-Fit): 27.27x
+Overhead Diff (BF):      +0.8%
+Overhead Diff (FF):      +40.5%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.4%        -0.0%        +0.0%
+Mixed Sizes                            0.4%        -0.2%        -0.1%
+Large Blocks                           0.1%        +0.1%        +0.0%
+High Fragmentation                     0.7%        +0.5%       +38.3%
+=== RUN 4 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                188.0          679.0           40.5           35.7
+Avg Dealloc Time (ns)              241.3          292.6           35.9           36.0
+Successful Allocs                  27992          28086          27985          28073
+Failed Allocs                       1628           1562           1663           1659
+Final Free Blocks                     17             25             10             10
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.5            1.3            1.4            1.3
+Free Space (KB)                     35.0           23.0           24.0           15.5
+Fragmented Regions                    17             25             10             10
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.64x
+SFL Speedup (First-Fit): 19.00x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      -0.0%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                213.7         1123.4           49.8           38.4
+Avg Dealloc Time (ns)              244.0          562.8           36.8           36.9
+Successful Allocs                  28891          28840          28719          28636
+Failed Allocs                        876            815            847            812
+Final Free Blocks                      9            266             11             17
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.3            0.7            0.3            0.4
+Free Space (KB)                     54.1          283.2           24.1          118.8
+Fragmented Regions                     9            266             11             17
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.29x
+SFL Speedup (First-Fit): 29.28x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      -0.3%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                188.3          688.1           43.3           38.0
+Avg Dealloc Time (ns)              222.9          309.7           36.8           37.3
+Successful Allocs                  28282          28287          28155          28430
+Failed Allocs                       1424           1285           1388           1442
+Final Free Blocks                      8             21             18             18
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.2            0.1            0.3            0.2
+Free Space (KB)                    544.0          368.0          896.0          552.0
+Fragmented Regions                     8             21             18             18
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.35x
+SFL Speedup (First-Fit): 18.11x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      +0.0%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                176.3         2367.6           42.5           71.5
+Avg Dealloc Time (ns)              225.8          285.2           30.3           30.3
+Successful Allocs                  29413          29399          29555          29349
+Failed Allocs                        237            214            249            339
+Final Free Blocks                      8             11             15            806
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.8            0.6            1.2           38.2
+Free Space (KB)                    172.8           99.0          322.2        17964.0
+Fragmented Regions                     8             11             15            806
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.15x
+SFL Speedup (First-Fit): 33.12x
+Overhead Diff (BF):      +0.4%
+Overhead Diff (FF):      +37.7%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.4%        -0.2%        -0.1%
+Mixed Sizes                            0.3%        +0.1%        -0.0%
+Large Blocks                           0.1%        +0.1%        +0.1%
+High Fragmentation                     0.7%        +0.6%       +41.4%
+=== RUN 5 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                183.2          554.5           39.0           35.3
+Avg Dealloc Time (ns)              226.8          248.9           34.9           35.3
+Successful Allocs                  28015          28198          27997          28090
+Failed Allocs                       1690           1618           1654           1676
+Final Free Blocks                      5             11             11              5
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.3            1.3            1.2
+Free Space (KB)                      8.0           14.5           19.5            4.5
+Fragmented Regions                     5             11             11              5
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.69x
+SFL Speedup (First-Fit): 15.73x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      -0.0%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                209.1         1096.9           51.7           37.8
+Avg Dealloc Time (ns)              236.5          555.6           38.0           37.1
+Successful Allocs                  28880          28876          28875          28738
+Failed Allocs                        882            828            911            844
+Final Free Blocks                     21            267             17             24
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.4            0.7            0.5            0.9
+Free Space (KB)                    115.5          252.8          141.9          366.9
+Fragmented Regions                    21            267             17             24
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.05x
+SFL Speedup (First-Fit): 29.02x
+Overhead Diff (BF):      +0.0%
+Overhead Diff (FF):      +0.2%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                196.0          687.1           42.2           37.6
+Avg Dealloc Time (ns)              239.3          313.3           37.0           36.6
+Successful Allocs                  28385          28349          28238          28274
+Failed Allocs                       1466           1352           1452           1380
+Final Free Blocks                      3             16             12             10
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.1            0.2            0.2            0.2
+Free Space (KB)                    144.0          712.0          584.0          760.0
+Fragmented Regions                     3             16             12             10
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.64x
+SFL Speedup (First-Fit): 18.26x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      +0.0%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                180.4         1816.5           43.2           70.0
+Avg Dealloc Time (ns)              214.1          269.8           31.1           30.8
+Successful Allocs                  29514          29635          29379          29043
+Failed Allocs                        244            229            235            332
+Final Free Blocks                     14             25              2            804
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.2            0.9            0.4           41.3
+Free Space (KB)                    322.8          217.2           54.2        18977.8
+Fragmented Regions                    14             25              2            804
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.18x
+SFL Speedup (First-Fit): 25.95x
+Overhead Diff (BF):      -0.8%
+Overhead Diff (FF):      +40.4%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.4%        -0.1%        -0.1%
+Mixed Sizes                            0.3%        +0.1%        +0.0%
+Large Blocks                           0.1%        +0.2%        +0.3%
+High Fragmentation                     0.5%        +0.3%       +37.1%
+=== RUN 6 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                187.6          577.0           38.8           33.9
+Avg Dealloc Time (ns)              237.8          253.7           34.8           34.7
+Successful Allocs                  27931          28069          27899          28029
+Failed Allocs                       1582           1581           1608           1628
+Final Free Blocks                     10             10              7              6
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.4            1.2            1.3            1.3
+Free Space (KB)                     29.0           10.0           13.5           10.5
+Fragmented Regions                    10             10              7              6
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.84x
+SFL Speedup (First-Fit): 17.01x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      +0.0%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                213.5         1132.8           50.1           37.8
+Avg Dealloc Time (ns)              243.4          560.7           37.1           37.3
+Successful Allocs                  28935          28895          28823          28942
+Failed Allocs                        906            831            878            897
+Final Free Blocks                     11            273             11             17
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.3            0.5            0.4            0.3
+Free Space (KB)                     53.6          183.0          104.5           69.2
+Fragmented Regions                    11            273             11             17
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.26x
+SFL Speedup (First-Fit): 29.94x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                193.1          698.3           43.3           39.3
+Avg Dealloc Time (ns)              218.2          309.8           37.4           38.4
+Successful Allocs                  28282          28337          28324          28355
+Failed Allocs                       1476           1299           1436           1411
+Final Free Blocks                     12             16             10              6
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.1            0.1            0.2            0.2
+Free Space (KB)                    392.0          248.0          576.0          408.0
+Fragmented Regions                    12             16             10              6
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.46x
+SFL Speedup (First-Fit): 17.75x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      +0.0%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                178.8         2398.8           42.4           77.4
+Avg Dealloc Time (ns)              227.0          286.1           30.5           31.8
+Successful Allocs                  29482          29487          29445          29106
+Failed Allocs                        246            229            246            367
+Final Free Blocks                      4             19              6            904
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.5            0.9            1.2           42.8
+Free Space (KB)                     76.8          208.8          320.2        21336.2
+Fragmented Regions                     4             19              6            904
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.22x
+SFL Speedup (First-Fit): 31.01x
+Overhead Diff (BF):      +0.7%
+Overhead Diff (FF):      +41.9%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.3%        +0.1%        -0.0%
+Mixed Sizes                            0.4%        -0.1%        +0.0%
+Large Blocks                           0.1%        -0.0%        +0.1%
+High Fragmentation                     1.1%        -0.3%       +37.6%
+=== RUN 7 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                182.6          558.1           39.8           34.6
+Avg Dealloc Time (ns)              227.0          250.6           36.8           36.3
+Successful Allocs                  28100          28234          28042          28028
+Failed Allocs                       1717           1636           1659           1632
+Final Free Blocks                     14             15             11             29
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.3            1.4            1.6
+Free Space (KB)                     16.5           20.5           23.0           62.5
+Fragmented Regions                    14             15             11             29
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.59x
+SFL Speedup (First-Fit): 16.12x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      +0.3%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                213.2         1123.8           51.0           38.5
+Avg Dealloc Time (ns)              243.4          569.0           38.5           38.5
+Successful Allocs                  28892          28841          28878          28841
+Failed Allocs                        882            795            911            887
+Final Free Blocks                     17            284             13             36
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.3            0.8            0.4            0.4
+Free Space (KB)                     49.2          303.2           91.9           85.1
+Fragmented Regions                    17            284             13             36
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.18x
+SFL Speedup (First-Fit): 29.18x
+Overhead Diff (BF):      +0.1%
+Overhead Diff (FF):      -0.4%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                197.0          645.2           43.0           38.8
+Avg Dealloc Time (ns)              237.9          303.9           38.4           38.2
+Successful Allocs                  28198          28474          28131          28406
+Failed Allocs                       1375           1432           1364           1450
+Final Free Blocks                     15             42              5              3
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.2            0.3            0.2            0.1
+Free Space (KB)                    400.0          936.0          400.0          144.0
+Fragmented Regions                    15             42              5              3
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.58x
+SFL Speedup (First-Fit): 16.61x
+Overhead Diff (BF):      -0.0%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                184.2         2291.6           43.5           83.8
+Avg Dealloc Time (ns)              221.2          283.4           31.7           32.6
+Successful Allocs                  29447          29447          29399          29383
+Failed Allocs                        228            226            234            350
+Final Free Blocks                     12             24              8            899
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.5            1.7            1.3           40.6
+Free Space (KB)                    412.2          505.5          332.8        19986.0
+Fragmented Regions                    12             24              8            899
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.24x
+SFL Speedup (First-Fit): 27.34x
+Overhead Diff (BF):      -0.2%
+Overhead Diff (FF):      +38.8%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.3%        +0.1%        +0.0%
+Mixed Sizes                            0.5%        -0.0%        +0.1%
+Large Blocks                           0.3%        -0.2%        -0.1%
+High Fragmentation                     0.8%        -0.2%       +33.9%
+=== RUN 8 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                187.4          616.7           44.7           34.3
+Avg Dealloc Time (ns)              236.1          263.2           37.4           34.9
+Successful Allocs                  28051          28143          28070          28098
+Failed Allocs                       1641           1593           1704           1675
+Final Free Blocks                      9             32             11              6
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.4            1.5            1.3            1.3
+Free Space (KB)                     21.5           47.5           15.0           10.0
+Fragmented Regions                     9             32             11              6
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.19x
+SFL Speedup (First-Fit): 17.98x
+Overhead Diff (BF):      -0.0%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                209.3         1110.4           49.9           38.1
+Avg Dealloc Time (ns)              247.0          548.4           36.7           37.3
+Successful Allocs                  28814          28736          28773          28942
+Failed Allocs                        923            744            844            863
+Final Free Blocks                     10            278             12             29
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.5            0.6            0.3            0.4
+Free Space (KB)                    168.5          193.9           67.4           96.8
+Fragmented Regions                    10            278             12             29
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.20x
+SFL Speedup (First-Fit): 29.16x
+Overhead Diff (BF):      -0.2%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                189.7          703.9           42.9           38.0
+Avg Dealloc Time (ns)              238.6          306.5           37.2           37.4
+Successful Allocs                  28167          28243          28366          28196
+Failed Allocs                       1447           1297           1482           1356
+Final Free Blocks                      3             36              5              7
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.0            0.3            0.1            0.2
+Free Space (KB)                     24.0         1072.0          184.0          400.0
+Fragmented Regions                     3             36              5              7
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.42x
+SFL Speedup (First-Fit): 18.54x
+Overhead Diff (BF):      +0.0%
+Overhead Diff (FF):      -0.2%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                182.0         1835.8           43.7           80.7
+Avg Dealloc Time (ns)              231.0          275.1           32.1           30.8
+Successful Allocs                  29509          29354          29521          29475
+Failed Allocs                        238            220            245            338
+Final Free Blocks                     13             62             20            938
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.9            0.8            1.3           41.2
+Free Space (KB)                    207.5          183.0          353.2        19847.0
+Fragmented Regions                    13             62             20            938
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.17x
+SFL Speedup (First-Fit): 22.74x
+Overhead Diff (BF):      +0.4%
+Overhead Diff (FF):      +40.3%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.4%        -0.1%        -0.0%
+Mixed Sizes                            0.4%        +0.0%        -0.1%
+Large Blocks                           0.2%        +0.0%        -0.1%
+High Fragmentation                     0.7%        -0.0%       +40.7%
+=== RUN 9 COMPLETED ===
+SEGREGATED FREE LIST ANALYSIS
+=============================
+
+This analysis compares the current multimap-based allocator
+with a Segregated Free List (SFL) implementation.
+
+Current Implementation:
+  - Doubly-linked list sorted by offset
+  - std::multimap<size, block*> for size-based lookups
+  - Best-fit: O(log n) using lower_bound
+  - First-fit: O(n) linear scan
+
+Segregated Free List:
+  - 12 buckets for size ranges: [0-64], [65-128], ..., [>64KB]
+  - Each bucket is a simple linked list
+  - Best-fit: O(n/k) where k is number of buckets
+  - First-fit: O(1) to O(n/k) typically
+
+
+======================================================================
+Scenario: Uniform Small Blocks (512B-4KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                183.8          621.5           39.7           35.6
+Avg Dealloc Time (ns)              247.9          267.7           36.3           36.9
+Successful Allocs                  28021          28004          27898          28241
+Failed Allocs                       1701           1477           1604           1796
+Final Free Blocks                     10             35              1             27
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         1.3            1.4            1.2            1.4
+Free Space (KB)                     15.0           25.5            1.0           36.5
+Fragmented Regions                    10             35              1             27
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.63x
+SFL Speedup (First-Fit): 17.46x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      +0.1%
+
+======================================================================
+Scenario: Mixed Block Sizes (128B-32KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                212.1         1086.9           50.3           38.0
+Avg Dealloc Time (ns)              254.5          540.0           36.9           37.1
+Successful Allocs                  28720          28831          28879          28800
+Failed Allocs                        844            783            891            845
+Final Free Blocks                     19            285              8             18
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.4            0.6            0.3            0.3
+Free Space (KB)                    121.2          226.5           68.6           73.8
+Fragmented Regions                    19            285              8             18
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.22x
+SFL Speedup (First-Fit): 28.60x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      -0.3%
+
+======================================================================
+Scenario: Large Blocks (8KB-128KB)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                194.6          702.6           43.7           40.8
+Avg Dealloc Time (ns)              227.1          310.3           37.6           39.8
+Successful Allocs                  28337          28314          28307          28371
+Failed Allocs                       1432           1339           1449           1456
+Final Free Blocks                      9             48             12             10
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.2            0.2            0.2            0.2
+Free Space (KB)                    496.0          744.0          480.0          440.0
+Fragmented Regions                     9             48             12             10
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.45x
+SFL Speedup (First-Fit): 17.24x
+Overhead Diff (BF):      -0.0%
+Overhead Diff (FF):      -0.1%
+
+======================================================================
+Scenario: High Fragmentation (80% small, 15% medium, 5% large)
+----------------------------------------------------------------------
+Metric                        Current BF     Current FF         SFL BF         SFL FF
+----------------------------------------------------------------------
+Avg Alloc Time (ns)                181.7         1772.0           44.6           72.3
+Avg Dealloc Time (ns)              221.4          259.4           31.4           30.8
+Successful Allocs                  29484          29498          29630          29177
+Failed Allocs                        223            243            245            325
+Final Free Blocks                      7             30             10            839
+----------------------------------------------------------------------
+OVERHEAD METRICS         
+----------------------------------------------------------------------
+Overhead (%)                         0.6            0.6            0.4           42.5
+Free Space (KB)                    107.5          113.0           66.2        19340.2
+Fragmented Regions                     7             30             10            839
+----------------------------------------------------------------------
+PERFORMANCE SUMMARY
+----------------------------------------------------------------------
+SFL Speedup (Best-Fit):  4.08x
+SFL Speedup (First-Fit): 24.51x
+Overhead Diff (BF):      -0.1%
+Overhead Diff (FF):      +41.9%
+
+======================================================================
+ANALYSIS CONCLUSIONS
+======================================================================
+
+SPEED COMPARISON:
+  + Best-Fit:  SFL is 4-5x faster than multimap-based
+  + First-Fit: SFL is 17-35x faster than linear scan
+  + Deallocation: SFL is ~6x faster
+
+======================================================================
+OVERHEAD COMPARISON SUMMARY
+======================================================================
+Scenario                         Current BF    SFL BF Δ    SFL FF Δ
+----------------------------------------------------------------------
+Uniform Small                          1.3%        +0.1%        +0.0%
+Mixed Sizes                            0.5%        +0.3%        -0.1%
+Large Blocks                           0.1%        -0.0%        +0.1%
+High Fragmentation                     0.6%        +0.5%       +41.4%
+=== RUN 10 COMPLETED ===
