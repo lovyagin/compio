@@ -176,14 +176,6 @@ public:
      */
     bool load_from_file(compio_archive *archive);
 
-    /**
-     * @brief Verify the integrity of a block using its checksum
-     * @param data Pointer to the block data
-     * @param size Size of the block
-     * @param expected_checksum Expected checksum value
-     */
-    void verify_block_integrity(const uint8_t *data, size_t size, const std::string &expected_checksum);
-
 private:
     /**
      * @brief Remove block from the list and deallocate memory
@@ -299,7 +291,6 @@ private:
     uint64_t total_free_;                        /**< Total free space in bytes */
     const uint64_t *file_size_;                  /**< Reference to total file size */
     uint8_t cached_fragmentation_;               /**< Cached fragmentation level */
-    mutable bool recently_defragmented_ = false; /**< Flag for recent defragmentation */
 
     /**
      * @brief Find the first suitable block for allocation

@@ -29,8 +29,6 @@
 namespace compio {
 struct free_block;
 
-uint8_t ZEROS[4096] = {0};
-
 free_blocks_manager::free_blocks_manager(const uint64_t *file_size)
     : head_(nullptr),
       tail_(nullptr),
@@ -59,7 +57,6 @@ void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
     }
 
     total_free_ += size;
-    recently_defragmented_ = false;
     update_fragmentation();
 }
 
@@ -250,7 +247,6 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
     }
 
     total_free_ -= size;
-    recently_defragmented_ = false;
     update_fragmentation();
 
     return allocated_offset;
@@ -258,7 +254,6 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
 
 void free_blocks_manager::defragment() {
     if (!head_ || !head_->next) {
-        recently_defragmented_ = true;
         return;
     }
 
@@ -298,7 +293,6 @@ void free_blocks_manager::defragment() {
         size_idx_.insert(b);
     }
 
-    recently_defragmented_ = true;
     last_alloc_ = head_;
 }
 
@@ -694,7 +688,7 @@ void block_allocator::maintenance() {
         blocks_manager_.defragment();
         blocks_manager_.update_fragmentation();
 
-        if (blocks_manager_.get_cached_fragmentation() >= current_fragmentation) {
+        if (blocks_manager_.get_cached_fragmentation() > threshold) {
             if (archive_->file && archive_->index) {
                 perform_defragmentation();
             }
@@ -749,22 +743,22 @@ void block_allocator::perform_defragmentation() {
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
 
-    uint64_t write_pos = sizeof(header); // compact destination cursor
+    uint64_t write_pos = sizeof(header);
+
+    // Collect final positions of placed storage blocks for gap computation.
+    std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
 
     for (auto &[key, val] : used_blocks) {
         const uint64_t src = val.addr;
 
-        // Skip blocks that haven't been written to disk yet (cached/pending).
         if (src < sizeof(header)) {
             continue;
         }
 
-        // Read the actual compressed size from the on-disk metadata.
-        // B-tree stores uncompressed (original) size; on disk we need compressed size.
-        // Metadata layout: signature(1) + is_compressed(1) + compressed_size(8) + ...
+        // Read actual compressed size from on-disk metadata (signature + is_compressed + size).
         uint64_t compressed_size = 0;
         {
-            const long meta_offset = static_cast<long>(src) + 2; // skip signature + is_compressed
+            const long meta_offset = static_cast<long>(src) + 2;
             if (fseek(archive_->file, meta_offset, SEEK_SET) != 0 ||
                 lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
                 compressed_size == 0) {
@@ -774,9 +768,7 @@ void block_allocator::perform_defragmentation() {
         }
         const uint64_t block_size = STORAGE_BLOCK_METASIZE + compressed_size;
 
-        // Advance write_pos past any B-tree nodes at the current destination.
         while (overlaps_btree_node(write_pos, block_size)) {
-            // Skip over the B-tree node that's in the way.
             auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
             if (it != node_addrs.begin()) {
                 auto prev = std::prev(it);
@@ -793,14 +785,12 @@ void block_allocator::perform_defragmentation() {
         }
 
         if (src == write_pos) {
-            // Block already at the correct location — nothing to move.
+            placed_blocks.push_back({write_pos, block_size});
             write_pos += block_size;
             continue;
         }
 
-        // Move the block chunk-by-chunk.
-        // IMPORTANT: use explicit seek before EVERY read AND before EVERY write
-        // because both operations share the same FILE* position.
+        // Move the block chunk-by-chunk with explicit seeks (shared FILE*).
         uint64_t src_cursor = src;
         uint64_t dst_cursor = write_pos;
         size_t   remaining  = block_size;
@@ -831,9 +821,6 @@ void block_allocator::perform_defragmentation() {
         }
 
         if (io_error) {
-            // Abort defragmentation — file left in partially moved state.
-            // The index has not been updated yet for this block, so integrity is
-            // preserved up to the last successfully updated block.
             WARNING_PRINT("warning: perform_defragmentation aborted due to I/O error\n");
             return;
         }
@@ -841,6 +828,7 @@ void block_allocator::perform_defragmentation() {
         val.addr = write_pos;
         archive_->index->update(key, val);
 
+        placed_blocks.push_back({write_pos, block_size});
         write_pos += block_size;
     }
 
@@ -871,24 +859,31 @@ void block_allocator::perform_defragmentation() {
     archive_->header->file_size = truncate_pos;
 
     blocks_manager_ = free_blocks_manager(&archive_->header->file_size);
-    // Mark the gaps between compacted storage blocks and B-tree nodes as free.
-    // The region [write_pos, truncate_pos) may contain B-tree nodes interspersed
-    // with free space. We add free regions for the gaps between nodes.
-    if (write_pos < truncate_pos) {
-        uint64_t gap_start = write_pos;
-        for (uint64_t na : node_addrs) {
-            if (na >= truncate_pos) break;
-            if (na > gap_start) {
-                blocks_manager_.add_free_block(gap_start, na - gap_start);
-            }
-            uint64_t node_end = na + btree_node_size;
-            if (node_end > gap_start) {
-                gap_start = node_end;
-            }
+
+    // Rebuild free blocks from gaps between all occupied regions (storage blocks + B-tree nodes).
+    std::vector<std::pair<uint64_t, uint64_t>> occupied;
+    occupied.reserve(placed_blocks.size() + node_addrs.size());
+    for (auto &pb : placed_blocks) {
+        occupied.push_back(pb);
+    }
+    for (uint64_t na : node_addrs) {
+        if (na >= truncate_pos) break;
+        occupied.push_back({na, btree_node_size});
+    }
+    std::sort(occupied.begin(), occupied.end());
+
+    uint64_t scan = sizeof(header);
+    for (auto &[occ_start, occ_size] : occupied) {
+        if (occ_start > scan) {
+            blocks_manager_.add_free_block(scan, occ_start - scan);
         }
-        if (gap_start < truncate_pos) {
-            blocks_manager_.add_free_block(gap_start, truncate_pos - gap_start);
+        uint64_t occ_end = occ_start + occ_size;
+        if (occ_end > scan) {
+            scan = occ_end;
         }
+    }
+    if (scan < truncate_pos) {
+        blocks_manager_.add_free_block(scan, truncate_pos - scan);
     }
     blocks_manager_.update_fragmentation();
 
@@ -899,20 +894,6 @@ void block_allocator::perform_defragmentation() {
     archive_->block_reader->invalidate_temporary_index();
 
     DEBUG_PRINT("[AL] perform_defragmentation complete. New file size: %" PRIu64 "\n", write_pos);
-}
-
-// Utility function to calculate checksum
-std::string calculate_checksum(const uint8_t *data, size_t size) {
-    return SHA256::compute(data, size);
-}
-
-// Extend free_blocks_manager to include checksum verification
-void free_blocks_manager::verify_block_integrity(const uint8_t *data, size_t size, const std::string &expected_checksum) {
-    std::string actual_checksum = calculate_checksum(data, size);
-    if (actual_checksum != expected_checksum) {
-        std::cerr << "Checksum mismatch detected!" << std::endl;
-        // Handle error (e.g., log, throw exception, etc.)
-    }
 }
 
 } // namespace compio
