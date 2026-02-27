@@ -46,8 +46,7 @@ jobs:
         shell: pwsh
 
       - name: Install dependencies via vcpkg
-        run: ./vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
-        shell: bash
+        run: ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
 
       - name: Configure CMake
         run: >
