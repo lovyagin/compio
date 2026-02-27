@@ -71,8 +71,8 @@ struct FragmentationParams {
 
 // Generate highly compressible data (repeated patterns)
 void generate_compressible_data(std::vector<uint8_t>& data, std::mt19937& gen) {
-    std::uniform_int_distribution<uint8_t> pattern_dist(0, 15);
-    uint8_t pattern = pattern_dist(gen);
+    std::uniform_int_distribution<int> pattern_dist(0, 15);
+    uint8_t pattern = static_cast<uint8_t>(pattern_dist(gen));
 
     // Fill with repeated pattern
     for (size_t i = 0; i < data.size(); i++) {
@@ -82,9 +82,9 @@ void generate_compressible_data(std::vector<uint8_t>& data, std::mt19937& gen) {
 
 // Generate incompressible data (random)
 void generate_incompressible_data(std::vector<uint8_t>& data, std::mt19937& gen) {
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
+    std::uniform_int_distribution<int> dist(0, 255);
     for (auto& byte : data) {
-        byte = dist(gen);
+        byte = static_cast<uint8_t>(dist(gen));
     }
 }
 

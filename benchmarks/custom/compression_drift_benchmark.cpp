@@ -68,12 +68,12 @@ struct DriftParams {
 // ratio close to 1.0 = incompressible (random data)
 void generate_data_with_ratio(std::vector<uint8_t>& data, double compress_ratio, std::mt19937& gen) {
     std::uniform_real_distribution<double> prob(0.0, 1.0);
-    std::uniform_int_distribution<uint8_t> byte_dist(0, 255);
+    std::uniform_int_distribution<int> byte_dist(0, 255);
 
     for (auto& byte : data) {
         if (prob(gen) < compress_ratio) {
             // Random byte (incompressible)
-            byte = byte_dist(gen);
+            byte = static_cast<uint8_t>(byte_dist(gen));
         } else {
             // Zero (highly compressible)
             byte = 0;
