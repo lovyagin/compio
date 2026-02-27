@@ -716,6 +716,26 @@ void block_allocator::perform_defragmentation() {
     archive_->block_reader->clear_cache();
     archive_->index->clear_cache();
 
+    // Collect B-tree node addresses so we don't overwrite them during compaction.
+    // B-tree nodes and storage blocks share the same file address space.
+    uint64_t btree_node_size = 0;
+    auto node_addrs = archive_->index->collect_node_addresses(btree_node_size);
+
+    // Build a set for O(log n) lookup of reserved ranges.
+    // Each node occupies [addr, addr + btree_node_size).
+    auto overlaps_btree_node = [&](uint64_t start, uint64_t size) -> bool {
+        // Binary search for the first node_addr <= start + size
+        auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), start);
+        // Check the node before (its range might extend into [start, start+size))
+        if (it != node_addrs.begin()) {
+            auto prev = std::prev(it);
+            if (*prev + btree_node_size > start) return true;
+        }
+        // Check the node at/after start (it might start within [start, start+size))
+        if (it != node_addrs.end() && *it < start + size) return true;
+        return false;
+    };
+
     constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024; // 1 MB
     std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
 
@@ -753,6 +773,24 @@ void block_allocator::perform_defragmentation() {
             }
         }
         const uint64_t block_size = STORAGE_BLOCK_METASIZE + compressed_size;
+
+        // Advance write_pos past any B-tree nodes at the current destination.
+        while (overlaps_btree_node(write_pos, block_size)) {
+            // Skip over the B-tree node that's in the way.
+            auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
+            if (it != node_addrs.begin()) {
+                auto prev = std::prev(it);
+                if (*prev + btree_node_size > write_pos) {
+                    write_pos = *prev + btree_node_size;
+                    continue;
+                }
+            }
+            if (it != node_addrs.end() && *it < write_pos + block_size) {
+                write_pos = *it + btree_node_size;
+                continue;
+            }
+            break;
+        }
 
         if (src == write_pos) {
             // Block already at the correct location — nothing to move.
@@ -808,23 +846,50 @@ void block_allocator::perform_defragmentation() {
 
     fflush(archive_->file);
 
+    // Compute safe truncation point: max of write_pos and end of last B-tree node.
+    uint64_t truncate_pos = write_pos;
+    if (!node_addrs.empty()) {
+        uint64_t last_node_end = node_addrs.back() + btree_node_size;
+        if (last_node_end > truncate_pos) {
+            truncate_pos = last_node_end;
+        }
+    }
+
     // Physically truncate the file to the new (smaller) size so that the
     // freed tail space is actually returned to the OS.
 #ifdef _WIN32
-    if (_chsize_s(_fileno(archive_->file), static_cast<__int64>(write_pos)) != 0) {
+    if (_chsize_s(_fileno(archive_->file), static_cast<__int64>(truncate_pos)) != 0) {
         WARNING_PRINT("warning: perform_defragmentation: _chsize_s failed\n");
     }
 #else
-    if (ftruncate(fileno(archive_->file), static_cast<off_t>(write_pos)) != 0) {
+    if (ftruncate(fileno(archive_->file), static_cast<off_t>(truncate_pos)) != 0) {
         WARNING_PRINT("warning: perform_defragmentation: ftruncate failed\n");
     }
 #endif
 
     // Update logical file_size in header and rebuild free-block manager.
-    // (The file is now fully compact — no free blocks remain before write_pos.)
-    archive_->header->file_size = write_pos;
+    archive_->header->file_size = truncate_pos;
 
     blocks_manager_ = free_blocks_manager(&archive_->header->file_size);
+    // Mark the gaps between compacted storage blocks and B-tree nodes as free.
+    // The region [write_pos, truncate_pos) may contain B-tree nodes interspersed
+    // with free space. We add free regions for the gaps between nodes.
+    if (write_pos < truncate_pos) {
+        uint64_t gap_start = write_pos;
+        for (uint64_t na : node_addrs) {
+            if (na >= truncate_pos) break;
+            if (na > gap_start) {
+                blocks_manager_.add_free_block(gap_start, na - gap_start);
+            }
+            uint64_t node_end = na + btree_node_size;
+            if (node_end > gap_start) {
+                gap_start = node_end;
+            }
+        }
+        if (gap_start < truncate_pos) {
+            blocks_manager_.add_free_block(gap_start, truncate_pos - gap_start);
+        }
+    }
     blocks_manager_.update_fragmentation();
 
     // Invalidate the temporary index — it was populated with pre-move addresses

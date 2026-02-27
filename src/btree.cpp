@@ -363,6 +363,37 @@ void btree::clear_cache() { reader.clear_cache(); }
 
 double btree::get_cache_hit_probability() const { return reader.get_cache_hit_probability(); }
 
+std::vector<uint64_t> btree::collect_node_addresses(uint64_t &node_size) {
+    node_size = INDEX_NODE_SIZE(degree);
+    std::vector<uint64_t> addrs;
+
+    uint64_t root_addr = readonly(archive_header, header)->index_root;
+    if (root_addr == 0) return addrs;
+
+    // BFS traversal of all nodes.
+    std::vector<uint64_t> queue;
+    queue.push_back(root_addr);
+
+    while (!queue.empty()) {
+        uint64_t addr = queue.back();
+        queue.pop_back();
+        addrs.push_back(addr);
+
+        auto node = reader.read_node(addr);
+        if (!RO(node)->is_leaf) {
+            for (uint32_t i = 0; i <= RO(node)->num_keys; i++) {
+                uint64_t child_addr = RO(node)->children[i];
+                if (child_addr != 0) {
+                    queue.push_back(child_addr);
+                }
+            }
+        }
+    }
+
+    std::sort(addrs.begin(), addrs.end());
+    return addrs;
+}
+
 void btree::split_child(shared_node &parent, shared_node &child, const uint64_t idx) {
     DEBUG_PRINT("[BTREE]: split_child(parent.addr=%ld, child.addr=%ld, idx=%ld)\n", parent.addr(), child.addr(), idx);
     auto new_node = create_node();
