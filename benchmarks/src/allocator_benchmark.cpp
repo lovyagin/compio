@@ -13,9 +13,9 @@
 
 /// Generates random incompressible data for testing.
 static void fill_random_data(std::vector<uint8_t>& data, std::mt19937& gen) {
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
+    std::uniform_int_distribution<int> dist(0, 255);
     for (auto& byte : data) {
-        byte = dist(gen);
+        byte = static_cast<uint8_t>(dist(gen));
     }
 }
 

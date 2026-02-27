@@ -3,12 +3,28 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "compio.h"
 
+static void get_temp_path(char *buf, size_t buf_size, const char *filename) {
+#ifdef _WIN32
+    char tmp_dir[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp_dir);
+    snprintf(buf, buf_size, "%s%s", tmp_dir, filename);
+#else
+    snprintf(buf, buf_size, "/tmp/%s", filename);
+#endif
+}
+
 int main() {
-    const char *archive_path = "/tmp/test_compression_persistence.cmp";
+    char archive_path[512];
+    get_temp_path(archive_path, sizeof(archive_path), "test_compression_persistence.cmp");
     const char *test_data = "This is test data to verify compression persistence!";
     size_t data_size = strlen(test_data) + 1;
 

@@ -51,32 +51,32 @@ endif()
 
 if (COMPIO_WARNING_PRINT)
     message("Building with COMPIO_WARNING_PRINT")
-    add_compile_options(-DCOMPIO_WARNING_PRINT)
+    add_compile_definitions(COMPIO_WARNING_PRINT)
 endif()
 
 if (COMPIO_DEBUG_PRINT)
     message("Building with COMPIO_DEBUG_PRINT")
-    add_compile_options(-DCOMPIO_DEBUG_PRINT)
+    add_compile_definitions(COMPIO_DEBUG_PRINT)
 endif()
 
 if (COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER)
     message("Building with COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER")
-    add_compile_options(-DCOMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER)
+    add_compile_definitions(COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER)
 endif()
 
 if (COMPIO_BENCHMARK_BLOCKS_COUNTER)
     message("Building with COMPIO_BENCHMARK_BLOCKS_COUNTER")
-    add_compile_options(-DCOMPIO_BENCHMARK_BLOCKS_COUNTER)
+    add_compile_definitions(COMPIO_BENCHMARK_BLOCKS_COUNTER)
 endif()
 
 if (COMPIO_BENCHMARK_COMPRESSION_BYTES)
     message("Building with COMPIO_BENCHMARK_COMPRESSION_BYTES")
-    add_compile_options(-DCOMPIO_BENCHMARK_COMPRESSION_BYTES)
+    add_compile_definitions(COMPIO_BENCHMARK_COMPRESSION_BYTES)
 endif()
 
 if (COMPIO_DISABLE_INSERT_ERASE)
     message("Building with COMPIO_DISABLE_INSERT_ERASE")
-    add_compile_options(-DCOMPIO_DISABLE_INSERT_ERASE)
+    add_compile_definitions(COMPIO_DISABLE_INSERT_ERASE)
 endif()
 
 
@@ -101,7 +101,7 @@ endif()
 
 # --- Library target
 
-add_library(compio SHARED
+add_library(compio STATIC
     src/allocator.cpp
     src/btree.cpp
     src/compio.cpp
@@ -162,6 +162,8 @@ else()
 endif()
 
 # --- Subdirectories
+
+enable_testing()
 
 add_subdirectory(tests)
 add_subdirectory(benchmarks)

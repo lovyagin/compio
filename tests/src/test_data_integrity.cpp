@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <vector>
 
@@ -18,7 +19,9 @@ protected:
     compio_config config;
 
     void SetUp() override {
-        snprintf(archive_name, sizeof(archive_name), "/tmp/test_integrity_%d.compio", rand());
+        auto tmp = std::filesystem::temp_directory_path() /
+                   ("test_integrity_" + std::to_string(rand()) + ".compio");
+        snprintf(archive_name, sizeof(archive_name), "%s", tmp.string().c_str());
         compio_build_default_config(&config);
         archive = nullptr;
     }
