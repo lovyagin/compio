@@ -791,33 +791,68 @@ void block_allocator::perform_defragmentation() {
         }
 
         // Move the block chunk-by-chunk with explicit seeks (shared FILE*).
-        uint64_t src_cursor = src;
-        uint64_t dst_cursor = write_pos;
-        size_t   remaining  = block_size;
+        // When dst > src (block moved forward past a B-tree node), use backward
+        // copy to avoid corrupting overlapping source data.
         bool     io_error   = false;
+        const bool backward = write_pos > src &&
+                              write_pos < src + block_size; // regions overlap
 
-        while (remaining > 0) {
-            size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
+        if (backward) {
+            uint64_t src_cursor = src + block_size;
+            uint64_t dst_cursor = write_pos + block_size;
+            size_t   remaining  = block_size;
 
-            if (fseek(archive_->file, static_cast<long>(src_cursor), SEEK_SET) != 0 ||
-                fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
-                              src_cursor);
-                io_error = true;
-                break;
+            while (remaining > 0) {
+                size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
+                src_cursor -= chunk;
+                dst_cursor -= chunk;
+
+                if (fseek(archive_->file, static_cast<long>(src_cursor), SEEK_SET) != 0 ||
+                    fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                    WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
+                                  src_cursor);
+                    io_error = true;
+                    break;
+                }
+
+                if (fseek(archive_->file, static_cast<long>(dst_cursor), SEEK_SET) != 0 ||
+                    fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                    WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
+                                  dst_cursor);
+                    io_error = true;
+                    break;
+                }
+
+                remaining -= chunk;
             }
+        } else {
+            uint64_t src_cursor = src;
+            uint64_t dst_cursor = write_pos;
+            size_t   remaining  = block_size;
 
-            if (fseek(archive_->file, static_cast<long>(dst_cursor), SEEK_SET) != 0 ||
-                fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
-                              dst_cursor);
-                io_error = true;
-                break;
+            while (remaining > 0) {
+                size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
+
+                if (fseek(archive_->file, static_cast<long>(src_cursor), SEEK_SET) != 0 ||
+                    fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                    WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
+                                  src_cursor);
+                    io_error = true;
+                    break;
+                }
+
+                if (fseek(archive_->file, static_cast<long>(dst_cursor), SEEK_SET) != 0 ||
+                    fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                    WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
+                                  dst_cursor);
+                    io_error = true;
+                    break;
+                }
+
+                src_cursor += chunk;
+                dst_cursor += chunk;
+                remaining  -= chunk;
             }
-
-            src_cursor += chunk;
-            dst_cursor += chunk;
-            remaining  -= chunk;
         }
 
         if (io_error) {
