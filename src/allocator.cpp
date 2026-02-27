@@ -39,6 +39,41 @@ free_blocks_manager::free_blocks_manager(const uint64_t *file_size)
     assert(file_size_ != nullptr);
 }
 
+free_blocks_manager::~free_blocks_manager() {
+    free_block *current = head_;
+    while (current) {
+        free_block *next = current->next;
+        delete current;
+        current = next;
+    }
+    head_ = tail_ = last_alloc_ = nullptr;
+}
+
+free_blocks_manager &free_blocks_manager::operator=(free_blocks_manager &&other) noexcept {
+    if (this != &other) {
+        // Free existing nodes
+        free_block *current = head_;
+        while (current) {
+            free_block *next = current->next;
+            delete current;
+            current = next;
+        }
+        // Take ownership
+        head_ = other.head_;
+        tail_ = other.tail_;
+        last_alloc_ = other.last_alloc_;
+        total_free_ = other.total_free_;
+        file_size_ = other.file_size_;
+        cached_fragmentation_ = other.cached_fragmentation_;
+        size_idx_ = other.size_idx_;
+        // Nullify source
+        other.head_ = other.tail_ = other.last_alloc_ = nullptr;
+        other.total_free_ = 0;
+        other.size_idx_.clear();
+    }
+    return *this;
+}
+
 void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
     if (size == 0)
         return;
@@ -461,21 +496,19 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     uint32_t size = serialize(buffer);
 
     // Seek to end of file for allocator state, but ensure we don't overwrite header
-    if (fseek(archive->file, 0, SEEK_END) != 0) {
+    if (fseek64(archive->file, 0, SEEK_END) != 0) {
         return false;
     }
 
-    // Get current file position
-    long pos = ftell(archive->file);
+    int64_t pos = ftell64(archive->file);
     if (pos < 0) {
         WARNING_PRINT("warning: ftell returned error in allocator.save_state\n");
         return false;
     }
 
-    // Ensure we write after the header
-    if (pos < static_cast<long>(sizeof(header))) {
+    if (pos < static_cast<int64_t>(sizeof(header))) {
         pos = sizeof(header);
-        if (fseek(archive->file, pos, SEEK_SET) != 0) {
+        if (fseek64(archive->file, pos, SEEK_SET) != 0) {
             WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
             return false;
         }
@@ -512,9 +545,9 @@ bool free_blocks_manager::load_from_file(compio_archive *archive) {
     }
 
     // Seek to allocator state position
-    if (fseek(archive->file,
-              static_cast<long>(readonly(archive->header, header)->allocator_state_offset),
-              SEEK_SET) != 0) {
+    if (fseek64(archive->file,
+               static_cast<int64_t>(readonly(archive->header, header)->allocator_state_offset),
+               SEEK_SET) != 0) {
         return false;
     }
 
@@ -656,7 +689,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         static uint8_t zeros[BUFFER_SIZE] = {0};
 
         DEBUG_PRINT("[W][deallocate]addr=%lu;size=%lu\n", offset, size);
-        fseek(archive_->file, offset, SEEK_SET);
+        fseek64(archive_->file, offset, SEEK_SET);
 
         size_t remaining = size;
         while (remaining > 0) {
@@ -758,8 +791,8 @@ void block_allocator::perform_defragmentation() {
         // Read actual compressed size from on-disk metadata (signature + is_compressed + size).
         uint64_t compressed_size = 0;
         {
-            const long meta_offset = static_cast<long>(src) + 2;
-            if (fseek(archive_->file, meta_offset, SEEK_SET) != 0 ||
+            const int64_t meta_offset = static_cast<int64_t>(src) + 2;
+            if (fseek64(archive_->file, meta_offset, SEEK_SET) != 0 ||
                 lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
                 compressed_size == 0) {
                 WARNING_PRINT("warning: perform_defragmentation: failed to read metadata at %" PRIu64 "\n", src);
@@ -807,7 +840,7 @@ void block_allocator::perform_defragmentation() {
                 src_cursor -= chunk;
                 dst_cursor -= chunk;
 
-                if (fseek(archive_->file, static_cast<long>(src_cursor), SEEK_SET) != 0 ||
+                if (fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) != 0 ||
                     fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
                     WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
                                   src_cursor);
@@ -815,7 +848,7 @@ void block_allocator::perform_defragmentation() {
                     break;
                 }
 
-                if (fseek(archive_->file, static_cast<long>(dst_cursor), SEEK_SET) != 0 ||
+                if (fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) != 0 ||
                     fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
                     WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
                                   dst_cursor);
@@ -833,7 +866,7 @@ void block_allocator::perform_defragmentation() {
             while (remaining > 0) {
                 size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
 
-                if (fseek(archive_->file, static_cast<long>(src_cursor), SEEK_SET) != 0 ||
+                if (fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) != 0 ||
                     fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
                     WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
                                   src_cursor);
@@ -841,7 +874,7 @@ void block_allocator::perform_defragmentation() {
                     break;
                 }
 
-                if (fseek(archive_->file, static_cast<long>(dst_cursor), SEEK_SET) != 0 ||
+                if (fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) != 0 ||
                     fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
                     WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
                                   dst_cursor);

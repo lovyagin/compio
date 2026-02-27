@@ -263,7 +263,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         auto all_blocks = archive->index->get_range(key_min, key_max);
 
         // Save current file position
-        long saved_pos = ftell(archive->file);
+        int64_t saved_pos = ftell64(archive->file);
 
         // Deallocate all blocks and remove them from index
         for (const auto &[key, val] : all_blocks) {
@@ -282,7 +282,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 
         // Restore file position
         if (saved_pos >= 0) {
-            fseek(archive->file, saved_pos, SEEK_SET);
+            fseek64(archive->file, saved_pos, SEEK_SET);
         }
     }
 

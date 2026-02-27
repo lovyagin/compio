@@ -788,3 +788,71 @@ TEST_F(PerformDefragmentationTest, StatsConsistentAfterDefrag) {
     EXPECT_EQ(after.total_free_bytes, 0u);
     EXPECT_EQ(after.fragmentation_percent, 0u);
 }
+
+// ---------------------------------------------------------------------------
+// Verify that repeated defragment-erase-write cycles don't corrupt data.
+// This stresses the move assignment operator of free_blocks_manager and the
+// gap-tracking logic across multiple compaction rounds.
+// ---------------------------------------------------------------------------
+TEST_F(PerformDefragmentationTest, RepeatedDefragCycles_DataIntact) {
+    const int CYCLES = 5;
+    const int FILES_PER_CYCLE = 4;
+    const size_t DATA_SIZE = 200;
+
+    for (int cycle = 0; cycle < CYCLES; ++cycle) {
+        for (int i = 0; i < FILES_PER_CYCLE; ++i) {
+            char fname[32];
+            snprintf(fname, sizeof(fname), "c%d_f%d", cycle, i);
+            compio_file *f = compio_open_file(fname, archive);
+            ASSERT_NE(f, nullptr);
+            std::vector<uint8_t> data(DATA_SIZE, static_cast<uint8_t>(cycle * 10 + i));
+            compio_write(data.data(), DATA_SIZE, f);
+            compio_close_file(f);
+        }
+
+        for (int i = 0; i < FILES_PER_CYCLE; i += 2) {
+            char fname[32];
+            snprintf(fname, sizeof(fname), "c%d_f%d", cycle, i);
+            compio_file *f = compio_open_file(fname, archive);
+            ASSERT_NE(f, nullptr);
+            compio_erase(DATA_SIZE, f);
+            compio_close_file(f);
+        }
+
+        EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
+    }
+
+    for (int cycle = 0; cycle < CYCLES; ++cycle) {
+        for (int i = 1; i < FILES_PER_CYCLE; i += 2) {
+            char fname[32];
+            snprintf(fname, sizeof(fname), "c%d_f%d", cycle, i);
+            compio_file *f = compio_open_file(fname, archive);
+            ASSERT_NE(f, nullptr) << "File " << fname << " not found";
+            std::vector<uint8_t> expected(DATA_SIZE, static_cast<uint8_t>(cycle * 10 + i));
+            std::vector<uint8_t> buf(DATA_SIZE, 0);
+            uint64_t n = compio_read(buf.data(), DATA_SIZE, f);
+            compio_close_file(f);
+            EXPECT_EQ(n, DATA_SIZE);
+            EXPECT_EQ(buf, expected) << "Data mismatch in " << fname;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test that the free_blocks_manager destructor properly frees all nodes.
+// Implicitly checked by ASAN — this exercises a complex internal state.
+// ---------------------------------------------------------------------------
+TEST(DestructorTest, FreeBlocksManagerCleansUpNodes) {
+    uint64_t file_size = 100000;
+    {
+        free_blocks_manager mgr(&file_size);
+        for (uint64_t i = 0; i < 50; ++i) {
+            mgr.add_free_block(i * 100, 50);
+        }
+        mgr.defragment();
+        for (uint64_t i = 50; i < 100; ++i) {
+            mgr.add_free_block(i * 100, 30);
+        }
+    }
+    SUCCEED();
+}

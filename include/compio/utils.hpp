@@ -48,6 +48,26 @@ uint64_t fnv1a(const uint8_t *data, size_t size);
 uint32_t fnv1a_32(const uint8_t *data, size_t size);
 
 /**
+ * @brief Portable 64-bit file seek
+ *
+ * Uses _fseeki64 on Windows (where long is 32-bit) and fseeko on POSIX
+ * to correctly handle file offsets beyond 2GB.
+ *
+ * @param file File pointer
+ * @param offset 64-bit offset
+ * @param whence Seek origin (SEEK_SET, SEEK_CUR, SEEK_END)
+ * @return 0 on success, non-zero on error
+ */
+int fseek64(FILE *file, int64_t offset, int whence);
+
+/**
+ * @brief Portable 64-bit file tell
+ * @param file File pointer
+ * @return Current file position or -1 on error
+ */
+int64_t ftell64(FILE *file);
+
+/**
  * @brief Checks if file is empty
  * @param file Opened file
  * @return true if file is empty, false otherwise

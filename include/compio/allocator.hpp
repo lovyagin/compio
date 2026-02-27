@@ -68,6 +68,16 @@ public:
     explicit free_blocks_manager(const uint64_t *file_size);
 
     /**
+     * @brief Destructor — frees all nodes in the linked list
+     */
+    ~free_blocks_manager();
+
+    /**
+     * @brief Move assignment operator — takes ownership of other's nodes
+     */
+    free_blocks_manager &operator=(free_blocks_manager &&other) noexcept;
+
+    /**
      * @brief Add new free block to the storage
      * @param offset Block start offset
      * @param size Block size

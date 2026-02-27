@@ -29,7 +29,7 @@ header::header()
 
 void header::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][header]addr=%lu\n", addr);
-    if (fseek(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(magic_number, file);
     if (magic_number != COMPIO_MAGIC_NUMBER) {
@@ -50,7 +50,7 @@ void header::read_from(FILE *file, uint64_t addr) {
 
 void header::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][header]addr=%lu;size=%lu\n", addr, sizeof(header));
-    if (fseek(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(magic_number, file);
     lendian_fwrite_member(index_root, file);
@@ -67,7 +67,7 @@ void header::write_to(FILE *file, uint64_t addr) const {
 
 void index_node::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][index_node]addr=%lu\n", addr);
-    if (fseek(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     uint8_t signature;
     lendian_fread(&signature, sizeof(signature), 1, file);
@@ -102,7 +102,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
 void index_node::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][index_node]addr=%lu;size=%lu\n", addr, INDEX_NODE_SIZE(tree_degree));
     validate();
-    if (fseek(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite(&index_node_signature, sizeof(index_node_signature), 1, file);
     lendian_fwrite_member(is_leaf, file);
@@ -169,7 +169,7 @@ void index_node::validate() const {
 void storage_block::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][storage_block]addr=%lu\n", addr);
     assert(addr != 0);
-    if (fseek(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     uint8_t signature;
     lendian_fread(&signature, sizeof(signature), 1, file);
@@ -198,7 +198,7 @@ void storage_block::write_to(FILE *file, uint64_t addr) const {
     assert(size > 0);
     assert(original_size > 0);
     assert(is_compressed || size == original_size);
-    if (fseek(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
 
     // Calculate checksum before writing (non-const, so we cast)
