@@ -409,6 +409,12 @@ public:
     void maintenance();
 
     /**
+     * @brief Force defragmentation unconditionally (ignores fragmentation threshold).
+     * Use this for on-demand defragmentation via the public API.
+     */
+    void force_defragmentation();
+
+    /**
      * @brief Save allocator state to archive
      * @param archive Target archive
      * @return True if save was successful

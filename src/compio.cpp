@@ -173,7 +173,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->block_reader = new compio::storage_block_reader(
-        file, archive->allocator, archive->index, &c->compressor, c->cache_size__blocks);
+        file, archive->allocator, archive->index,
+        &archive->config.compressor, archive->config.cache_size__blocks);
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
@@ -312,6 +313,25 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
     return COMPIO_SUCCESS;
 }
 
+int compio_defragment(compio_archive *archive) {
+    if (!archive) {
+        WARNING_PRINT("warning: passed nullptr into compio_defragment\n");
+        return COMPIO_ERROR;
+    }
+
+    if (archive->mode_b & mode_bit::r) {
+        WARNING_PRINT("warning: compio_defragment called on read-only archive\n");
+        return COMPIO_ERROR;
+    }
+
+    if (!archive->allocator || !archive->index || !archive->file) {
+        return COMPIO_ERROR;
+    }
+
+    archive->allocator->force_defragmentation();
+    return COMPIO_SUCCESS;
+}
+
 int compio_close_file(compio_file *file) {
     if (!file) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
@@ -328,11 +348,19 @@ int compio_close_archive(compio_archive *archive) {
         return -1;
     }
 
-    // 1) flush cached data to file and delete block_reader
+    // 1) flush cached data to file (writes all dirty blocks; keeps block_reader valid)
     compio_flush(archive);
+
+    // 2) run maintenance (defragmentation) before saving allocator state.
+    //    Must happen while block_reader and index are still alive.
+    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
+        archive->allocator->maintenance();
+    }
+
+    // 3) now safe to delete block_reader
     delete archive->block_reader;
 
-    // 2) save allocator state to the end of the file, if not read-only mode
+    // 4) save allocator state to the end of the file, if not read-only mode
     if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
         if (!archive->allocator->save_state(archive)) {
             WARNING_PRINT("warning: failed to save allocator state\n");
@@ -340,20 +368,20 @@ int compio_close_archive(compio_archive *archive) {
         }
     }
 
-    // 3) delete allocator
+    // 5) delete allocator
     delete archive->allocator;
 
-    // 4) delete btree (it actually depends on allocator, but allocator also depends on index,
+    // 6) delete btree (it actually depends on allocator, but allocator also depends on index,
     // however they don't call each other in their destructors, so their destruction order does not
     // matter)
     delete archive->index;
 
-    // 5) flush header
+    // 7) flush header
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
 
-    // 6) finally we close the file (block_reader, allocator and index are all deleted, so no
+    // 8) finally we close the file (block_reader, allocator and index are all deleted, so no
     // fwrites will be called after this)
     if (fclose(archive->file)) {
         WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
@@ -361,7 +389,7 @@ int compio_close_archive(compio_archive *archive) {
     }
     DEBUG_PRINT("[cca]: closed file\n");
 
-    // 7) and delete archive structure
+    // 9) and delete archive structure
     delete archive;
 
     return COMPIO_SUCCESS;

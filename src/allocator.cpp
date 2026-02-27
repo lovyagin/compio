@@ -7,11 +7,18 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <vector>
+
+#ifdef _WIN32
+#include <io.h>   // _chsize_s, _fileno
+#else
+#include <unistd.h> // ftruncate, fileno
+#endif
 
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
@@ -251,49 +258,48 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
 
 void free_blocks_manager::defragment() {
     if (!head_ || !head_->next) {
-        return; // Nothing to defragment
+        recently_defragmented_ = true;
+        return;
     }
 
-#ifdef DEBUG
-    size_t original_count = std::distance(head_, nullptr);
-    DEBUG_PRINT("Starting defragmentation. Original blocks: %zu\n", original_count);
-#endif
-
-    // Clear size index before defragmentation
+    // Clear size index — pointers inside blocks become stale, but we rebuild
+    // the index from scratch at the end of this function.
     size_idx_.clear();
 
-    bool changes_made;
-    do {
-        changes_made = false;
-        free_block *current = head_;
-
-        while (current && current->next) {
-            free_block *next = current->next;
-
-            // Check if current block can be merged with the next one
-            if (current->offset + current->size == next->offset) {
-                current->size += next->size;
-                remove_block(next);
-                changes_made = true;
-                continue; // Continue with current block as it might merge with more
+    // The free-block list is always kept sorted by offset.  A single forward
+    // pass is therefore sufficient to merge all adjacent blocks: if
+    // current->offset + current->size == next->offset the two blocks are
+    // contiguous and can be merged into one.  We stay at 'current' after each
+    // merge so that the newly enlarged block is immediately tested against its
+    // new successor (chain merges in one pass, O(n) overall).
+    free_block *current = head_;
+    while (current && current->next) {
+        free_block *nxt = current->next;
+        if (current->offset + current->size == nxt->offset) {
+            current->size += nxt->size;
+            current->next  = nxt->next;
+            if (nxt->next) {
+                nxt->next->prev = current;
+            } else {
+                tail_ = current;
             }
-
+            if (last_alloc_ == nxt) {
+                last_alloc_ = current;
+            }
+            delete nxt;
+            // Do NOT advance: current may now be adjacent to its new successor.
+        } else {
             current = current->next;
         }
-    } while (changes_made); // Repeat while blocks can be merged
+    }
 
-    // Rebuild size index after defragmentation
-    for (free_block *current = head_; current; current = current->next) {
-        size_idx_.insert(current);
+    // Rebuild size index from the merged list.
+    for (free_block *b = head_; b; b = b->next) {
+        size_idx_.insert(b);
     }
 
     recently_defragmented_ = true;
-    last_alloc_ = head_; // Reset next_fit pointer
-
-#ifdef DEBUG
-    size_t new_count = std::distance(head_, nullptr);
-    DEBUG_PRINT("Defragmentation complete. Blocks after: %zu\n", new_count);
-#endif
+    last_alloc_ = head_;
 }
 
 void free_blocks_manager::print_list() const {
@@ -360,39 +366,28 @@ uint8_t free_blocks_manager::calculate_fragmentation() const {
     }
 
     size_t block_count = 0;
-    uint64_t total_gaps = 0;
     uint64_t largest_block = 0;
-    uint64_t smallest_block = UINT64_MAX;
     uint64_t total_free_space = 0;
 
-    free_block *current = head_;
-    free_block *prev = nullptr;
-
-    while (current) {
+    for (free_block *cur = head_; cur; cur = cur->next) {
         block_count++;
-        total_free_space += current->size;
-
-        largest_block = std::max(largest_block, current->size);
-        smallest_block = std::min(smallest_block, current->size);
-
-        if (prev) {
-            total_gaps += current->offset - (prev->offset + prev->size);
-        }
-
-        prev = current;
-        current = current->next;
+        total_free_space += cur->size;
+        if (cur->size > largest_block) largest_block = cur->size;
     }
 
-    if (block_count == 1) {
+    if (block_count == 1 || total_free_space == 0) {
         return 0;
     }
 
-    double size_dispersion = static_cast<double>(largest_block - smallest_block) / largest_block;
-    double gaps_ratio = static_cast<double>(total_gaps) / total_free_space;
+    // External fragmentation: 0 = all free space is one contiguous block,
+    // 1 = all free space is scattered in tiny fragments.
+    double ext_frag = 1.0 - static_cast<double>(largest_block) /
+                                static_cast<double>(total_free_space);
 
-    double fragmentation = 0.4 * std::min(1.0, (block_count - 1) / 9.0) + // max 10 blocks = 100%
-                           0.3 * size_dispersion + 0.3 * std::min(1.0, gaps_ratio);
+    // Secondary: normalised block count (100 blocks ≈ max penalty).
+    double count_score = std::min(1.0, static_cast<double>(block_count - 1) / 99.0);
 
+    double fragmentation = 0.8 * ext_frag + 0.2 * count_score;
     return static_cast<uint8_t>(fragmentation * 100);
 }
 
@@ -447,6 +442,7 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
     }
     head_ = tail_ = last_alloc_ = nullptr;
     total_free_ = 0;
+    size_idx_.clear(); // must clear to avoid dangling pointers after deleting nodes above
 
     // Read each block and add to manager
     const uint64_t *data_ptr = reinterpret_cast<const uint64_t *>(buffer + sizeof(uint64_t));
@@ -681,6 +677,15 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
     }
 }
 
+void block_allocator::force_defragmentation() {
+    blocks_manager_.defragment();
+    blocks_manager_.update_fragmentation();
+    if (archive_->file && archive_->index) {
+        perform_defragmentation();
+    }
+    last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+}
+
 void block_allocator::maintenance() {
     uint8_t current_fragmentation = get_fragmentation();
     uint8_t threshold = archive_->config.fragmentation_threshold;
@@ -706,111 +711,129 @@ bool block_allocator::needs_defragmentation() const {
 }
 
 void block_allocator::perform_defragmentation() {
-    static constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024; // 1MB buffer
-    static std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
+    // Flush all cached/dirty blocks to disk first so that every index entry
+    // has a real physical address before we start moving data.
+    archive_->block_reader->clear_cache();
+    archive_->index->clear_cache();
+
+    constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024; // 1 MB
+    std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
 
     constexpr tree_key key_min{};
     tree_key key_max{};
     key_max.hash = UINT64_MAX;
-    key_max.pos = UINT64_MAX;
+    key_max.pos  = UINT64_MAX;
 
     auto used_blocks = archive_->index->get_range(key_min, key_max);
 
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
 
-    uint64_t new_offset = sizeof(header);
-    std::vector<std::pair<tree_key, tree_val>> relocations;
+    uint64_t write_pos = sizeof(header); // compact destination cursor
 
-    size_t batch_size = 0;
-    uint64_t last_source_end = 0;
-    uint64_t last_target_end = 0;
+    for (auto &[key, val] : used_blocks) {
+        const uint64_t src = val.addr;
 
-    auto flush_relocations = [this, &relocations]() {
-        if (!relocations.empty()) {
-            for (const auto &[key, val] : relocations) {
-                archive_->index->update(key, val);
+        // Skip blocks that haven't been written to disk yet (cached/pending).
+        if (src < sizeof(header)) {
+            continue;
+        }
+
+        // Read the actual compressed size from the on-disk metadata.
+        // B-tree stores uncompressed (original) size; on disk we need compressed size.
+        // Metadata layout: signature(1) + is_compressed(1) + compressed_size(8) + ...
+        uint64_t compressed_size = 0;
+        {
+            const long meta_offset = static_cast<long>(src) + 2; // skip signature + is_compressed
+            if (fseek(archive_->file, meta_offset, SEEK_SET) != 0 ||
+                lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
+                compressed_size == 0) {
+                WARNING_PRINT("warning: perform_defragmentation: failed to read metadata at %" PRIu64 "\n", src);
+                continue;
             }
-            relocations.clear();
         }
-    };
+        const uint64_t block_size = STORAGE_BLOCK_METASIZE + compressed_size;
 
-    for (const auto &[key, val] : used_blocks) {
-        uint64_t block_size = STORAGE_BLOCK_METASIZE + val.size;
-
-        if (val.addr == new_offset) {
-            new_offset += block_size;
+        if (src == write_pos) {
+            // Block already at the correct location — nothing to move.
+            write_pos += block_size;
             continue;
         }
 
-        if (val.addr != last_source_end || new_offset != last_target_end) {
-            flush_relocations();
-            batch_size = 0;
-        }
+        // Move the block chunk-by-chunk.
+        // IMPORTANT: use explicit seek before EVERY read AND before EVERY write
+        // because both operations share the same FILE* position.
+        uint64_t src_cursor = src;
+        uint64_t dst_cursor = write_pos;
+        size_t   remaining  = block_size;
+        bool     io_error   = false;
 
-        if (fseek(archive_->file, val.addr, SEEK_SET) != 0) {
-            DEBUG_PRINT("[AL] Error seeking to source block at %lu\n", val.addr);
-            continue;
-        }
-
-        if (fseek(archive_->file, new_offset, SEEK_SET) != 0) {
-            DEBUG_PRINT("[AL] Error seeking to target position at %lu\n", new_offset);
-            continue;
-        }
-
-        size_t remaining = block_size;
         while (remaining > 0) {
-            size_t chunk_size = std::min(remaining, MOVE_BUFFER_SIZE);
+            size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
 
-            if (fread(move_buffer.data(), 1, chunk_size, archive_->file) != chunk_size) {
-                DEBUG_PRINT("[AL] Error reading block data at %lu\n",
-                            val.addr + block_size - remaining);
+            if (fseek(archive_->file, static_cast<long>(src_cursor), SEEK_SET) != 0 ||
+                fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
+                              src_cursor);
+                io_error = true;
                 break;
             }
 
-            if (fwrite(move_buffer.data(), 1, chunk_size, archive_->file) != chunk_size) {
-                DEBUG_PRINT("[AL] Error writing block data at %lu\n",
-                            new_offset + block_size - remaining);
+            if (fseek(archive_->file, static_cast<long>(dst_cursor), SEEK_SET) != 0 ||
+                fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
+                              dst_cursor);
+                io_error = true;
                 break;
             }
 
-            remaining -= chunk_size;
+            src_cursor += chunk;
+            dst_cursor += chunk;
+            remaining  -= chunk;
         }
 
-        tree_val new_val = val;
-        new_val.addr = new_offset;
-        relocations.push_back({key, new_val});
-
-        last_source_end = val.addr + block_size;
-        last_target_end = new_offset + block_size;
-        new_offset += block_size;
-        batch_size++;
-
-        if (batch_size >= 1000) {
-            flush_relocations();
-            batch_size = 0;
+        if (io_error) {
+            // Abort defragmentation — file left in partially moved state.
+            // The index has not been updated yet for this block, so integrity is
+            // preserved up to the last successfully updated block.
+            WARNING_PRINT("warning: perform_defragmentation aborted due to I/O error\n");
+            return;
         }
+
+        val.addr = write_pos;
+        archive_->index->update(key, val);
+
+        write_pos += block_size;
     }
-
-    flush_relocations();
 
     fflush(archive_->file);
 
-    blocks_manager_ = free_blocks_manager(readonly(archive_->header, header)->file_size
-                                              ? &readonly(archive_->header, header)->file_size
-                                              : nullptr);
-
-    if (new_offset < readonly(archive_->header, header)->file_size) {
-        blocks_manager_.add_free_block(new_offset,
-                                       readonly(archive_->header, header)->file_size - new_offset);
-    } else {
-        archive_->header->file_size = new_offset;
+    // Physically truncate the file to the new (smaller) size so that the
+    // freed tail space is actually returned to the OS.
+#ifdef _WIN32
+    if (_chsize_s(_fileno(archive_->file), static_cast<__int64>(write_pos)) != 0) {
+        WARNING_PRINT("warning: perform_defragmentation: _chsize_s failed\n");
     }
+#else
+    if (ftruncate(fileno(archive_->file), static_cast<off_t>(write_pos)) != 0) {
+        WARNING_PRINT("warning: perform_defragmentation: ftruncate failed\n");
+    }
+#endif
 
+    // Update logical file_size in header and rebuild free-block manager.
+    // (The file is now fully compact — no free blocks remain before write_pos.)
+    archive_->header->file_size = write_pos;
+
+    blocks_manager_ = free_blocks_manager(&archive_->header->file_size);
     blocks_manager_.update_fragmentation();
-    blocks_manager_.save_to_file(archive_);
 
-    DEBUG_PRINT("Defragmentation complete. New file size: %" PRIu64 "\n", new_offset);
+    // Invalidate the temporary index — it was populated with pre-move addresses
+    // by clear_cache() above. After moving blocks the B-tree holds the correct
+    // addresses; any stale temporary_index entries would cause reads to use
+    // wrong offsets.
+    archive_->block_reader->invalidate_temporary_index();
+
+    DEBUG_PRINT("[AL] perform_defragmentation complete. New file size: %" PRIu64 "\n", write_pos);
 }
 
 // Utility function to calculate checksum

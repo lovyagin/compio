@@ -337,6 +337,17 @@ typedef struct compio_fragmentation_stats {
  */
 int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation_stats *stats);
 
+/**
+ * @brief Defragment the archive, compacting data blocks and reclaiming free space.
+ *
+ * Runs the allocator maintenance pass immediately (regardless of the configured
+ * fragmentation threshold).  The archive must be opened in write mode.
+ *
+ * @param archive opened archive (write mode)
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ */
+int compio_defragment(compio_archive *archive);
+
 #ifdef __cplusplus
 }
 #endif
