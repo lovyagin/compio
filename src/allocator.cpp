@@ -364,7 +364,7 @@ free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_
     stats.smallest_free_region = (block_count > 0) ? smallest_block : 0;
     stats.avg_free_region_size = (block_count > 0) ?
         static_cast<double>(total_free_) / block_count : 0.0;
-    stats.fragmentation_percent = cached_fragmentation_;
+    stats.fragmentation_percent = calculate_fragmentation();
 
     return stats;
 }
@@ -625,7 +625,7 @@ block_allocator::block_allocator(compio_archive *archive)
 }
 
 uint8_t block_allocator::get_fragmentation() const {
-    return blocks_manager_.get_cached_fragmentation();
+    return blocks_manager_.calculate_fragmentation();
 }
 
 uint64_t block_allocator::allocate(uint64_t size) {
