@@ -45,8 +45,14 @@ jobs:
         run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
         shell: pwsh
 
-      - name: Install dependencies via vcpkg
-        run: ${{ github.workspace }}/vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+      - name: Install dependencies via vcpkg (Linux)
+        if: runner.os == 'Linux'
+        run: ./vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+
+      - name: Install dependencies via vcpkg (Windows)
+        if: runner.os == 'Windows'
+        run: .\vcpkg\vcpkg.exe install --triplet ${{ matrix.triplet }}
+        shell: pwsh
 
       - name: Configure CMake
         run: >

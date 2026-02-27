@@ -31,7 +31,6 @@ void build_config(int argc, char **argv) {
 
 int main(int argc, char **argv) {
     build_config(argc, argv);
-    benchmark::MaybeReenterWithoutASLR(argc, argv);
     benchmark::Initialize(&argc, argv);
     benchmark::RunSpecifiedBenchmarks();
     benchmark::Shutdown();
