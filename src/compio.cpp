@@ -55,7 +55,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       index(nullptr),
       block_reader(nullptr),
       allocator(nullptr),
-      mode_b(mode_b) {
+      mode_b(mode_b),
+      open_files_count(0) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
@@ -148,6 +149,17 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     bool is_new_file;
     is_new_file = is_file_empty(file);
+    if (!is_new_file) {
+        // Validate that file is large enough to contain a complete header
+        fseek64(file, 0, SEEK_END);
+        int64_t actual_size = ftell64(file);
+        if (actual_size < static_cast<int64_t>(sizeof(compio::header))) {
+            WARNING_PRINT("warning: archive file truncated (size=%lld, need>=%lu)\n",
+                          (long long)actual_size, (unsigned long)sizeof(compio::header));
+            errno = EINVAL;
+            goto no_allocator;
+        }
+    }
     if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
     } else if (readonly(archive->header, header)->compression_type !=
@@ -235,6 +247,8 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
 
     file->hash = fnv1a(name);
+
+    archive->open_files_count++;
 
     return file;
 }
@@ -328,6 +342,12 @@ int compio_defragment(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
+    if (archive->open_files_count > 0) {
+        WARNING_PRINT("warning: compio_defragment called with %u open file(s)\n",
+                       archive->open_files_count);
+        return COMPIO_ERROR;
+    }
+
     archive->allocator->force_defragmentation();
     return COMPIO_SUCCESS;
 }
@@ -336,6 +356,10 @@ int compio_close_file(compio_file *file) {
     if (!file) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
         return -1;
+    }
+
+    if (file->archive && file->archive->open_files_count > 0) {
+        file->archive->open_files_count--;
     }
 
     delete file;
@@ -909,6 +933,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 }
 
 void compio_flush(compio_archive *archive) {
-    archive->block_reader->clear_cache();
-    archive->index->clear_cache();
+    if (!archive) return;
+    if (archive->block_reader) archive->block_reader->clear_cache();
+    if (archive->index) archive->index->clear_cache();
 }

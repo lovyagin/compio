@@ -21,6 +21,7 @@ struct compio_archive {
     compio::storage_block_reader *block_reader;
     compio::block_allocator *allocator;
     uint8_t mode_b;
+    uint32_t open_files_count;
 
     compio_archive(FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;

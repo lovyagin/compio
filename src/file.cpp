@@ -180,13 +180,21 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(is_compressed, file);
     lendian_fread_member(size, file);
     assert(size != 0);
+
+    // Cap block size to prevent OOM on corrupted files
+    static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB
+    if (size > MAX_BLOCK_SIZE) {
+        WARNING_PRINT("warning: storage_block size %" PRIu64 " exceeds limit at addr=%lu\n", size, addr);
+        size = 0;
+        return;
+    }
+
     lendian_fread_member(original_size, file);
     lendian_fread_member(checksum, file);
 
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     lendian_fread(data.get(), 1, size, file);
 
-    // Verify checksum
     if (!verify_checksum()) {
         WARNING_PRINT("warning: storage_block checksum verification failed at addr=%lu\n", addr);
     }

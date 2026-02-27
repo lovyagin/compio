@@ -448,22 +448,23 @@ uint32_t free_blocks_manager::serialize(std::vector<uint8_t> &buffer) {
 }
 
 bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
-    // Check if buffer contains at least the count
     if (size < sizeof(uint64_t)) {
         return false;
     }
 
-    // Read count of blocks
     uint64_t count;
     memcpy(&count, buffer, sizeof(uint64_t));
 
-    // Check buffer is large enough for all data
-    uint32_t expected_size = sizeof(uint64_t) + count * 2 * sizeof(uint64_t);
+    // Guard against integer overflow: count * 16 could wrap
+    if (count > (UINT32_MAX - sizeof(uint64_t)) / (2 * sizeof(uint64_t))) {
+        return false;
+    }
+    uint32_t expected_size = sizeof(uint64_t) + static_cast<uint32_t>(count) * 2 * sizeof(uint64_t);
     if (size < expected_size) {
         return false;
     }
 
-    // Clear existing blocks (delete the linked list)
+    // Clear existing blocks
     while (head_) {
         free_block *temp = head_;
         head_ = head_->next;
@@ -471,13 +472,18 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
     }
     head_ = tail_ = last_alloc_ = nullptr;
     total_free_ = 0;
-    size_idx_.clear(); // must clear to avoid dangling pointers after deleting nodes above
+    size_idx_.clear();
 
-    // Read each block and add to manager
     const uint64_t *data_ptr = reinterpret_cast<const uint64_t *>(buffer + sizeof(uint64_t));
     for (uint64_t i = 0; i < count; i++) {
         uint64_t offset = *data_ptr++;
         uint64_t block_size = *data_ptr++;
+
+        // Skip invalid entries
+        if (block_size == 0) continue;
+        if (file_size_ && offset + block_size > *file_size_) continue;
+        if (offset + block_size < offset) continue; // overflow
+
         add_free_block(offset, block_size);
     }
 
@@ -491,30 +497,22 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
-    // Serialize free blocks to buffer
     std::vector<uint8_t> buffer;
     uint32_t size = serialize(buffer);
 
-    // Seek to end of file for allocator state, but ensure we don't overwrite header
-    if (fseek64(archive->file, 0, SEEK_END) != 0) {
-        return false;
-    }
-
-    int64_t pos = ftell64(archive->file);
-    if (pos < 0) {
-        WARNING_PRINT("warning: ftell returned error in allocator.save_state\n");
-        return false;
-    }
-
+    // Write allocator state at the current logical end of the file.
+    // This ensures the region is accounted for in file_size and won't
+    // be overwritten by future allocations.
+    int64_t pos = static_cast<int64_t>(readonly(archive->header, header)->file_size);
     if (pos < static_cast<int64_t>(sizeof(header))) {
         pos = sizeof(header);
-        if (fseek64(archive->file, pos, SEEK_SET) != 0) {
-            WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
-            return false;
-        }
     }
 
-    // Write serialized data
+    if (fseek64(archive->file, pos, SEEK_SET) != 0) {
+        WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
+        return false;
+    }
+
     DEBUG_PRINT("[W][allocator]addr=%lu;size=%lu\n", pos, size);
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
@@ -523,11 +521,10 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
-    // Update header with allocator state location
     archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
     archive->header->allocator_state_size = size;
+    archive->header->file_size = static_cast<uint64_t>(pos) + size;
 
-    // Ensure data is written to disk
     fflush(archive->file);
 
     return true;
@@ -661,6 +658,9 @@ uint64_t block_allocator::allocate(uint64_t size) {
 
         // If no suitable free block found, allocate at the end
         offset = readonly(archive_->header, header)->file_size;
+        if (offset > UINT64_MAX - size) {
+            return UINT64_MAX;
+        }
         archive_->header->file_size += size;
         return offset;
     } catch (const std::exception &e) {

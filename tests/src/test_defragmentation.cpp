@@ -286,6 +286,32 @@ TEST(DefragmentationApiTest, NullArchiveReturnsError) {
     EXPECT_NE(compio_defragment(nullptr), COMPIO_SUCCESS);
 }
 
+TEST(DefragmentationApiTest, RejectsDefragWithOpenFiles) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.fragmentation_threshold = 100;
+    compio_archive *archive = compio_open_archive(fn, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+
+    compio_file *f = compio_open_file("test", archive);
+    ASSERT_NE(f, nullptr);
+    uint8_t data[64] = {0xAB};
+    compio_write(data, sizeof(data), f);
+
+    // Defrag must fail while a file is open
+    EXPECT_NE(compio_defragment(archive), COMPIO_SUCCESS);
+
+    compio_close_file(f);
+
+    // After closing, defrag should succeed
+    EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
+
+    compio_close_archive(archive);
+    remove(fn);
+}
+
 // ---------------------------------------------------------------------------
 // FilePhysicallyShrinkAfterDefragTest
 // After defragmentation the file should not be larger than before (it should
