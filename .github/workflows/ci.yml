@@ -13,13 +13,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            triplet: x64-linux
+          - os: windows-latest
+            triplet: x64-windows
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      - name: Initialize vcpkg submodule
+        run: |
+          git submodule init
+          git submodule update
 
       - name: Cache vcpkg packages
         uses: actions/cache@v4
@@ -38,13 +45,17 @@ jobs:
         run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
         shell: pwsh
 
+      - name: Install dependencies via vcpkg
+        run: ./vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
+        shell: bash
+
       - name: Configure CMake
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_INSTALLED_DIR=${{ github.workspace }}/vcpkg_installed
-          -DVCPKG_TARGET_TRIPLET=${{ runner.os == 'Windows' && 'x64-windows' || 'x64-linux' }}
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
