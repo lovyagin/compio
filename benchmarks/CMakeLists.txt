@@ -36,7 +36,3 @@ target_include_directories(compression_drift_benchmark PRIVATE ${CMAKE_CURRENT_S
 
 add_executable(segregated_free_list_analysis custom/segregated_free_list_analysis.cpp)
 target_include_directories(segregated_free_list_analysis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-add_executable(defragmentation_benchmark custom/defragmentation_benchmark.cpp)
-target_link_libraries(defragmentation_benchmark PRIVATE compio)
-target_include_directories(defragmentation_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

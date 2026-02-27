@@ -1,40 +1,35 @@
-#include <benchmark/benchmark.h>
-#include <cstdio>
-#include <string>
-#include <vector>
+#include "benchmark_util.hpp"
 
 #include "compio.h"
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
 
-#ifndef COMPIO_SUCCESS
-#define COMPIO_SUCCESS 0
-#endif
+#include <benchmark/benchmark.h>
+#include <chrono>
+#include <random>
+#include <string>
+#include <vector>
+
+extern compio_config config;
+
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
 
 static void fill_pattern(std::vector<uint8_t>& buf, uint8_t seed) {
     for (size_t i = 0; i < buf.size(); ++i)
         buf[i] = static_cast<uint8_t>((seed + i) & 0xFF);
 }
 
-static void create_fragmented_archive(const std::string& path, int num_files,
-                                       size_t file_size, size_t block_size,
-                                       double delete_ratio, compio_allocation_strategy strat) {
-    std::remove(path.c_str());
-    compio_config cfg{};
-    compio_build_default_config(&cfg);
-    cfg.block_size = static_cast<int>(block_size);
-    cfg.block_size__minimum = 0;
-    cfg.block_size__maximum = cfg.block_size * 4;
-    cfg.allocation_strategy = strat;
-    cfg.fragmentation_threshold = 1;
-    compio_build_dummy_compressor(&cfg.compressor);
-
+/// Creates a fragmented archive: writes num_files files, deletes del_ratio of them.
+/// Returns archive handle (caller must close) and pre-defrag disk size.
+static compio_archive* create_fragmented(const std::string& path, const compio_config& cfg,
+                                          int num_files, size_t file_size, double del_ratio) {
     compio_archive* ar = compio_open_archive(path.c_str(), "w+", &cfg);
-    if (!ar) return;
+    if (!ar) return nullptr;
 
     for (int i = 0; i < num_files; ++i) {
-        std::string fname = "f_" + std::to_string(i);
-        compio_file* f = compio_open_file(fname.c_str(), ar);
+        compio_file* f = compio_open_file(("f_" + std::to_string(i)).c_str(), ar);
         if (!f) continue;
         std::vector<uint8_t> data(file_size);
         fill_pattern(data, static_cast<uint8_t>(i & 0xFF));
@@ -42,99 +37,240 @@ static void create_fragmented_archive(const std::string& path, int num_files,
         compio_close_file(f);
     }
 
-    int to_delete = static_cast<int>(num_files * delete_ratio);
+    int to_delete = static_cast<int>(num_files * del_ratio);
     int step = (to_delete > 0) ? std::max(1, num_files / to_delete) : num_files + 1;
-    for (int i = 0; i < num_files && to_delete > 0; i += step, --to_delete) {
+    for (int i = 0, d = 0; i < num_files && d < to_delete; i += step, ++d)
         compio_remove_file(ar, ("f_" + std::to_string(i)).c_str());
-    }
 
-    compio_close_archive(ar);
+    return ar;
 }
 
-/// Measures only the defragmentation call itself on a pre-fragmented archive.
-static void BM_DefragmentationTime(benchmark::State& state) {
-    const int num_files      = static_cast<int>(state.range(0));
-    const size_t file_size   = static_cast<size_t>(state.range(1));
-    const double delete_pct  = state.range(2) / 100.0;
+// ----------------------------------------------------------------------------
+// BM_DefragThroughput
+//
+// Measures full defragmentation throughput: create fragmented archive, defrag,
+// report bytes/sec based on surviving data. Each iteration does full
+// create → defrag → destroy cycle. Low iteration count is expected.
+//
+// Args: [num_files, file_size_bytes, delete_percent]
+// ----------------------------------------------------------------------------
 
-    std::string path = "gbench_defrag_" + std::to_string(num_files) + ".tmp";
+static void BM_DefragThroughput(benchmark::State& state) {
+    const int num_files     = static_cast<int>(state.range(0));
+    const size_t file_size  = static_cast<size_t>(state.range(1));
+    const double del_pct    = state.range(2) / 100.0;
+    const int64_t data_bytes = static_cast<int64_t>(num_files * (1.0 - del_pct) * file_size);
 
-    for ([[maybe_unused]] auto _ : state) {
-        state.PauseTiming();
-        create_fragmented_archive(path, num_files, file_size, 4096, delete_pct, COMPIO_ALLOC_FIRST_FIT);
-
-        compio_config cfg{};
-        compio_build_default_config(&cfg);
-        cfg.block_size = 4096;
-        cfg.block_size__minimum = 0;
-        cfg.block_size__maximum = cfg.block_size * 4;
-        cfg.fragmentation_threshold = 1;
-        compio_build_dummy_compressor(&cfg.compressor);
-
-        compio_archive* ar = compio_open_archive(path.c_str(), "r+", &cfg);
-        state.ResumeTiming();
-
-        if (ar) {
-            compio_defragment(ar);
-            compio_close_archive(ar);
-        }
-    }
-
-    std::remove(path.c_str());
-
-    state.SetLabel(std::to_string(num_files) + " files, " +
-                   std::to_string(static_cast<int>(delete_pct * 100)) + "% deleted");
-}
-
-/// Measures fragmentation metric calculation overhead.
-static void BM_FragmentationMetric(benchmark::State& state) {
-    const int num_files = static_cast<int>(state.range(0));
-    std::string path = "gbench_metric_" + std::to_string(num_files) + ".tmp";
-
-    create_fragmented_archive(path, num_files, 2048, 4096, 0.5, COMPIO_ALLOC_FIRST_FIT);
-
-    compio_config cfg{};
-    compio_build_default_config(&cfg);
-    cfg.block_size = 4096;
-    cfg.block_size__minimum = 0;
-    cfg.block_size__maximum = cfg.block_size * 4;
-    cfg.fragmentation_threshold = 1;
+    compio_config cfg = config;
+    cfg.fragmentation_threshold = 100;
     compio_build_dummy_compressor(&cfg.compressor);
 
-    compio_archive* ar = compio_open_archive(path.c_str(), "r+", &cfg);
-    if (!ar) {
-        state.SkipWithError("Cannot open archive");
-        return;
+    for (auto _ : state) {
+        std::string path = get_temporary_filename();
+        compio_archive* ar = create_fragmented(path, cfg, num_files, file_size, del_pct);
+        if (!ar) { state.SkipWithError("Cannot create archive"); break; }
+
+        size_t disk_before = get_file_size(path.c_str());
+        uint8_t frag_before = ar->allocator->get_fragmentation();
+
+        compio_defragment(ar);
+
+        uint8_t frag_after = ar->allocator->get_fragmentation();
+        size_t disk_after = get_file_size(path.c_str());
+
+        state.counters["frag_before"] = frag_before;
+        state.counters["frag_after"]  = frag_after;
+        state.counters["reclaimed"] = benchmark::Counter(
+            static_cast<double>(disk_before > disk_after ? disk_before - disk_after : 0),
+            benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+
+        compio_close_archive(ar);
+        remove(path.c_str());
     }
 
-    for ([[maybe_unused]] auto _ : state) {
+    state.SetBytesProcessed(state.iterations() * data_bytes);
+}
+
+// ----------------------------------------------------------------------------
+// BM_DefragSpaceRecovery
+//
+// Focused on space reclamation: measures how much disk space is recovered
+// for different deletion patterns.
+//
+// Args: [num_files, delete_percent]
+// ----------------------------------------------------------------------------
+
+static void BM_DefragSpaceRecovery(benchmark::State& state) {
+    const int num_files = static_cast<int>(state.range(0));
+    const double del_pct = state.range(1) / 100.0;
+    const size_t file_size = 2048;
+
+    compio_config cfg = config;
+    cfg.fragmentation_threshold = 100;
+    compio_build_dummy_compressor(&cfg.compressor);
+
+    for (auto _ : state) {
+        std::string path = get_temporary_filename();
+        compio_archive* ar = create_fragmented(path, cfg, num_files, file_size, del_pct);
+        if (!ar) { state.SkipWithError("Cannot create archive"); break; }
+
+        size_t disk_before = get_file_size(path.c_str());
+
+        compio_defragment(ar);
+
+        size_t disk_after = get_file_size(path.c_str());
+        size_t reclaimed = disk_before > disk_after ? disk_before - disk_after : 0;
+
+        state.counters["disk_before"] = benchmark::Counter(
+            static_cast<double>(disk_before), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+        state.counters["disk_after"] = benchmark::Counter(
+            static_cast<double>(disk_after), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+        state.counters["recovery%"] = disk_before > 0
+            ? 100.0 * static_cast<double>(reclaimed) / static_cast<double>(disk_before) : 0.0;
+
+        compio_close_archive(ar);
+        remove(path.c_str());
+    }
+
+    state.SetBytesProcessed(
+        state.iterations() * static_cast<int64_t>(num_files * (1.0 - del_pct) * file_size));
+}
+
+// ----------------------------------------------------------------------------
+// BM_FragmentationMetric
+//
+// Microbenchmark for calculate_fragmentation() overhead.
+// Archive is created once; only the metric call is timed.
+//
+// Args: [num_files]
+// ----------------------------------------------------------------------------
+
+static void BM_FragmentationMetric(benchmark::State& state) {
+    const int num_files = static_cast<int>(state.range(0));
+
+    compio_config cfg = config;
+    cfg.fragmentation_threshold = 100;
+    compio_build_dummy_compressor(&cfg.compressor);
+
+    std::string path = get_temporary_filename();
+    compio_archive* ar = create_fragmented(path, cfg, num_files, 2048, 0.5);
+    if (!ar) { state.SkipWithError("Cannot create archive"); return; }
+
+    for (auto _ : state) {
         benchmark::DoNotOptimize(ar->allocator->get_fragmentation());
     }
 
+    state.counters["fragmentation"] = ar->allocator->get_fragmentation();
     compio_close_archive(ar);
-    std::remove(path.c_str());
+    remove(path.c_str());
 }
 
-// --- Registration ---
+// ----------------------------------------------------------------------------
+// BM_DefragCycle
+//
+// Measures defrag stability under repeated create/delete/defrag cycles.
+// Simulates long-lived archive usage. Entire lifecycle is timed.
+//
+// Args: [files_per_cycle, num_cycles]
+// ----------------------------------------------------------------------------
 
-BENCHMARK(BM_DefragmentationTime)
-    ->Args({20,  2048, 50})
-    ->Args({40,  2048, 50})
-    ->Args({60,  2048, 50})
-    ->Args({64,  2048, 50})
-    ->Args({50,  2048, 30})
-    ->Args({50,  2048, 70})
-    ->Args({50,  2048, 90})
-    ->Args({50,  8192, 50})
-    ->Args({50, 32768, 50})
+static void BM_DefragCycle(benchmark::State& state) {
+    const int files_per_cycle = static_cast<int>(state.range(0));
+    const int num_cycles      = static_cast<int>(state.range(1));
+    const size_t file_size = 2048;
+
+    compio_config cfg = config;
+    cfg.fragmentation_threshold = 100;
+    compio_build_dummy_compressor(&cfg.compressor);
+
+    std::mt19937 rng(42);
+
+    for (auto _ : state) {
+        std::string path = get_temporary_filename();
+        compio_archive* ar = compio_open_archive(path.c_str(), "w+", &cfg);
+        if (!ar) { state.SkipWithError("Cannot open archive"); break; }
+
+        int global_id = 0;
+        std::vector<int> live_ids;
+
+        for (int c = 0; c < num_cycles; ++c) {
+            int to_create = std::min(files_per_cycle,
+                                      COMPIO_MAX_FILES - static_cast<int>(live_ids.size()));
+            for (int i = 0; i < to_create; ++i) {
+                int id = global_id++;
+                compio_file* f = compio_open_file(("f_" + std::to_string(id)).c_str(), ar);
+                if (!f) continue;
+                std::vector<uint8_t> data(file_size);
+                fill_pattern(data, static_cast<uint8_t>(id & 0xFF));
+                compio_write(data.data(), data.size(), f);
+                compio_close_file(f);
+                live_ids.push_back(id);
+            }
+
+            std::shuffle(live_ids.begin(), live_ids.end(), rng);
+            int to_delete = static_cast<int>(live_ids.size()) / 2;
+            for (int i = 0; i < to_delete; ++i) {
+                compio_remove_file(ar, ("f_" + std::to_string(live_ids.back())).c_str());
+                live_ids.pop_back();
+            }
+
+            compio_defragment(ar);
+        }
+
+        state.counters["live_files"] = static_cast<double>(live_ids.size());
+        state.counters["disk_size"] = benchmark::Counter(
+            static_cast<double>(get_file_size(path.c_str())),
+            benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
+
+        compio_close_archive(ar);
+        remove(path.c_str());
+    }
+
+    // Conservative: surviving files × file_size per iteration
+    int surviving = files_per_cycle / 2;
+    state.SetBytesProcessed(state.iterations() * surviving * static_cast<int64_t>(file_size));
+}
+
+// ----------------------------------------------------------------------------
+// Registration
+//
+// ArgsProduct creates the cartesian product of parameter lists.
+// MinTime controls how long Google Benchmark runs each variant.
+// MinWarmUpTime allows the OS page cache to warm up.
+// ----------------------------------------------------------------------------
+
+BENCHMARK(BM_DefragThroughput)
+    ->ArgsProduct({
+        {10, 30, 60},         // num_files (within COMPIO_MAX_FILES=64)
+        {1024, 4096, 16384},  // file_size
+        {50},                 // delete_percent
+    })
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(3)
-    ->Name("DefragTime");
+    ->MinTime(0.5)
+    ->MinWarmUpTime(0.1)
+    ->UseRealTime();
+
+BENCHMARK(BM_DefragSpaceRecovery)
+    ->ArgsProduct({
+        {30, 60},              // num_files
+        {10, 30, 50, 70, 90}, // delete_percent
+    })
+    ->Unit(benchmark::kMillisecond)
+    ->MinTime(0.5)
+    ->MinWarmUpTime(0.1)
+    ->UseRealTime();
 
 BENCHMARK(BM_FragmentationMetric)
     ->Arg(20)
-    ->Arg(40)
     ->Arg(60)
-    ->Arg(64)
-    ->Unit(benchmark::kNanosecond)
-    ->Name("FragMetric");
+    ->Unit(benchmark::kNanosecond);
+
+BENCHMARK(BM_DefragCycle)
+    ->ArgsProduct({
+        {10, 20},  // files_per_cycle
+        {5, 10},   // num_cycles
+    })
+    ->Unit(benchmark::kMillisecond)
+    ->MinTime(0.5)
+    ->MinWarmUpTime(0.1)
+    ->UseRealTime();
