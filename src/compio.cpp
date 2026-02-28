@@ -55,7 +55,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       index(nullptr),
       block_reader(nullptr),
       allocator(nullptr),
-      mode_b(mode_b) {
+      mode_b(mode_b),
+      open_files_count(0) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0, new compio::header());
     else
@@ -148,6 +149,17 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     bool is_new_file;
     is_new_file = is_file_empty(file);
+    if (!is_new_file) {
+        // Validate that file is large enough to contain a complete header
+        fseek64(file, 0, SEEK_END);
+        int64_t actual_size = ftell64(file);
+        if (actual_size < static_cast<int64_t>(sizeof(compio::header))) {
+            WARNING_PRINT("warning: archive file truncated (size=%lld, need>=%lu)\n",
+                          (long long)actual_size, (unsigned long)sizeof(compio::header));
+            errno = EINVAL;
+            goto no_allocator;
+        }
+    }
     if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
     } else if (readonly(archive->header, header)->compression_type !=
@@ -173,7 +185,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->block_reader = new compio::storage_block_reader(
-        file, archive->allocator, archive->index, &c->compressor, c->cache_size__blocks);
+        file, archive->allocator, archive->index,
+        &archive->config.compressor, archive->config.cache_size__blocks);
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
@@ -235,6 +248,8 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
 
     file->hash = fnv1a(name);
 
+    archive->open_files_count++;
+
     return file;
 }
 
@@ -262,7 +277,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         auto all_blocks = archive->index->get_range(key_min, key_max);
 
         // Save current file position
-        long saved_pos = ftell(archive->file);
+        int64_t saved_pos = ftell64(archive->file);
 
         // Deallocate all blocks and remove them from index
         for (const auto &[key, val] : all_blocks) {
@@ -281,7 +296,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 
         // Restore file position
         if (saved_pos >= 0) {
-            fseek(archive->file, saved_pos, SEEK_SET);
+            fseek64(archive->file, saved_pos, SEEK_SET);
         }
     }
 
@@ -312,10 +327,39 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
     return COMPIO_SUCCESS;
 }
 
+int compio_defragment(compio_archive *archive) {
+    if (!archive) {
+        WARNING_PRINT("warning: passed nullptr into compio_defragment\n");
+        return COMPIO_ERROR;
+    }
+
+    if (archive->mode_b & mode_bit::r) {
+        WARNING_PRINT("warning: compio_defragment called on read-only archive\n");
+        return COMPIO_ERROR;
+    }
+
+    if (!archive->allocator || !archive->index || !archive->file) {
+        return COMPIO_ERROR;
+    }
+
+    if (archive->open_files_count > 0) {
+        WARNING_PRINT("warning: compio_defragment called with %u open file(s)\n",
+                       archive->open_files_count);
+        return COMPIO_ERROR;
+    }
+
+    archive->allocator->force_defragmentation();
+    return COMPIO_SUCCESS;
+}
+
 int compio_close_file(compio_file *file) {
     if (!file) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
         return -1;
+    }
+
+    if (file->archive && file->archive->open_files_count > 0) {
+        file->archive->open_files_count--;
     }
 
     delete file;
@@ -328,11 +372,19 @@ int compio_close_archive(compio_archive *archive) {
         return -1;
     }
 
-    // 1) flush cached data to file and delete block_reader
+    // 1) flush cached data to file (writes all dirty blocks; keeps block_reader valid)
     compio_flush(archive);
+
+    // 2) run maintenance (defragmentation) before saving allocator state.
+    //    Must happen while block_reader and index are still alive.
+    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
+        archive->allocator->maintenance();
+    }
+
+    // 3) now safe to delete block_reader
     delete archive->block_reader;
 
-    // 2) save allocator state to the end of the file, if not read-only mode
+    // 4) save allocator state to the end of the file, if not read-only mode
     if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
         if (!archive->allocator->save_state(archive)) {
             WARNING_PRINT("warning: failed to save allocator state\n");
@@ -340,20 +392,20 @@ int compio_close_archive(compio_archive *archive) {
         }
     }
 
-    // 3) delete allocator
+    // 5) delete allocator
     delete archive->allocator;
 
-    // 4) delete btree (it actually depends on allocator, but allocator also depends on index,
+    // 6) delete btree (it actually depends on allocator, but allocator also depends on index,
     // however they don't call each other in their destructors, so their destruction order does not
     // matter)
     delete archive->index;
 
-    // 5) flush header
+    // 7) flush header
     // not calling `delete header`, because it's not a pointer created with new,
     // but a smart_infile_object, which will destroy and flush it's internal pointer
     archive->header = {};
 
-    // 6) finally we close the file (block_reader, allocator and index are all deleted, so no
+    // 8) finally we close the file (block_reader, allocator and index are all deleted, so no
     // fwrites will be called after this)
     if (fclose(archive->file)) {
         WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
@@ -361,7 +413,7 @@ int compio_close_archive(compio_archive *archive) {
     }
     DEBUG_PRINT("[cca]: closed file\n");
 
-    // 7) and delete archive structure
+    // 9) and delete archive structure
     delete archive;
 
     return COMPIO_SUCCESS;
@@ -881,6 +933,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 }
 
 void compio_flush(compio_archive *archive) {
-    archive->block_reader->clear_cache();
-    archive->index->clear_cache();
+    if (!archive) return;
+    if (archive->block_reader) archive->block_reader->clear_cache();
+    if (archive->index) archive->index->clear_cache();
 }

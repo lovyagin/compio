@@ -68,6 +68,16 @@ public:
     explicit free_blocks_manager(const uint64_t *file_size);
 
     /**
+     * @brief Destructor — frees all nodes in the linked list
+     */
+    ~free_blocks_manager();
+
+    /**
+     * @brief Move assignment operator — takes ownership of other's nodes
+     */
+    free_blocks_manager &operator=(free_blocks_manager &&other) noexcept;
+
+    /**
      * @brief Add new free block to the storage
      * @param offset Block start offset
      * @param size Block size
@@ -111,27 +121,21 @@ public:
     fragmentation_stats get_fragmentation_stats() const;
 
     /**
-     * @brief Get cached fragmentation level
-     * @return Cached fragmentation percentage (0-100)
+     * @brief Get cached fragmentation level (lazy: recalculates only when state changed)
+     * @return Fragmentation percentage (0-100)
      */
     uint8_t get_cached_fragmentation() const;
 
     /**
-     * @brief Calculate current fragmentation level
+     * @brief Calculate current fragmentation level without caching
      * @return Fragmentation percentage (0-100)
      */
     uint8_t calculate_fragmentation() const;
 
     /**
-     * @brief Update the cached fragmentation value
+     * @brief Mark the cached fragmentation value as stale (triggers recalculation on next read)
      */
     void update_fragmentation();
-
-    /**
-     * @brief Set a custom cached fragmentation value
-     * @param value New fragmentation value to set
-     */
-    void set_cached_fragmentation(uint8_t value);
 
     /**
      * @brief Check if a region is already marked as free
@@ -175,14 +179,6 @@ public:
      * @return True if load successful
      */
     bool load_from_file(compio_archive *archive);
-
-    /**
-     * @brief Verify the integrity of a block using its checksum
-     * @param data Pointer to the block data
-     * @param size Size of the block
-     * @param expected_checksum Expected checksum value
-     */
-    void verify_block_integrity(const uint8_t *data, size_t size, const std::string &expected_checksum);
 
 private:
     /**
@@ -298,8 +294,8 @@ private:
     free_block *last_alloc_;                     /**< Last allocation position for NEXT_FIT */
     uint64_t total_free_;                        /**< Total free space in bytes */
     const uint64_t *file_size_;                  /**< Reference to total file size */
-    uint8_t cached_fragmentation_;               /**< Cached fragmentation level */
-    mutable bool recently_defragmented_ = false; /**< Flag for recent defragmentation */
+    mutable uint8_t cached_fragmentation_;       /**< Cached fragmentation level */
+    mutable bool fragmentation_dirty_;           /**< True when cache needs recalculation */
 
     /**
      * @brief Find the first suitable block for allocation
@@ -407,6 +403,12 @@ public:
      * @brief Perform maintenance operations if needed
      */
     void maintenance();
+
+    /**
+     * @brief Force defragmentation unconditionally (ignores fragmentation threshold).
+     * Use this for on-demand defragmentation via the public API.
+     */
+    void force_defragmentation();
 
     /**
      * @brief Save allocator state to archive

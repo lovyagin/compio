@@ -3,6 +3,10 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef _WIN32
+#include <io.h>
+#endif
+
 #include "compio/allocator.hpp"
 
 namespace compio {
@@ -60,9 +64,25 @@ uint32_t fnv1a_32(const uint8_t *data, size_t size) {
 }
 
 bool is_file_empty(FILE *file) {
-    fseek(file, 0, SEEK_END);
-    long fsize = ftell(file);
+    fseek64(file, 0, SEEK_END);
+    int64_t fsize = ftell64(file);
     return fsize == 0;
+}
+
+int fseek64(FILE *file, int64_t offset, int whence) {
+#ifdef _WIN32
+    return _fseeki64(file, offset, whence);
+#else
+    return fseeko(file, static_cast<off_t>(offset), whence);
+#endif
+}
+
+int64_t ftell64(FILE *file) {
+#ifdef _WIN32
+    return _ftelli64(file);
+#else
+    return static_cast<int64_t>(ftello(file));
+#endif
 }
 
 } // namespace compio

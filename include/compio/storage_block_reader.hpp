@@ -332,6 +332,16 @@ public:
     void disable_temporary_index();
 
     /**
+     * @brief Clear the temporary index without disabling it
+     *
+     * Removes all cached address entries from the temporary index while
+     * keeping the mechanism active. Must be called after bulk address
+     * changes (e.g. defragmentation) so subsequent reads use the
+     * authoritative B-tree addresses instead of stale cached ones.
+     */
+    void invalidate_temporary_index();
+
+    /**
      * @brief Shift keys in a specified range by an offset
      *
      * Updates all block keys within the specified range by adding the

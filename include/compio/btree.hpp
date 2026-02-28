@@ -217,6 +217,18 @@ struct btree {
     void clear_cache();
 
     /**
+     * @brief Collect file addresses of all B-tree nodes
+     *
+     * Traverses the tree and returns the file address of every node.
+     * Used by defragmentation to avoid overwriting B-tree data when
+     * compacting storage blocks.
+     *
+     * @param node_size Output: the fixed byte size of each node
+     * @return std::vector<uint64_t> Sorted vector of node addresses
+     */
+    std::vector<uint64_t> collect_node_addresses(uint64_t &node_size);
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability

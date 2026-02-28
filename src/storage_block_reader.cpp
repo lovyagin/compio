@@ -251,6 +251,8 @@ void storage_block_reader::disable_temporary_index() {
     context.temporary_index.clear();
 }
 
+void storage_block_reader::invalidate_temporary_index() { context.temporary_index.clear(); }
+
 void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
                                         const tree_key &key_max) {
     DEBUG_PRINT("[SBR][add_to_range]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos,

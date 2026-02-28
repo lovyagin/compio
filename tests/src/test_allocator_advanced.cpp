@@ -34,6 +34,7 @@ protected:
     }
 
     void TearDown() override {
+        delete allocator2;
         compio_close_archive(archive);
         remove(fn);
     }
