@@ -35,7 +35,8 @@ free_blocks_manager::free_blocks_manager(const uint64_t *file_size)
       last_alloc_(nullptr),
       total_free_(0),
       file_size_(file_size),
-      cached_fragmentation_(0) {
+      cached_fragmentation_(0),
+      fragmentation_dirty_(true) {
     assert(file_size_ != nullptr);
 }
 
@@ -65,6 +66,7 @@ free_blocks_manager &free_blocks_manager::operator=(free_blocks_manager &&other)
         total_free_ = other.total_free_;
         file_size_ = other.file_size_;
         cached_fragmentation_ = other.cached_fragmentation_;
+        fragmentation_dirty_ = other.fragmentation_dirty_;
         size_idx_ = other.size_idx_;
         // Nullify source
         other.head_ = other.tail_ = other.last_alloc_ = nullptr;
@@ -92,7 +94,7 @@ void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
     }
 
     total_free_ += size;
-    update_fragmentation();
+    fragmentation_dirty_ = true;
 }
 
 void free_blocks_manager::find_mergeable_blocks(uint64_t offset, uint64_t size, free_block *&prev,
@@ -282,7 +284,7 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
     }
 
     total_free_ -= size;
-    update_fragmentation();
+    fragmentation_dirty_ = true;
 
     return allocated_offset;
 }
@@ -329,6 +331,7 @@ void free_blocks_manager::defragment() {
     }
 
     last_alloc_ = head_;
+    fragmentation_dirty_ = true;
 }
 
 void free_blocks_manager::print_list() const {
@@ -339,7 +342,13 @@ void free_blocks_manager::print_list() const {
     }
 }
 
-uint8_t free_blocks_manager::get_cached_fragmentation() const { return cached_fragmentation_; }
+uint8_t free_blocks_manager::get_cached_fragmentation() const {
+    if (fragmentation_dirty_) {
+        cached_fragmentation_ = calculate_fragmentation();
+        fragmentation_dirty_ = false;
+    }
+    return cached_fragmentation_;
+}
 
 free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_stats() const {
     fragmentation_stats stats = {};
@@ -370,10 +379,8 @@ free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_
 }
 
 void free_blocks_manager::update_fragmentation() {
-    cached_fragmentation_ = calculate_fragmentation();
+    fragmentation_dirty_ = true;
 }
-
-void free_blocks_manager::set_cached_fragmentation(uint8_t value) { cached_fragmentation_ = value; }
 
 bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
     if (!size)
@@ -486,8 +493,6 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
 
         add_free_block(offset, block_size);
     }
-
-    update_fragmentation();
 
     return true;
 }
@@ -625,7 +630,7 @@ block_allocator::block_allocator(compio_archive *archive)
 }
 
 uint8_t block_allocator::get_fragmentation() const {
-    return blocks_manager_.calculate_fragmentation();
+    return blocks_manager_.get_cached_fragmentation();
 }
 
 uint64_t block_allocator::allocate(uint64_t size) {
@@ -706,7 +711,6 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 
 void block_allocator::force_defragmentation() {
     blocks_manager_.defragment();
-    blocks_manager_.update_fragmentation();
     if (archive_->file && archive_->index) {
         perform_defragmentation();
     }
@@ -719,7 +723,6 @@ void block_allocator::maintenance() {
 
     if (current_fragmentation > threshold) {
         blocks_manager_.defragment();
-        blocks_manager_.update_fragmentation();
 
         if (blocks_manager_.get_cached_fragmentation() > threshold) {
             if (archive_->file && archive_->index) {
@@ -734,7 +737,7 @@ void block_allocator::maintenance() {
 // Private methods
 
 bool block_allocator::needs_defragmentation() const {
-    return blocks_manager_.calculate_fragmentation() > archive_->config.fragmentation_threshold;
+    return blocks_manager_.get_cached_fragmentation() > archive_->config.fragmentation_threshold;
 }
 
 void block_allocator::perform_defragmentation() {
@@ -953,7 +956,6 @@ void block_allocator::perform_defragmentation() {
     if (scan < truncate_pos) {
         blocks_manager_.add_free_block(scan, truncate_pos - scan);
     }
-    blocks_manager_.update_fragmentation();
 
     // Invalidate the temporary index — it was populated with pre-move addresses
     // by clear_cache() above. After moving blocks the B-tree holds the correct

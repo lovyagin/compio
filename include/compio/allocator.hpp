@@ -121,27 +121,21 @@ public:
     fragmentation_stats get_fragmentation_stats() const;
 
     /**
-     * @brief Get cached fragmentation level
-     * @return Cached fragmentation percentage (0-100)
+     * @brief Get cached fragmentation level (lazy: recalculates only when state changed)
+     * @return Fragmentation percentage (0-100)
      */
     uint8_t get_cached_fragmentation() const;
 
     /**
-     * @brief Calculate current fragmentation level
+     * @brief Calculate current fragmentation level without caching
      * @return Fragmentation percentage (0-100)
      */
     uint8_t calculate_fragmentation() const;
 
     /**
-     * @brief Update the cached fragmentation value
+     * @brief Mark the cached fragmentation value as stale (triggers recalculation on next read)
      */
     void update_fragmentation();
-
-    /**
-     * @brief Set a custom cached fragmentation value
-     * @param value New fragmentation value to set
-     */
-    void set_cached_fragmentation(uint8_t value);
 
     /**
      * @brief Check if a region is already marked as free
@@ -300,7 +294,8 @@ private:
     free_block *last_alloc_;                     /**< Last allocation position for NEXT_FIT */
     uint64_t total_free_;                        /**< Total free space in bytes */
     const uint64_t *file_size_;                  /**< Reference to total file size */
-    uint8_t cached_fragmentation_;               /**< Cached fragmentation level */
+    mutable uint8_t cached_fragmentation_;       /**< Cached fragmentation level */
+    mutable bool fragmentation_dirty_;           /**< True when cache needs recalculation */
 
     /**
      * @brief Find the first suitable block for allocation
