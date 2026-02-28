@@ -79,6 +79,8 @@ free_blocks_manager &free_blocks_manager::operator=(free_blocks_manager &&other)
 void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
     if (size == 0)
         return;
+    if (offset > UINT64_MAX - size) // overflow guard: offset + size would wrap
+        return;
 
     // Check for mergeable blocks
     free_block *prev, *next;
@@ -373,7 +375,17 @@ free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_
     stats.smallest_free_region = (block_count > 0) ? smallest_block : 0;
     stats.avg_free_region_size = (block_count > 0) ?
         static_cast<double>(total_free_) / block_count : 0.0;
-    stats.fragmentation_percent = calculate_fragmentation();
+
+    // Compute fragmentation inline from already-gathered values (avoids second list traversal).
+    if (block_count <= 1 || total_free_ == 0) {
+        stats.fragmentation_percent = 0;
+    } else {
+        double ext_frag = 1.0 - static_cast<double>(largest_block) /
+                                    static_cast<double>(total_free_);
+        double count_score = std::min(1.0, static_cast<double>(block_count - 1) / 99.0);
+        stats.fragmentation_percent =
+            static_cast<uint8_t>((0.8 * ext_frag + 0.2 * count_score) * 100);
+    }
 
     return stats;
 }
@@ -384,6 +396,8 @@ void free_blocks_manager::update_fragmentation() {
 
 bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
     if (!size)
+        return false;
+    if (size > UINT64_MAX - offset)
         return false;
     if (file_size_ && offset >= *file_size_)
         return true;
@@ -492,6 +506,23 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
         if (offset + block_size < offset) continue; // overflow
 
         add_free_block(offset, block_size);
+    }
+
+    // Verify no overlapping blocks (list is offset-sorted after add_free_block).
+    for (free_block *cur = head_; cur && cur->next; cur = cur->next) {
+        if (cur->offset + cur->size > cur->next->offset) {
+            // Corrupted data: overlapping free blocks — reset to empty state.
+            while (head_) {
+                free_block *tmp = head_;
+                head_ = head_->next;
+                delete tmp;
+            }
+            head_ = tail_ = last_alloc_ = nullptr;
+            total_free_ = 0;
+            size_idx_.clear();
+            fragmentation_dirty_ = true;
+            return false;
+        }
     }
 
     return true;
@@ -679,7 +710,8 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         return;
     }
 
-    if (offset + size > readonly(archive_->header, header)->file_size) {
+    if (size > UINT64_MAX - offset ||
+        offset + size > readonly(archive_->header, header)->file_size) {
         return;
     }
 
