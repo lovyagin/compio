@@ -21,11 +21,32 @@ static const uint8_t storage_block_signature = 171;
 header::header()
     : magic_number(27110654),
       index_root(0),
-      file_size(sizeof(header)),
+      file_size(0),
       ftable(),
       allocator_state_offset(0),
       allocator_state_size(0),
-      compression_type(COMPIO_COMPRESS_ZLIB) {}
+      compression_type(COMPIO_COMPRESS_ZLIB) {
+    file_size = disk_size();
+}
+
+header::header(uint32_t max_files)
+    : magic_number(27110654),
+      index_root(0),
+      file_size(0),
+      ftable(max_files),
+      allocator_state_offset(0),
+      allocator_state_size(0),
+      compression_type(COMPIO_COMPRESS_ZLIB) {
+    file_size = disk_size();
+}
+
+uint64_t header::disk_size() const {
+    // magic_number(4) + index_root(8) + file_size(8) + allocator_state_offset(8)
+    // + allocator_state_size(8) + compression_type(4) + max_files(4)
+    // + n_files(8) + files[max_files] * (32 + 8)
+    return 4 + 8 + 8 + 8 + 8 + 4 + 4 + 8 +
+           static_cast<uint64_t>(ftable.max_files) * (COMPIO_FNAME_MAX_SIZE + 8);
+}
 
 void header::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][header]addr=%lu\n", addr);
@@ -41,15 +62,17 @@ void header::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(allocator_state_offset, file);
     lendian_fread_member(allocator_state_size, file);
     lendian_fread_member(compression_type, file);
+    lendian_fread_member(ftable.max_files, file);
+    ftable.files.resize(ftable.max_files);
     lendian_fread_member(ftable.n_files, file);
-    for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
+    for (uint32_t i = 0; i < ftable.max_files; ++i) {
         lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
         lendian_fread_member(ftable.files[i].size, file);
     }
 }
 
 void header::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][header]addr=%lu;size=%lu\n", addr, sizeof(header));
+    DEBUG_PRINT("[W][header]addr=%lu;size=%lu\n", addr, disk_size());
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(magic_number, file);
@@ -58,8 +81,9 @@ void header::write_to(FILE *file, uint64_t addr) const {
     lendian_fwrite_member(allocator_state_offset, file);
     lendian_fwrite_member(allocator_state_size, file);
     lendian_fwrite_member(compression_type, file);
+    lendian_fwrite_member(ftable.max_files, file);
     lendian_fwrite_member(ftable.n_files, file);
-    for (int i = 0; i < COMPIO_MAX_FILES; ++i) {
+    for (uint32_t i = 0; i < ftable.max_files; ++i) {
         lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
         lendian_fwrite_member(ftable.files[i].size, file);
     }
@@ -246,7 +270,10 @@ storage_block::storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size)
 storage_block::storage_block(uint64_t size)
     : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
 
-files_table::files_table() : n_files(0) {}
+files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), files(COMPIO_MAX_FILES) {}
+
+files_table::files_table(uint32_t max_files)
+    : n_files(0), max_files(max_files), files(max_files) {}
 
 const files_table::file *files_table::find(const char *name) const {
     for (uint64_t i = 0; i < n_files; ++i)
@@ -263,7 +290,7 @@ files_table::file *files_table::find(const char *name) {
 }
 
 files_table::file *files_table::add(const char *name) {
-    if (n_files >= COMPIO_MAX_FILES)
+    if (n_files >= max_files)
         return NULL;
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE);
     files[n_files].size = 0;

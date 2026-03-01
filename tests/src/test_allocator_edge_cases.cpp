@@ -40,7 +40,7 @@ protected:
 TEST_F(BoundaryConditionTest, AllocationAtFileStart) {
     // Test allocation immediately after header
     uint64_t offset = allocator->allocate(100);
-    EXPECT_EQ(offset, sizeof(header) + INDEX_NODE_SIZE(config.b_tree_degree))
+    EXPECT_EQ(offset, archive->header->disk_size() + INDEX_NODE_SIZE(config.b_tree_degree))
         << "First allocation should be right after header and btree root node";
 }
 
@@ -426,7 +426,7 @@ TEST_F(EfficiencyTest, SpaceUtilizationEfficiency) {
     }
 
     uint64_t actual_file_size = archive->header->file_size;
-    uint64_t expected_min_size = sizeof(header) + target_data;
+    uint64_t expected_min_size = archive->header->disk_size() + target_data;
 
     // Calculate overhead percentage
     double overhead_ratio = double(actual_file_size - expected_min_size) / target_data;

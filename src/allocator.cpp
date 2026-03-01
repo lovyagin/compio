@@ -540,8 +540,9 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     // This ensures the region is accounted for in file_size and won't
     // be overwritten by future allocations.
     int64_t pos = static_cast<int64_t>(readonly(archive->header, header)->file_size);
-    if (pos < static_cast<int64_t>(sizeof(header))) {
-        pos = sizeof(header);
+    const auto hdr_size = static_cast<int64_t>(readonly(archive->header, header)->disk_size());
+    if (pos < hdr_size) {
+        pos = hdr_size;
     }
 
     if (fseek64(archive->file, pos, SEEK_SET) != 0) {
@@ -655,8 +656,8 @@ block_allocator::block_allocator(compio_archive *archive)
     // and will be set properly when save_state() is called
 
     // Ensure we have valid initial file size
-    if (readonly(archive_->header, header)->file_size < sizeof(header)) {
-        archive_->header->file_size = sizeof(header);
+    if (readonly(archive_->header, header)->file_size < readonly(archive_->header, header)->disk_size()) {
+        archive_->header->file_size = archive_->header->disk_size();
     }
 }
 
@@ -811,7 +812,7 @@ void block_allocator::perform_defragmentation() {
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
 
-    uint64_t write_pos = sizeof(header);
+    uint64_t write_pos = readonly(archive_->header, header)->disk_size();
 
     // Collect final positions of placed storage blocks for gap computation.
     std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
@@ -819,7 +820,7 @@ void block_allocator::perform_defragmentation() {
     for (auto &[key, val] : used_blocks) {
         const uint64_t src = val.addr;
 
-        if (src < sizeof(header)) {
+        if (src < readonly(archive_->header, header)->disk_size()) {
             continue;
         }
 
@@ -975,7 +976,7 @@ void block_allocator::perform_defragmentation() {
     }
     std::sort(occupied.begin(), occupied.end());
 
-    uint64_t scan = sizeof(header);
+    uint64_t scan = readonly(archive_->header, header)->disk_size();
     for (auto &[occ_start, occ_size] : occupied) {
         if (occ_start > scan) {
             blocks_manager_.add_free_block(scan, occ_start - scan);

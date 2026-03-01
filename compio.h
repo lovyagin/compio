@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define COMPIO_MAX_FILES 64      /**< Maximum number of files in archive */
+#define COMPIO_MAX_FILES 64      /**< Default maximum number of files in archive */
 #define COMPIO_FNAME_MAX_SIZE 32 /**< File name maximum length */
 
 #define COMPIO_ERROR (-1)
@@ -162,6 +162,7 @@ typedef struct {
     bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */
     uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
                                         percentage (1-100) */
+    int max_files; /**< Maximum number of files in a single archive (default: COMPIO_MAX_FILES) */
 } compio_config;
 
 /**

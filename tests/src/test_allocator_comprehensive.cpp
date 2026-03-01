@@ -53,7 +53,7 @@ protected:
     // Helper to verify block allocation
     bool verify_allocation(uint64_t offset, size_t size) {
         UNUSED(size);
-        return offset != UINT64_MAX && offset >= sizeof(header);
+        return offset != UINT64_MAX && offset >= archive->header->disk_size();
     }
 
     // Helper to verify blocks don't overlap
@@ -494,7 +494,7 @@ TEST_F(ErrorHandlingTest, InvalidDeallocations) {
     // These operations should not crash the program
     EXPECT_NO_THROW(allocator->deallocate(0, 100));
     EXPECT_NO_THROW(allocator->deallocate(UINT64_MAX, 100));
-    EXPECT_NO_THROW(allocator->deallocate(sizeof(header) / 2, 100));
+    EXPECT_NO_THROW(allocator->deallocate(archive->header->disk_size() / 2, 100));
 }
 
 TEST_F(ErrorHandlingTest, ExtremeAllocationSizes) {
