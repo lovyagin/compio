@@ -169,6 +169,17 @@ public:
     void shrink(uint64_t new_size);
 
     /**
+     * @brief Increase the size of the block
+     *
+     * Increases the block to the specified new size by allocating 
+     * new buffer of the desired size and copying data into it. 
+     * The block is marked as modified and the B-tree index is updated with the new size.
+     *
+     * @param new_size The new size for the block (must be bigger than current size)
+     */
+    void grow(uint64_t new_size);
+
+    /**
      * @brief Mark the block for removal
      *
      * Sets the removal flag. When the block is destroyed, it will not be

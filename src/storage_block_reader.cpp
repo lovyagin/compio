@@ -1,5 +1,6 @@
 #include "compio/storage_block_reader.hpp"
 
+#include <algorithm>
 #include <cassert>
 
 #include "compio/debug_print.hpp"
@@ -151,6 +152,18 @@ void block::shrink(uint64_t new_size) {
     //
     // UPD: we are updating size in btree, because otherwise we can't use btree::get_block in
     // compio_insert
+    context.index->update(_key, {_addr, new_size});
+}
+
+void block::grow(uint64_t new_size) {
+    assert(new_size > _size);
+
+    auto new_data = std::make_unique<uint8_t[]>(new_size);
+    std::copy_n(_data.get(), _size, new_data.get());
+    _data = std::move(new_data);
+
+    _is_modified = true;
+    _size = new_size;
     context.index->update(_key, {_addr, new_size});
 }
 
