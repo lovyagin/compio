@@ -589,9 +589,11 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     if (ptr_bytes_written < size) {
         // append blocks to the end of the file
 
+#ifdef COMPIO_DISABLE_INSERT_ERASE
         // last block already has zero padding from the right, 
         // so we shift file->size directly to it's end
         file_table_item->size = file->size = last_block_end; 
+#endif
 
         // total number of zeros we need to fill in
         uint64_t n_zeros = (write_start > last_block_end) ? (write_start - last_block_end) : 0;
