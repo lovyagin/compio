@@ -601,6 +601,71 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         uint64_t total_bytes_left = n_zeros + (size - ptr_bytes_written);
         uint64_t new_block_start = last_block_end;
 
+#ifndef COMPIO_DISABLE_INSERT_ERASE
+        // if in normal mode, blocks can be of varied size, 
+        // so we may try to write some portion of new data into the last block
+
+        {
+            uint64_t bytes_to_append = 0;
+            if (file->size == 0) {
+                goto after_append;
+            }
+            const tree_key last = {file->hash, file->size - 1};
+            const auto range = archive->index->get_range(last, last + 1);
+            assert(range.size() < 2);
+            if (range.size() == 0) {
+                WARNING_PRINT("warning: no last block found even though file->size = %lu>0\n", file->size);
+                goto after_append;
+            }
+            const auto &[key, val] = range[0];
+            const auto b = block_reader->read_block(val.addr, key);
+            if (!b) {
+                // failed to decompress
+                WARNING_PRINT(
+                    "warning: failed to decompress data (compressed block is corrupted)\n");
+                errno = EIO;
+                return ptr_bytes_written;
+            }
+            if (b->size() >= block_size__maximum) {
+                goto after_append;
+            }
+            const uint64_t available = block_size__maximum - b->size();
+            if (total_bytes_left <= available) {
+                bytes_to_append = total_bytes_left;
+                goto append;
+            } else {
+                if (total_bytes_left < block_size__minimum) {
+                    goto after_append;
+                } else {
+                    bytes_to_append = std::min(available, total_bytes_left - block_size__minimum);
+                    goto append;
+                }
+            }
+    
+append:
+            // appending bytes_to_append bytes to the last block
+
+            // size of zero-padding from the left
+            const uint64_t left_pad = std::min(n_zeros, bytes_to_append);
+            // number of actual bytes from ptr, that we need to copy
+            const uint64_t copy_size = std::min(bytes_to_append - left_pad, size - ptr_bytes_written);
+            
+            b->grow(b->size() + bytes_to_append);
+            std::fill_n(b->data() + b->size() - bytes_to_append, left_pad, 0);
+            std::copy_n(p_ptr, copy_size, b->data() + b->size() - bytes_to_append + left_pad);
+
+            p_ptr += copy_size;
+            ptr_bytes_written += copy_size;
+            new_block_start += bytes_to_append;
+            file->cursor += copy_size;
+
+            n_zeros -= left_pad;
+            total_bytes_left -= left_pad + copy_size;
+            file_table_item->size = file->size += bytes_to_append;
+        }
+after_append:
+#endif
+
         while (total_bytes_left > 0) {
             uint64_t current_block_size;
 #ifdef COMPIO_DISABLE_INSERT_ERASE
