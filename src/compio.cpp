@@ -583,8 +583,6 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         block_reader->disable_temporary_index();
     }
 
-    // TODO: write new data into last block if size is small
-
     // if we still have bytes in ptr, we need to create new blocks
     if (ptr_bytes_written < size) {
         // append blocks to the end of the file
@@ -637,6 +635,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
                 if (total_bytes_left < block_size__minimum) {
                     goto after_append;
                 } else {
+                    // TODO: maybe split into better blocks here
                     bytes_to_append = std::min(available, total_bytes_left - block_size__minimum);
                     goto append;
                 }
