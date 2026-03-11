@@ -86,6 +86,10 @@ TEST_F(StrategyFragmentationTest, BestFitPreservesLargeHoles) {
         if (archive) compio_close_archive(archive);
         archive = open_archive_with_strategy(fn, s);
         EXPECT_NE(archive, nullptr);
+        if (!archive) {
+            ADD_FAILURE() << "Failed to open archive in StrategyFragmentationTest::build";
+            return 0;
+        }
         block_allocator *alloc = archive->allocator;
 
         // Layout: [hole300][sent1][hole100][sent2][hole200][sent3]
