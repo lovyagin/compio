@@ -92,6 +92,10 @@ TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {
         compio_close_file(f);
     }
 
+    // Flush caches so blocks get real on-disk addresses before removal.
+    // compio_remove_file skips deallocation for blocks with addr==0.
+    compio_flush(archive);
+
     compio_remove_file(archive, "f1");
     compio_remove_file(archive, "f3");
 
@@ -232,6 +236,8 @@ TEST_F(IncompressibleDataTest, RandomDataIntactAfterDefrag) {
     write_file("r2", d2);
 
     // Create fragmentation by erasing the middle file.
+    // Flush first so blocks have real addresses and deallocation actually occurs.
+    compio_flush(ar);
     compio_remove_file(ar, "r1");
 
     ASSERT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
@@ -269,22 +275,34 @@ TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
     compio_archive *ar = open_defrag_archive(fn, 99);
     ASSERT_NE(ar, nullptr);
 
-    const std::size_t SZ = 512;
-    std::vector<uint8_t> payload(SZ, 0x77);
+    // Use incompressible random data of different sizes for "a" and "c" so
+    // the two resulting free regions have different sizes, giving variance > 0
+    // and thus fragmentation_percent > 0. File "b" is a live sentinel between them.
+    auto data_a = make_random_bytes(256, 7);
+    auto data_b = make_random_bytes(256, 8);  // sentinel — stays live
+    auto data_c = make_random_bytes(512, 9);  // different size → unequal free regions
 
-    compio_file *fa = compio_open_file("a", ar);
-    ASSERT_NE(fa, nullptr);
-    compio_write(payload.data(), SZ, fa);
-    compio_close_file(fa);
+    auto write_file = [&](const char *name, const std::vector<uint8_t> &data) {
+        compio_file *f = compio_open_file(name, ar);
+        ASSERT_NE(f, nullptr);
+        compio_write(data.data(), data.size(), f);
+        compio_close_file(f);
+    };
 
-    compio_file *fb = compio_open_file("b", ar);
-    ASSERT_NE(fb, nullptr);
-    compio_write(payload.data(), SZ, fb);
-    compio_close_file(fb);
+    write_file("a", data_a);
+    write_file("b", data_b);
+    write_file("c", data_c);
 
+    // Flush so blocks have real on-disk addresses; without this,
+    // compio_remove_file skips deallocation and fragmentation stays 0.
+    compio_flush(ar);
     compio_remove_file(ar, "a");
+    compio_remove_file(ar, "c");
 
     uint8_t frag_before = ar->allocator->get_fragmentation();
+    EXPECT_GT(frag_before, 0u)
+        << "Fragmentation must be non-zero: 'a' and 'c' create two differently-sized "
+           "free regions around 'b', giving non-zero variance (precondition for this test)";
 
     // maintenance() should NOT defrag (threshold not exceeded).
     ar->allocator->maintenance();
@@ -345,13 +363,12 @@ TEST_F(MultiBlockFileDefragTest, LargeFileIntactAfterDefragWithNeighbours) {
     compio_close_file(n1);
     compio_close_file(n2);
 
-    // Ensure allocations are fully persisted so removal actually frees blocks.
-    compio_close_archive(ar);
-    ar = compio_open_archive(fn, "r+", &cfg);
-    ASSERT_NE(ar, nullptr);
+    // Flush cached blocks so every block has a real on-disk address.
+    // This ensures compio_remove_file actually deallocates n1's blocks,
+    // creating genuine fragmentation for defrag to compact.
+    compio_flush(ar);
 
-    int rm_res = compio_remove_file(ar, "n1");
-    ASSERT_EQ(rm_res, COMPIO_SUCCESS);
+    ASSERT_EQ(compio_remove_file(ar, "n1"), COMPIO_SUCCESS);
     ASSERT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
 
     compio_file *big2 = compio_open_file("big", ar);
@@ -394,6 +411,11 @@ TEST_F(RepeatedCycleTest, TenCyclesDataIntact) {
             compio_write(data.data(), SZ, f);
             compio_close_file(f);
         }
+
+        // Flush cached blocks to disk before removing files, so that
+        // compio_remove_file can deallocate real on-disk addresses and
+        // defragementation actually moves data this cycle.
+        compio_flush(ar);
 
         // Erase alternate files.
         for (int i = 0; i < FILES_PER_CYCLE; i += 2) {

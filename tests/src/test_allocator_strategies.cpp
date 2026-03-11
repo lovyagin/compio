@@ -45,8 +45,11 @@ static compio_archive *open_archive_with_strategy(const char *fn,
 static std::vector<uint64_t> make_fragmented(block_allocator *alloc,
                                               int n_slots, uint64_t slot_size) {
     std::vector<uint64_t> offsets(n_slots);
-    for (int i = 0; i < n_slots; ++i)
+    for (int i = 0; i < n_slots; ++i) {
         offsets[i] = alloc->allocate(slot_size);
+        EXPECT_NE(offsets[i], static_cast<uint64_t>(UINT64_MAX))
+            << "allocate() failed at slot " << i << "; fragmented layout not created";
+    }
 
     std::vector<uint64_t> live;
     for (int i = 0; i < n_slots; ++i) {
@@ -148,8 +151,9 @@ TEST_F(StrategyFragmentationTest, BestFitPicksSmallestSufficientHole) {
     block_allocator *alloc = archive->allocator;
 
     uint64_t exact_hole   = alloc->allocate(200);
+    alloc->allocate(64); // live sentinel — prevents exact_hole + larger_hole from merging
     uint64_t larger_hole  = alloc->allocate(400);
-    alloc->allocate(64); // sentinel
+    alloc->allocate(64); // trailing sentinel
 
     alloc->deallocate(exact_hole,  200);
     alloc->deallocate(larger_hole, 400);
@@ -179,29 +183,57 @@ protected:
     }
 };
 
-TEST_F(NextFitTest, SubsequentAllocationsAdvanceInFile) {
+// NEXT_FIT continues from the last allocation point rather than restarting
+// from the head. After consuming a hole, the cursor sits at the next hole.
+// Restoring the first hole then allocating again must pick the second hole
+// (cursor has advanced past the first), not the first (which FIRST_FIT would pick).
+TEST_F(NextFitTest, CursorAdvancesPastPreviousAllocation) {
     archive = open_archive_with_strategy(fn, COMPIO_ALLOC_NEXT_FIT);
     ASSERT_NE(archive, nullptr);
     block_allocator *alloc = archive->allocator;
 
-    // Three consecutive allocations; each must have a strictly greater offset
-    // than the previous (NEXT_FIT starts after the last allocation point).
-    uint64_t a = alloc->allocate(64);
-    uint64_t b = alloc->allocate(64);
-    uint64_t c = alloc->allocate(64);
+    // Create three non-adjacent free holes with live sentinels between them
+    // to prevent merging on deallocation.
+    uint64_t h1 = alloc->allocate(64);
+    alloc->allocate(32); // live sentinel
+    uint64_t h2 = alloc->allocate(64);
+    alloc->allocate(32); // live sentinel
+    uint64_t h3 = alloc->allocate(64);
+    alloc->allocate(32); // trailing sentinel
 
-    ASSERT_NE(a, UINT64_MAX);
-    ASSERT_NE(b, UINT64_MAX);
-    ASSERT_NE(c, UINT64_MAX);
+    ASSERT_NE(h1, UINT64_MAX);
+    ASSERT_NE(h2, UINT64_MAX);
+    ASSERT_NE(h3, UINT64_MAX);
 
-    EXPECT_LT(a, b) << "NEXT_FIT: b should be after a";
-    EXPECT_LT(b, c) << "NEXT_FIT: c should be after b";
+    // Free h1 first: it becomes the initial free list head, so last_alloc_
+    // is initialised to h1's block.
+    alloc->deallocate(h1, 64);
+    alloc->deallocate(h2, 64);
+    alloc->deallocate(h3, 64);
+    // Free list (offset-ordered): h1 → h2 → h3. Cursor = h1.
+
+    // First alloc: cursor is at h1 → picks h1. Cursor advances to h2.
+    uint64_t alloc1 = alloc->allocate(64);
+    ASSERT_NE(alloc1, UINT64_MAX);
+    EXPECT_EQ(alloc1, h1) << "NEXT_FIT first alloc should pick h1 (cursor starts there)";
+
+    // Restore h1. Free list: h1 → h2 → h3. Cursor is still at h2.
+    alloc->deallocate(h1, 64);
+
+    // Second alloc: NEXT_FIT starts at h2 (cursor has advanced past h1) and
+    // picks h2. FIRST_FIT would restart from the head and pick h1 instead.
+    uint64_t alloc2 = alloc->allocate(64);
+    ASSERT_NE(alloc2, UINT64_MAX);
+    EXPECT_EQ(alloc2, h2)
+        << "NEXT_FIT should pick h2 (cursor is past h1), not h1 (which FIRST_FIT would pick)";
+    EXPECT_NE(alloc2, h1)
+        << "NEXT_FIT must not restart from head like FIRST_FIT would";
 }
 
-// NEXT_FIT wraps around the free list when there is no space after the cursor.
-// Verify that after freeing the first block and exhausting space after the
-// cursor, NEXT_FIT wraps and reuses the freed head block.
-TEST_F(NextFitTest, DoesNotWrapUnnecessarily) {
+// NEXT_FIT wraps around the free list when the cursor is the only free entry.
+// When 'a' is freed it becomes the sole free block and last_alloc_ is
+// initialised to it; the next allocation reuses 'a' rather than extending the file.
+TEST_F(NextFitTest, ReusesFreedBlockAfterCursorWrap) {
     archive = open_archive_with_strategy(fn, COMPIO_ALLOC_NEXT_FIT);
     ASSERT_NE(archive, nullptr);
     block_allocator *alloc = archive->allocator;
@@ -213,15 +245,17 @@ TEST_F(NextFitTest, DoesNotWrapUnnecessarily) {
     ASSERT_NE(b, UINT64_MAX);
     ASSERT_NE(c, UINT64_MAX);
 
-    // Free a (creates a hole near the head).
+    // Free 'a': it becomes the first (and only) entry in the free list, so
+    // last_alloc_ is initialised to a's free block.
     alloc->deallocate(a, 64);
 
-    // NEXT_FIT starts searching after c. The file may grow OR wrap around.
-    // Either way, the allocation must succeed.
+    // NEXT_FIT starts at last_alloc_ (== a) and finds it immediately;
+    // the freed block is reused rather than the file being extended.
     uint64_t d = alloc->allocate(64);
-    ASSERT_NE(d, UINT64_MAX) << "NEXT_FIT must find space (either via wrap or file growth)";
+    ASSERT_NE(d, UINT64_MAX) << "NEXT_FIT must find space";
+    EXPECT_EQ(d, a) << "NEXT_FIT should reuse the freed block 'a'";
 
-    // d must not overlap with the live blocks b and c.
+    // 'd' must not overlap the still-live blocks b and c.
     EXPECT_FALSE(d < b + 64 && d + 64 > b) << "d overlaps with b";
     EXPECT_FALSE(d < c + 64 && d + 64 > c) << "d overlaps with c";
 }
