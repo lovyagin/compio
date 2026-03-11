@@ -7,10 +7,12 @@ add_executable(compio_gtest
     src/test_allocator_advanced.cpp
     src/test_allocator_edge_cases.cpp
     src/test_allocator_serialization.cpp
+    src/test_allocator_strategies.cpp
     src/test_compression_type.cpp
     src/test_compressor.cpp
     src/test_data_integrity.cpp
     src/test_defragmentation.cpp
+    src/test_defragmentation_advanced.cpp
     src/test_library.cpp
     src/test_file_removal.cpp
     src/test_btree.cpp
