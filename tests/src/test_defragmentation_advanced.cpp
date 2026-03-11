@@ -345,8 +345,13 @@ TEST_F(MultiBlockFileDefragTest, LargeFileIntactAfterDefragWithNeighbours) {
     compio_close_file(n1);
     compio_close_file(n2);
 
-    compio_remove_file(ar, "n1");
+    // Ensure allocations are fully persisted so removal actually frees blocks.
+    compio_close_archive(ar);
+    ar = compio_open_archive(fn, "r+", &cfg);
+    ASSERT_NE(ar, nullptr);
 
+    int rm_res = compio_remove_file(ar, "n1");
+    ASSERT_EQ(rm_res, COMPIO_SUCCESS);
     ASSERT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
 
     compio_file *big2 = compio_open_file("big", ar);
