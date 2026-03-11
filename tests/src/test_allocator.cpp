@@ -36,7 +36,7 @@ protected:
     // Helper to verify block allocation
     bool verify_allocation(uint64_t offset, size_t size) {
         UNUSED(size);
-        return offset != UINT64_MAX && offset >= sizeof(header);
+        return offset != UINT64_MAX && offset >= archive->header->disk_size();
     }
 };
 

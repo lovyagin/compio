@@ -24,13 +24,15 @@ namespace compio {
  */
 struct files_table {
     uint64_t n_files;
+    uint32_t max_files;
     struct file {
         char name[COMPIO_FNAME_MAX_SIZE];
         uint64_t size;
     };
-    file files[COMPIO_MAX_FILES];
+    std::vector<file> files;
 
     files_table();
+    explicit files_table(uint32_t max_files);
 
     const file *find(const char *name) const;
     file *find(const char *name);
@@ -39,8 +41,11 @@ struct files_table {
 };
 
 /**
- * @brief File header of fixed size
+ * @brief Archive file header
  *
+ * The on-disk size of the header is variable: it depends on @c ftable.max_files,
+ * which is stored as the first field of the files table.  Use @c disk_size()
+ * to obtain the actual byte count rather than @c sizeof(header).
  */
 struct header : public infile_object {
     int32_t magic_number; /**< Constant bytes, file signature */
@@ -56,9 +61,13 @@ struct header : public infile_object {
      *
      */
     header();
+    explicit header(uint32_t max_files);
 
     void read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr) const override;
+
+    /** @brief On-disk size of this header (depends on ftable.max_files) */
+    uint64_t disk_size() const;
 };
 
 /**

@@ -28,6 +28,7 @@ void compio_build_default_config(compio_config *result) {
     result->cache_size__blocks = 16;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
+    result->max_files = COMPIO_MAX_FILES;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -58,7 +59,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       mode_b(mode_b),
       open_files_count(0) {
     if (is_file_empty(file))
-        header = smart_infile_object<compio::header>(file, 0, new compio::header());
+        header = smart_infile_object<compio::header>(file, 0,
+                     new compio::header(static_cast<uint32_t>(config->max_files)));
     else
         header = smart_infile_object<compio::header>(file, 0);
 
@@ -105,6 +107,15 @@ static bool validate_config(const compio_config *c) {
         // but still exist in local variables of some function, and if that function modifies 
         // that node, but some other function will try to read that node from file, it would get it's old version
         WARNING_PRINT("warning: cache_size__nodes=%d < 4\nplease use cache_size__nodes >= 4 ", c->cache_size__nodes);
+        return false;
+    }
+    if (c->max_files <= 0) {
+        WARNING_PRINT("warning: max_files=%d <= 0\n", c->max_files);
+        return false;
+    }
+    if (c->max_files > COMPIO_MAX_FILES_LIMIT) {
+        WARNING_PRINT("warning: max_files=%d exceeds hard limit %d\n", c->max_files,
+                      COMPIO_MAX_FILES_LIMIT);
         return false;
     }
     return true;
