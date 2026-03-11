@@ -277,7 +277,6 @@ TEST_F(StrategyStatisticsTest, StatsFieldsConsistency) {
     double expected_avg = (100.0 + 200.0 + 50.0 + 300.0) / 4.0;
     EXPECT_NEAR(stats.avg_free_region_size, expected_avg, 1.0);
 
-    EXPECT_GE(stats.fragmentation_percent, 0u);
     EXPECT_LE(stats.fragmentation_percent, 100u);
 }
 
