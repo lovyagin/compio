@@ -113,8 +113,9 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: max_files=%d <= 0\n", c->max_files);
         return false;
     }
-    if (c->max_files > COMPIO_MAX_FILES) {
-        WARNING_PRINT("warning: max_files=%d > COMPIO_MAX_FILES=%d\n", c->max_files, COMPIO_MAX_FILES);
+    if (c->max_files > COMPIO_MAX_FILES_LIMIT) {
+        WARNING_PRINT("warning: max_files=%d exceeds hard limit %d\n", c->max_files,
+                      COMPIO_MAX_FILES_LIMIT);
         return false;
     }
     return true;
