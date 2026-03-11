@@ -49,7 +49,9 @@ static std::vector<uint8_t> make_random_bytes(std::size_t n, uint32_t seed = 42)
 static std::vector<uint8_t> read_file_bytes(compio_file *f, std::size_t size) {
     std::vector<uint8_t> buf(size);
     compio_seek(f, 0, COMPIO_SEEK_SET);
-    compio_read(buf.data(), size, f);
+    auto bytes_read = compio_read(buf.data(), size, f);
+    EXPECT_EQ(bytes_read, size) << "Short read in read_file_bytes: expected " << size
+                                << " bytes, got " << bytes_read;
     return buf;
 }
 
