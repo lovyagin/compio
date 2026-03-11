@@ -41,8 +41,11 @@ struct files_table {
 };
 
 /**
- * @brief File header of fixed size
+ * @brief Archive file header
  *
+ * The on-disk size of the header is variable: it depends on @c ftable.max_files,
+ * which is stored as the first field of the files table.  Use @c disk_size()
+ * to obtain the actual byte count rather than @c sizeof(header).
  */
 struct header : public infile_object {
     int32_t magic_number; /**< Constant bytes, file signature */

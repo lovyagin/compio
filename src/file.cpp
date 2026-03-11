@@ -19,7 +19,7 @@ static const uint8_t index_node_signature = 67;
 static const uint8_t storage_block_signature = 171;
 
 header::header()
-    : magic_number(27110654),
+    : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
       ftable(),
@@ -30,7 +30,7 @@ header::header()
 }
 
 header::header(uint32_t max_files)
-    : magic_number(27110654),
+    : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
       ftable(max_files),
@@ -54,7 +54,10 @@ void header::read_from(FILE *file, uint64_t addr) {
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(magic_number, file);
     if (magic_number != COMPIO_MAGIC_NUMBER) {
-        WARNING_PRINT("warning: header magic_number does not match\n");
+        WARNING_PRINT("warning: header magic_number does not match "
+                      "(expected %d, got %d). "
+                      "The archive may have been created with an incompatible format version.\n",
+                      COMPIO_MAGIC_NUMBER, magic_number);
         assert(false);
     }
     lendian_fread_member(index_root, file);
@@ -63,8 +66,18 @@ void header::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(allocator_state_size, file);
     lendian_fread_member(compression_type, file);
     lendian_fread_member(ftable.max_files, file);
+    if (ftable.max_files == 0 || ftable.max_files > COMPIO_MAX_FILES_LIMIT) {
+        WARNING_PRINT("warning: header max_files=%u is out of valid range [1, %u]\n",
+                      ftable.max_files, COMPIO_MAX_FILES_LIMIT);
+        assert(false);
+    }
     ftable.files.resize(ftable.max_files);
     lendian_fread_member(ftable.n_files, file);
+    if (ftable.n_files > ftable.max_files) {
+        WARNING_PRINT("warning: header n_files=%" PRIu64 " exceeds max_files=%u\n",
+                      ftable.n_files, ftable.max_files);
+        assert(false);
+    }
     for (uint32_t i = 0; i < ftable.max_files; ++i) {
         lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
         lendian_fread_member(ftable.files[i].size, file);
