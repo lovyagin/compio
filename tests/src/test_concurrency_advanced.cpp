@@ -129,7 +129,8 @@ TEST_F(AdvancedConcurrencyTest, CacheThrashing) {
         for (int i = 0; i < num_files; ++i) {
             std::string fname = "f" + std::to_string(i);
             compio_file* f = compio_open_file(fname.c_str(), archive);
-            compio_write(data.data(), file_size, f);
+            ASSERT_NE(f, nullptr);
+            ASSERT_EQ(compio_write(data.data(), file_size, f), file_size);
             compio_close_file(f);
         }
     }
