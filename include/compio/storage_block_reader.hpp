@@ -67,7 +67,8 @@ struct context_t {
      * on btree.
      */
     std::map<tree_key, uint64_t> temporary_index;
-    bool is_temporary_index_enabled;
+    int temp_index_refcount = 0;
+    std::mutex temp_index_mutex;
 };
 
 /**

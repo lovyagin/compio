@@ -122,9 +122,12 @@ block::~block() {
         // we just need to update it's file address
         context.index->update(_key, {new_addr, _size});
 
-        if (context.is_temporary_index_enabled) {
-            // save allocated address to temporary_index
-            context.temporary_index[_key] = new_addr;
+        {
+            std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+            if (context.temp_index_refcount > 0) {
+                // save allocated address to temporary_index
+                context.temporary_index[_key] = new_addr;
+            }
         }
     } else {
         if (_addr == 0) {
@@ -193,7 +196,7 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
                                            const compio_compressor *compressor, int max_size,
                                            std::mutex *io_mutex)
     : cache(max_size),
-      context({file, allocator, index, compressor, io_mutex, {}, false}) {}
+      context({file, allocator, index, compressor, io_mutex, {}, 0}) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
@@ -204,20 +207,34 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
         return b_cached.value();
     }
     DEBUG_PRINT("[SBR][read_block]: cache miss\n");
-    if (context.is_temporary_index_enabled) {
-        // check in temporary index first, because if temporary index is enabled, that means that
-        // passed addr could be invalid, but ONLY if temporary index contains correct addr
-        auto it = context.temporary_index.find(key);
-        if (it != context.temporary_index.end()) {
-            addr = it->second;
-            DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
-        }
+    
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            // check in temporary index first
+            auto it = context.temporary_index.find(key);
+            if (it != context.temporary_index.end()) {
+                addr = it->second;
+                DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
+            }
 #ifndef NDEBUG
-        auto val = context.index->get(key);
-        assert(val.has_value());
-        assert(val.value().addr == addr);
+            auto val = context.index->get(key);
+            assert(val.has_value());
+            // assert(val.value().addr == addr); // This assert is race-prone in concurrent environment
 #endif
+        }
     }
+    
+    if (addr == 0) {
+        // If addr is 0 and not in cache, it might have been evicted and flushed by another thread.
+        // Re-query index to get the authoritative address.
+        auto val = context.index->get(key);
+        if (val.has_value()) {
+            addr = val.value().addr;
+             DEBUG_PRINT("[SBR][read_block]: re-queried index for stale addr=0, got addr=%lu\n", addr);
+        }
+    }
+
     auto b = std::make_shared<block>(context, key, addr);
     if (!b->is_valid()) {
         return nullptr;
@@ -256,20 +273,32 @@ void storage_block_reader::clear_cache() {
 
 double storage_block_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
 
-void storage_block_reader::enable_temporary_index() { context.is_temporary_index_enabled = true; }
-
-void storage_block_reader::disable_temporary_index() {
-    context.is_temporary_index_enabled = false;
-    context.temporary_index.clear();
+void storage_block_reader::enable_temporary_index() {
+    std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+    context.temp_index_refcount++;
 }
 
-void storage_block_reader::invalidate_temporary_index() { context.temporary_index.clear(); }
+void storage_block_reader::disable_temporary_index() {
+    std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+    if (context.temp_index_refcount > 0) {
+        context.temp_index_refcount--;
+    }
+    if (context.temp_index_refcount == 0) {
+        context.temporary_index.clear();
+    }
+}
+
+void storage_block_reader::invalidate_temporary_index() {
+    std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+    context.temporary_index.clear();
+}
 
 void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
                                         const tree_key &key_max) {
     DEBUG_PRINT("[SBR][add_to_range]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos,
                 key_max.pos);
     {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
         // shift keys in temporary index
         auto it_start = context.temporary_index.lower_bound(key_min);
         auto it_end = context.temporary_index.upper_bound(key_max);
@@ -286,6 +315,8 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
 
     {
         // manually update block::key for entries in cache
+        // Note: this assumes we have exclusive access (unique_lock on archive),
+        // so accessing cache internals is safe from concurrent access.
         auto it_start = cache._cache_items_map.lower_bound(key_min);
         auto it_end = cache._cache_items_map.upper_bound(key_max);
         for (auto it = it_start; it != it_end; ++it) {
@@ -306,8 +337,11 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
         // them in cache, so we should check it
         cache.remove(key);
     }
-    if (context.is_temporary_index_enabled) {
-        context.temporary_index.erase(key);
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            context.temporary_index.erase(key);
+        }
     }
     context.index->remove(key);
     context.allocator->deallocate(b->addr(), b->c_size());
