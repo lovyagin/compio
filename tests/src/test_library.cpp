@@ -296,8 +296,8 @@ TEST_P(RandomUsageTest, RandomUsage) {
                 break;
             }
             case 2: {
-                if (cursor < file_data.size()) {
-                    int max_size = file_data.size() - cursor;
+                if (static_cast<size_t>(cursor) < file_data.size()) {
+                    int max_size = static_cast<int>(file_data.size()) - cursor;
                     std::uniform_int_distribution<int> d_size(1, 2 * max_size);
                     int size = d_size(rng);
                     int actual_read_size = std::min(size, max_size);
@@ -320,7 +320,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
                     int start = d_start(rng);
 
                     ASSERT_EQ(compio_write(html_data + start, size, file), size);
-                    if (cursor + size > file_data.size()) {
+                    if (static_cast<size_t>(cursor + size) > file_data.size()) {
                         file_data.resize(cursor + size, 0);
                     }
                     std::copy_n(html_data + start, size, file_data.data() + cursor);
@@ -329,16 +329,16 @@ TEST_P(RandomUsageTest, RandomUsage) {
                 break;
             }
             case 4: {
-                if (file_data.size() < max_file_size) {
+                if (file_data.size() < static_cast<size_t>(max_file_size)) {
                     std::uniform_int_distribution<int> d_size(
-                        1, std::min(max_file_size - std::max(file_data.size(),
+                        1, std::min(static_cast<std::size_t>(max_file_size) - std::max(file_data.size(),
                                                              static_cast<std::size_t>(cursor)),
                                     sizeof(html_data)));
                     int size = d_size(rng);
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
 
-                    if (cursor > file_data.size()) {
+                    if (static_cast<size_t>(cursor) > file_data.size()) {
                         file_data.resize(cursor, 0);
                     }
                     ASSERT_EQ(compio_insert(html_data + start, size, file), size);
@@ -358,7 +358,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
                     ASSERT_EQ(compio_erase(size, file), actual_erase_size)
                         << file_data.size() << " " << cursor << " " << max_size << " " << size
                         << " " << actual_erase_size;
-                    if (cursor < file_data.size()) {
+                    if (static_cast<size_t>(cursor) < file_data.size()) {
                         file_data.erase(file_data.begin() + cursor,
                                         file_data.begin() + cursor + actual_erase_size);
                     }

@@ -553,7 +553,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
-    DEBUG_PRINT("[W][allocator]addr=%lu;size=%lu\n", pos, size);
+    DEBUG_PRINT("[W][allocator]addr=%" PRId64 ";size=%" PRIu32 "\n", pos, size);
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
         WARNING_PRINT(

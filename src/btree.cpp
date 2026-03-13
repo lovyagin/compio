@@ -67,7 +67,7 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
-    DEBUG_PRINT("[BTREE]: insert_nonfull(node.addr=%ld, key={...%ld, %ld}, value={%ld, %ld})\n", node.addr(), key.hash % 100, key.pos, value.addr, value.size);
+    DEBUG_PRINT("[BTREE]: insert_nonfull(node.addr=%" PRIu64 ", key={...%" PRIu64 ", %" PRIu64 "}, value={%" PRIu64 ", %" PRIu64 "})\n", node.addr(), key.hash % 100, key.pos, value.addr, value.size);
     if (RO(node)->is_leaf) {
         if (idx < RO(node)->num_keys && RO(node)->keys[idx] == key) {
             WARNING_PRINT("warning: trying to insert already existing key\n");
@@ -91,7 +91,7 @@ void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_va
 }
 
 void btree::insert(const tree_key &key, const tree_val &value) {
-    DEBUG_PRINT("[BTREE]: insert(key={...,%lu},value={%lu,%lu})\n", key.pos, value.addr,
+    DEBUG_PRINT("[BTREE]: insert(key={...,%" PRIu64 "},value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, value.addr,
                 value.size);
     auto root = read_root();
     if (RO(root)->num_keys == (2 * degree - 1)) {
@@ -161,7 +161,7 @@ void btree::_remove(shared_node &node, const tree_key &key) {
 }
 
 void btree::remove(const tree_key &key) {
-    DEBUG_PRINT("[BTREE]: remove(key={...,%lu})\n", key.pos);
+    DEBUG_PRINT("[BTREE]: remove(key={...,%" PRIu64 "})\n", key.pos);
     auto root = read_root();
     _remove(root, key);
     if (root->num_keys == 0 && !root->is_leaf) {

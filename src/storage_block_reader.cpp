@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <mutex>
+#include <cinttypes>
 
 #include "compio/debug_print.hpp"
 
@@ -43,7 +44,7 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
         int ret = context.compressor->decompress(_data.get(), &_size, b.data.get(), b.size);
         if (ret != 0) {
             WARNING_PRINT(
-                "warning: compressed data is too big after decompression (%lu is not enough)\n",
+                "warning: compressed data is too big after decompression (%" PRIu64 " is not enough)\n",
                 _size);
             _is_valid = false;
             return;
@@ -109,7 +110,7 @@ block::~block() {
         uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
         DEBUG_PRINT(
             "[B][destructor]: writing to file "
-            "(new_addr=%lu,addr=%lu,original_size=%lu,size=%lu,is_compressed=%d,key.pos=%lu)\n",
+            "(new_addr=%" PRIu64 ",addr=%" PRIu64 ",original_size=%" PRIu64 ",size=%" PRIu64 ",is_compressed=%d,key.pos=%" PRIu64 ")\n",
             new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
         if (context.io_mutex) {
             std::lock_guard<std::mutex> lock(*context.io_mutex);
@@ -173,7 +174,7 @@ void block::remove() { _is_removed = true; }
 void block::shift_key(int64_t addition) {
     assert(addition != 0);
     _is_modified = true;
-    DEBUG_PRINT("[B][shift_key]: key.pos=%lu, shifting with addition=%ld\n", _key.pos, addition);
+    DEBUG_PRINT("[B][shift_key]: key.pos=%" PRIu64 ", shifting with addition=%" PRId64 "\n", _key.pos, addition);
     _key += addition;
 }
 
@@ -196,10 +197,10 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
                                            const compio_compressor *compressor, int max_size,
                                            std::mutex *io_mutex)
     : cache(max_size),
-      context({file, allocator, index, compressor, io_mutex, {}, 0}) {}
+      context({file, allocator, index, compressor, io_mutex, {}, 0, {}}) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
-    DEBUG_PRINT("[SBR][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
+    DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
                 key.pos);
     auto b_cached = cache.get(key);
     if (b_cached.has_value()) {
@@ -215,7 +216,7 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
             auto it = context.temporary_index.find(key);
             if (it != context.temporary_index.end()) {
                 addr = it->second;
-                DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%lu\n", addr);
+                DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%" PRIu64 "\n", addr);
             }
 #ifndef NDEBUG
             auto val = context.index->get(key);
@@ -231,7 +232,7 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
         auto val = context.index->get(key);
         if (val.has_value()) {
             addr = val.value().addr;
-             DEBUG_PRINT("[SBR][read_block]: re-queried index for stale addr=0, got addr=%lu\n", addr);
+             DEBUG_PRINT("[SBR][read_block]: re-queried index for stale addr=0, got addr=%" PRIu64 "\n", addr);
         }
     }
 
@@ -244,11 +245,11 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
 }
 
 std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
-    DEBUG_PRINT("[SBR][create_block]: size=%lu, key.hash=%lu, key.pos=%lu\n", size, key.hash,
+    DEBUG_PRINT("[SBR][create_block]: size=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", size, key.hash,
                 key.pos);
     auto b_cached = cache.get(key);
     if (b_cached.has_value()) {
-        WARNING_PRINT("warning: trying to create block with key (%lu, %lu), that "
+        WARNING_PRINT("warning: trying to create block with key (%" PRIu64 ", %" PRIu64 "), that "
                       "already exists in storage_block_reader.cache\n",
                       key.hash, key.pos);
         return b_cached.value();
@@ -295,7 +296,7 @@ void storage_block_reader::invalidate_temporary_index() {
 
 void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
                                         const tree_key &key_max) {
-    DEBUG_PRINT("[SBR][add_to_range]: adding %ld to range [%lu, %lu]\n", addition, key_min.pos,
+    DEBUG_PRINT("[SBR][add_to_range]: adding %" PRId64 " to range [%" PRIu64 ", %" PRIu64 "]\n", addition, key_min.pos,
                 key_max.pos);
     {
         std::lock_guard<std::mutex> lock(context.temp_index_mutex);
@@ -329,7 +330,7 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
 }
 
 void storage_block_reader::remove_block(std::shared_ptr<block> b) {
-    DEBUG_PRINT("[SBR]removing block with key.pos=%lu\n", b->key().pos);
+    DEBUG_PRINT("[SBR]removing block with key.pos=%" PRIu64 "\n", b->key().pos);
     b->remove();
     const auto &key = b->key();
     if (cache.exists(key)) {

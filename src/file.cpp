@@ -103,7 +103,7 @@ void header::write_to(FILE *file, uint64_t addr) const {
 }
 
 void index_node::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][index_node]addr=%lu\n", addr);
+    DEBUG_PRINT("[R][index_node]addr=%" PRIu64 "\n", addr);
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     uint8_t signature;
@@ -137,7 +137,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
 }
 
 void index_node::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][index_node]addr=%lu;size=%lu\n", addr, INDEX_NODE_SIZE(tree_degree));
+    DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%lu\n", addr, (unsigned long)INDEX_NODE_SIZE(tree_degree));
     validate();
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
