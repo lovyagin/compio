@@ -42,7 +42,6 @@ TEST_F(ConcurrencyTest, ConcurrentReadWriteDifferentFiles) {
     const int num_files = 10;
     const int num_threads = 4;
     const int ops_per_thread = 100;
-    std::atomic<bool> running{true};
 
     // Pre-create files
     for (int i = 0; i < num_files; ++i) {
