@@ -116,3 +116,55 @@ TEST_F(ConcurrencyTest, ConcurrentReadSameFile) {
         t.join();
     }
 }
+
+TEST_F(ConcurrencyTest, ConcurrentInsertEraseFlush) {
+    const int num_keys = 32;
+    const int num_threads = 4;
+    const int ops_per_thread = 200;
+
+    auto worker = [&](int id) {
+        std::mt19937 rng(id + 1234);
+        for (int i = 0; i < ops_per_thread; ++i) {
+            int key_idx = rng() % num_keys;
+            std::string name = "ie_file_" + std::to_string(key_idx);
+
+            // Randomly choose between insert, erase, and flush.
+            int op = rng() % 3;
+            if (op == 0) {
+                // Insert a directory entry / file record.
+                (void)compio_insert(name.c_str(), archive);
+            } else if (op == 1) {
+                // Erase a directory entry / file record.
+                (void)compio_erase(name.c_str(), archive);
+            } else {
+                // Flush archive metadata/state.
+                (void)compio_flush(archive);
+            }
+        }
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(num_threads);
+    for (int i = 0; i < num_threads; ++i) {
+        threads.emplace_back(worker, i);
+    }
+
+    for (auto &t : threads) {
+        t.join();
+    }
+
+    // Final flush to ensure all pending operations are committed.
+    (void)compio_flush(archive);
+
+    // Basic invariant check: each key is either absent or can be opened/closed.
+    for (int key_idx = 0; key_idx < num_keys; ++key_idx) {
+        std::string name = "ie_file_" + std::to_string(key_idx);
+        compio_file *f = compio_open_file(name.c_str(), archive);
+        if (f != nullptr) {
+            // If the entry exists, we should be able to perform a simple operation on it.
+            std::vector<uint8_t> buf(16, 0);
+            (void)compio_read(buf.data(), buf.size(), f);
+            compio_close_file(f);
+        }
+    }
+}
