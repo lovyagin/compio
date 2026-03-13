@@ -854,11 +854,11 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_erase(uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
-
     if (!file || !file->archive) {
         return 0;
     }
+    DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
+
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
 
 #ifdef COMPIO_DISABLE_INSERT_ERASE
