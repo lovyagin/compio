@@ -228,6 +228,10 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     if (!archive) {
         return NULL;
     }
+    if (!name) {
+        errno = EINVAL;
+        return NULL;
+    }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     size_t name_len = strlen(name);
     if (name_len > COMPIO_FNAME_MAX_SIZE) {
