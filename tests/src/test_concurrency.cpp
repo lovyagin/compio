@@ -14,6 +14,9 @@ protected:
     compio_archive* archive = nullptr;
 
     void SetUp() override {
+        // Use a unique temporary filename to avoid collisions across concurrent test runs.
+        fs::path tmp_path = fs::temp_directory_path() / fs::unique_path("concurrency_test-%%%%-%%%%.compio");
+        test_file = tmp_path.string();
         if (fs::exists(test_file)) {
             fs::remove(test_file);
         }
