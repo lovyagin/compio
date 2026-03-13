@@ -8,6 +8,7 @@
 #include <string>
 #include <mutex>
 #include <algorithm>
+#include <chrono>
 
 namespace fs = std::filesystem;
 
@@ -270,10 +271,14 @@ TEST_F(AdvancedConcurrencyTest, DefragSafetyCheck) {
         }
     });
 
-    // Wait for reader to open file
-    while (!file_opened) {
-        std::this_thread::yield();
+    // Wait for reader to open file (bounded wait to avoid hanging indefinitely)
+    auto wait_start = std::chrono::steady_clock::now();
+    const auto wait_timeout = std::chrono::seconds(5);
+    while (!file_opened &&
+           std::chrono::steady_clock::now() - wait_start < wait_timeout) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    ASSERT_TRUE(file_opened) << "Reader thread failed to open file within timeout";
     
     // Attempt defrag while reader has file open
     // Should fail immediately because open_files_count > 0
