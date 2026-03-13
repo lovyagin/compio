@@ -196,6 +196,7 @@ TEST_F(AdvancedConcurrencyTest, ReadWhileWrite) {
 
     // Reader Thread
     std::thread reader([&]() {
+        std::vector<uint8_t> buf(read_size);
         while (running) {
             compio_file* f = compio_open_file(read_fname.c_str(), archive);
             if (!f) {
@@ -203,11 +204,12 @@ TEST_F(AdvancedConcurrencyTest, ReadWhileWrite) {
                 break;
             }
             
-            std::vector<uint8_t> buf(read_size);
             if (compio_read(buf.data(), read_size, f) != read_size) {
                 read_errors++;
             }
             compio_close_file(f);
+
+            std::this_thread::yield();
         }
     });
 
