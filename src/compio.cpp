@@ -668,11 +668,11 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
-
     if (!file || !file->archive) {
         return 0;
     }
+
+    DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
     std::shared_lock<std::shared_mutex> lock(file->archive->mutex);
 
     const auto *archive = file->archive;
