@@ -276,6 +276,10 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     if (!archive) {
         return -1;
     }
+    if (!name) {
+        errno = EINVAL;
+        return -1;
+    }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     size_t name_len = strlen(name);
     if (name_len > COMPIO_FNAME_MAX_SIZE) {
