@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <list>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 
@@ -56,6 +57,7 @@ public:
     lru_cache(size_t max_size) : _max_size(max_size), _hit_count(0), _total_count(0) {}
 
     void put(const key_t &key, const value_t &value) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _cache_items_map.find(key);
         _cache_items_list.push_front(key_value_pair_t(key, value));
         if (it != _cache_items_map.end()) {
@@ -72,7 +74,8 @@ public:
         }
     }
 
-    std::optional<const value_t *> get(const key_t &key) {
+    std::optional<value_t> get(const key_t &key) {
+        std::lock_guard<std::mutex> lock(_mutex);
         ++_total_count;
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
@@ -80,15 +83,17 @@ public:
         } else {
             ++_hit_count;
             _cache_items_list.splice(_cache_items_list.begin(), _cache_items_list, it->second);
-            return &it->second->second;
+            return it->second->second;
         }
     }
 
     bool exists(const key_t &key) const {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _cache_items_map.find(key) != _cache_items_map.end();
     }
 
     void remove(const key_t &key) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
             throw std::range_error("There is no such key in cache");
@@ -99,13 +104,18 @@ public:
     }
 
     void clear() {
+        std::lock_guard<std::mutex> lock(_mutex);
         _cache_items_map.clear();
         _cache_items_list.clear();
     }
 
-    bool is_full() { return _cache_items_map.size() >= _max_size; }
+    bool is_full() { 
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _cache_items_map.size() >= _max_size; 
+    }
 
     value_t pop_back() {
+        std::lock_guard<std::mutex> lock(_mutex);
         if (_cache_items_map.size() == 0) {
             throw std::range_error("Trying to pop back from empty cache");
         }
@@ -118,6 +128,7 @@ public:
     }
 
     value_t pop(const key_t &key) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it = _cache_items_map.find(key);
         if (it == _cache_items_map.end()) {
             throw std::range_error("There is no such key in cache");
@@ -129,10 +140,14 @@ public:
         }
     }
 
-    size_t size() const { return _cache_items_map.size(); }
+    size_t size() const { 
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _cache_items_map.size(); 
+    }
 
     template <typename addition_t>
     void add_to_range(addition_t addition, const key_t &key_min, const key_t &key_max) {
+        std::lock_guard<std::mutex> lock(_mutex);
         auto it_start = _cache_items_map.lower_bound(key_min);
         auto it_end = _cache_items_map.upper_bound(key_max);
 
@@ -156,6 +171,7 @@ public:
     }
 
     double get_hit_probability() const {
+        std::lock_guard<std::mutex> lock(_mutex);
         return static_cast<double>(_hit_count) / _total_count;
     }
 
@@ -164,6 +180,7 @@ public:
     size_t _max_size;
     size_t _hit_count;
     size_t _total_count;
+    mutable std::mutex _mutex;
 };
 
 } // namespace cache

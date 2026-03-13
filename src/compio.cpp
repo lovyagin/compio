@@ -60,9 +60,9 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       open_files_count(0) {
     if (is_file_empty(file))
         header = smart_infile_object<compio::header>(file, 0,
-                     new compio::header(static_cast<uint32_t>(config->max_files)));
+                     new compio::header(static_cast<uint32_t>(config->max_files)), &io_mutex);
     else
-        header = smart_infile_object<compio::header>(file, 0);
+        header = smart_infile_object<compio::header>(file, 0, &io_mutex);
 
     // btree constructor is called in compio_open_archive to break
     // the dependence cycle (archive -> index -> allocator -> archive)
@@ -189,7 +189,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->index = new btree(c->b_tree_degree, mode_b & mode_bit::r, archive->header,
-                               archive->allocator, file, c->cache_size__nodes);
+                               archive->allocator, file, c->cache_size__nodes, &archive->io_mutex);
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto no_index;
@@ -197,7 +197,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     archive->block_reader = new compio::storage_block_reader(
         file, archive->allocator, archive->index,
-        &archive->config.compressor, archive->config.cache_size__blocks);
+        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex);
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
@@ -225,6 +225,14 @@ end:
 }
 
 compio_file *compio_open_file(const char *name, compio_archive *archive) {
+    if (!archive) {
+        return NULL;
+    }
+    if (!name) {
+        errno = EINVAL;
+        return NULL;
+    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
     size_t name_len = strlen(name);
     if (name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
@@ -265,6 +273,14 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
 }
 
 int compio_remove_file(compio_archive *archive, const char *name) {
+    if (!archive) {
+        return -1;
+    }
+    if (!name) {
+        errno = EINVAL;
+        return -1;
+    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
     size_t name_len = strlen(name);
     if (name_len > COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
@@ -319,6 +335,7 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
     if (!archive || !stats) {
         return COMPIO_ERROR;
     }
+    std::shared_lock<std::shared_mutex> lock(archive->mutex);
 
     if (!archive->allocator) {
         return COMPIO_ERROR;
@@ -343,6 +360,7 @@ int compio_defragment(compio_archive *archive) {
         WARNING_PRINT("warning: passed nullptr into compio_defragment\n");
         return COMPIO_ERROR;
     }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
 
     if (archive->mode_b & mode_bit::r) {
         WARNING_PRINT("warning: compio_defragment called on read-only archive\n");
@@ -364,12 +382,13 @@ int compio_defragment(compio_archive *archive) {
 }
 
 int compio_close_file(compio_file *file) {
-    if (!file) {
+    if (!file || !file->archive) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
         return -1;
     }
+    std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
 
-    if (file->archive && file->archive->open_files_count > 0) {
+    if (file->archive->open_files_count > 0) {
         file->archive->open_files_count--;
     }
 
@@ -490,8 +509,8 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
 #endif
 }
 
-uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_write(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
+static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *file) {
+    DEBUG_PRINT("\ncompio_write_impl(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
 
     const auto archive = file->archive;
     const auto block_reader = archive->block_reader;
@@ -648,8 +667,21 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     return size;
 }
 
+uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
+    if (!file || !file->archive) {
+        return 0;
+    }
+    std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
+    return compio_write_impl(ptr, size, file);
+}
+
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
+    if (!file || !file->archive) {
+        return 0;
+    }
+
     DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
+    std::shared_lock<std::shared_mutex> lock(file->archive->mutex);
 
     const auto *archive = file->archive;
     const auto block_reader = archive->block_reader;
@@ -725,6 +757,11 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_insert(cursor=%lu, size=%lu)\n", file->cursor, size);
 
+    if (!file || !file->archive) {
+        return 0;
+    }
+    std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
+
 #ifdef COMPIO_DISABLE_INSERT_ERASE
     WARNING_PRINT("warning: insert operations are disabled (COMPIO_DISABLE_INSERT_ERASE)\n");
     return 0;
@@ -732,7 +769,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     // behave the same as compio_write, when inserting after file end
     if (file->cursor >= file->size) {
-        return compio_write(ptr, size, file);
+        return compio_write_impl(ptr, size, file);
     }
 
     auto *archive = file->archive;
@@ -821,7 +858,12 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_erase(uint64_t size, compio_file *file) {
+    if (!file || !file->archive) {
+        return 0;
+    }
     DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
+
+    std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
 
 #ifdef COMPIO_DISABLE_INSERT_ERASE
     WARNING_PRINT("warning: erase operations are disabled (COMPIO_DISABLE_INSERT_ERASE)\n");
@@ -945,6 +987,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
 void compio_flush(compio_archive *archive) {
     if (!archive) return;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
     if (archive->block_reader) archive->block_reader->clear_cache();
     if (archive->index) archive->index->clear_cache();
 }

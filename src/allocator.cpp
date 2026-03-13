@@ -12,7 +12,10 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <vector>
+
+#include "compio/compio_file.hpp"
 
 #ifdef _WIN32
 #include <io.h>   // _chsize_s, _fileno
@@ -662,13 +665,23 @@ block_allocator::block_allocator(compio_archive *archive)
 }
 
 uint8_t block_allocator::get_fragmentation() const {
+    if (!archive_) return 0;
+    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
     return blocks_manager_.get_cached_fragmentation();
+}
+
+free_blocks_manager::fragmentation_stats block_allocator::get_fragmentation_stats() const {
+    if (!archive_) return {};
+    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
+    return blocks_manager_.get_fragmentation_stats();
 }
 
 uint64_t block_allocator::allocate(uint64_t size) {
     if (size == 0) {
         return UINT64_MAX;
     }
+
+    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
 
     try {
         // Convert allocation strategy from config to internal enum
@@ -694,11 +707,14 @@ uint64_t block_allocator::allocate(uint64_t size) {
         }
 
         // If no suitable free block found, allocate at the end
-        offset = readonly(archive_->header, header)->file_size;
-        if (offset > UINT64_MAX - size) {
-            return UINT64_MAX;
+        {
+            std::lock_guard<std::mutex> h_lock(archive_->header_mutex);
+            offset = readonly(archive_->header, header)->file_size;
+            if (offset > UINT64_MAX - size) {
+                return UINT64_MAX;
+            }
+            archive_->header->file_size += size;
         }
-        archive_->header->file_size += size;
         return offset;
     } catch (const std::exception &e) {
         std::cerr << "Allocation failed: " << e.what() << std::endl;
@@ -711,6 +727,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         return;
     }
 
+    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
     if (size > UINT64_MAX - offset ||
         offset + size > readonly(archive_->header, header)->file_size) {
         return;
@@ -765,6 +782,26 @@ void block_allocator::maintenance() {
     }
 
     last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+}
+
+bool block_allocator::save_state(compio_archive *archive) {
+    if (!archive) {
+        return false;
+    }
+    std::lock_guard<std::mutex> alloc_lock(archive->allocator_mutex);
+    std::lock_guard<std::mutex> head_lock(archive->header_mutex);
+    std::lock_guard<std::mutex> io_lock(archive->io_mutex);
+    return blocks_manager_.save_to_file(archive);
+}
+
+bool block_allocator::load_state(compio_archive *archive) {
+    if (!archive) {
+        return false;
+    }
+    std::lock_guard<std::mutex> alloc_lock(archive->allocator_mutex);
+    std::lock_guard<std::mutex> head_lock(archive->header_mutex);
+    std::lock_guard<std::mutex> io_lock(archive->io_mutex);
+    return blocks_manager_.load_from_file(archive);
 }
 
 // Private methods

@@ -23,6 +23,7 @@ add_executable(compio_gtest
     src/test_insert_erase.cpp
     src/test_segregated_allocator.cpp
     src/test_max_files.cpp
+    src/test_concurrency.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)

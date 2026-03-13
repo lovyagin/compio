@@ -15,6 +15,8 @@
 
 #include "third_party/lrucache.hpp"
 
+#include <mutex>
+
 namespace compio {
 
 struct context_t {
@@ -22,6 +24,7 @@ struct context_t {
     block_allocator *allocator;
     btree *index;
     const compio_compressor *compressor;
+    std::mutex *io_mutex;
     /**
      * @brief Temporary in-memory substitution for BTree, to avoid excess BTree operations
      *
@@ -269,7 +272,7 @@ public:
      * @param max_size Maximum number of blocks to keep in the LRU cache
      */
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
-                         const compio_compressor *compressor, int max_size);
+                         const compio_compressor *compressor, int max_size, std::mutex *io_mutex);
 
     /**
      * @brief Read a block from file or cache

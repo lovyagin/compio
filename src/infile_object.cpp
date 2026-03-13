@@ -52,7 +52,7 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
                 size);
         }
         ret = fwrite((void *)buffer, size, nmemb, stream);
-        delete buffer;
+        delete[] buffer;
     } else {
         ret = fwrite(ptr, size, nmemb, stream);
     }

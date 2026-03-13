@@ -375,9 +375,7 @@ public:
      * @brief Get detailed fragmentation statistics
      * @return Structure with fragmentation metrics
      */
-    [[nodiscard]] free_blocks_manager::fragmentation_stats get_fragmentation_stats() const {
-        return blocks_manager_.get_fragmentation_stats();
-    }
+    [[nodiscard]] free_blocks_manager::fragmentation_stats get_fragmentation_stats() const;
 
     /**
      * @brief Initialize allocator with archive configuration
@@ -415,14 +413,14 @@ public:
      * @param archive Target archive
      * @return True if save was successful
      */
-    bool save_state(compio_archive *archive) { return blocks_manager_.save_to_file(archive); }
+    bool save_state(compio_archive *archive);
 
     /**
      * @brief Load allocator state from archive
      * @param archive Source archive
      * @return True if load was successful
      */
-    bool load_state(compio_archive *archive) { return blocks_manager_.load_from_file(archive); }
+    bool load_state(compio_archive *archive);
 
 private:
     compio_archive *archive_;            /**< Associated archive */

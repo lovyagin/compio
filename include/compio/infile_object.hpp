@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <type_traits>
+#include <atomic>
+#include <mutex>
 
 /**
  * @brief Macro to create a const reference to a smart_infile_object
@@ -131,12 +133,13 @@ private:
      * smart_infile_object instances to share the same underlying data.
      */
     struct storage {
-        int ref_count; /**< Reference count for shared ownership */
+        std::atomic<int> ref_count; /**< Reference count for shared ownership */
         bool modified; /**< Flag indicating if data has been modified */
         bool removed;  /**< Flag indicating if object should be removed */
         T *data;       /**< Pointer to the actual object data */
         FILE *file;    /**< File stream */
         uint64_t addr; /**< File address where object is stored */
+        std::mutex *io_mutex;
 
         /**
          * @brief Construct storage with existing data
@@ -149,13 +152,14 @@ private:
          * @param addr File address where object is stored
          * @param data Pointer to existing object data
          */
-        storage(FILE *file, uint64_t addr, T *data)
+        storage(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex = nullptr)
             : ref_count(1),
               modified(true),
               removed(false),
               data(data),
               file(file),
-              addr(addr) {}
+              addr(addr),
+              io_mutex(io_mutex) {}
 
         /**
          * @brief Construct storage by reading from file
@@ -167,7 +171,7 @@ private:
          * @param file File stream to read from
          * @param addr File address where object data is stored
          */
-        storage(FILE *file, uint64_t addr) : storage(file, addr, new T()) {
+        storage(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr) : storage(file, addr, new T(), io_mutex) {
             modified = false;
             read();
         }
@@ -190,14 +194,28 @@ private:
          *
          * Calls the object's read_from method to load data from file.
          */
-        void read() { data->read_from(file, addr); }
+        void read() {
+            if (io_mutex) {
+                std::lock_guard<std::mutex> lock(*io_mutex);
+                data->read_from(file, addr);
+            } else {
+                data->read_from(file, addr);
+            }
+        }
 
         /**
          * @brief Write object data to file
          *
          * Calls the object's write_to method to save data to file.
          */
-        void write() { data->write_to(file, addr); }
+        void write() {
+            if (io_mutex) {
+                std::lock_guard<std::mutex> lock(*io_mutex);
+                data->write_to(file, addr);
+            } else {
+                data->write_to(file, addr);
+            }
+        }
     };
 
     storage *S; /**< Pointer to the shared storage structure */
@@ -220,7 +238,7 @@ public:
      * @param addr File address where object is stored
      * @param data Pointer to existing object data (ownership is transferred)
      */
-    smart_infile_object(FILE *file, uint64_t addr, T *data) : S(new storage(file, addr, data)) {}
+    smart_infile_object(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex = nullptr) : S(new storage(file, addr, data, io_mutex)) {}
 
     /**
      * @brief Construct by reading from file
@@ -232,7 +250,7 @@ public:
      * @param file File stream to read from
      * @param addr File address where object data is stored
      */
-    smart_infile_object(FILE *file, uint64_t addr) : S(new storage(file, addr)) {}
+    smart_infile_object(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr) : S(new storage(file, addr, io_mutex)) {}
 
     /**
      * @brief Copy constructor
@@ -242,7 +260,9 @@ public:
      *
      * @param other The smart_infile_object to copy from
      */
-    smart_infile_object(const smart_infile_object &other) { *this = other; }
+    smart_infile_object(const smart_infile_object &other) : S(other.S) {
+        if (S) S->ref_count.fetch_add(1);
+    }
 
     /**
      * @brief Move constructor
@@ -252,7 +272,9 @@ public:
      *
      * @param other The smart_infile_object to move from
      */
-    smart_infile_object(smart_infile_object &&other) { *this = other; }
+    smart_infile_object(smart_infile_object &&other) noexcept : S(other.S) {
+        other.S = nullptr;
+    }
 
     /**
      * @brief Copy assignment operator
@@ -265,8 +287,14 @@ public:
      * @return Reference to this object
      */
     smart_infile_object &operator=(const smart_infile_object &other) {
-        S = other.S;
-        ++S->ref_count;
+        if (this != &other) {
+            storage *new_S = other.S;
+            if (new_S) new_S->ref_count.fetch_add(1);
+            if (S && S->ref_count.fetch_sub(1) == 1) {
+                delete S;
+            }
+            S = new_S;
+        }
         return *this;
     }
 
@@ -279,7 +307,7 @@ public:
      * @param other The smart_infile_object to move from
      * @return Reference to this object
      */
-    smart_infile_object &operator=(smart_infile_object &&other) {
+    smart_infile_object &operator=(smart_infile_object &&other) noexcept {
         std::swap(S, other.S);
         return *this;
     }
@@ -291,10 +319,8 @@ public:
      * count reaches zero, the storage (and the contained object) is destroyed.
      */
     ~smart_infile_object() {
-        if (S != nullptr) {
-            --S->ref_count;
-            if (S->ref_count == 0)
-                delete S;
+        if (S && S->ref_count.fetch_sub(1) == 1) {
+            delete S;
         }
     }
 

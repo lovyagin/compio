@@ -2,6 +2,8 @@
 #define COMPIO_FILE_HEADER_
 
 #include <memory>
+#include <shared_mutex>
+#include <mutex>
 
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
@@ -14,6 +16,11 @@ struct btree;
 } // namespace compio
 
 struct compio_archive {
+    std::shared_mutex mutex;
+    std::mutex io_mutex;
+    std::mutex header_mutex;
+    std::mutex allocator_mutex;
+
     FILE *file;
     const compio_config config;
     smart_infile_object<compio::header> header;
