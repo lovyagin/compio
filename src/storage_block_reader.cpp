@@ -197,7 +197,7 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
                                            const compio_compressor *compressor, int max_size,
                                            std::mutex *io_mutex)
     : cache(max_size),
-      context{file, allocator, index, compressor, io_mutex, {}, 0} {}
+      context(file, allocator, index, compressor, io_mutex) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
@@ -217,13 +217,11 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
             addr = it->second;
             DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%" PRIu64 "\n", addr);
         }
-    }
 #ifndef NDEBUG
             auto val = context.index->get(key);
             assert(val.has_value());
             // assert(val.value().addr == addr); // This assert is race-prone in concurrent environment
 #endif
-        }
     }
     
     if (addr == 0) {
