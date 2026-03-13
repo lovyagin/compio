@@ -99,13 +99,17 @@ TEST_F(ConcurrencyTest, ConcurrentReadSameFile) {
 
     const int num_readers = 4;
     std::vector<std::thread> threads;
+    std::atomic<bool> failure{false};
 
     for (int i = 0; i < num_readers; ++i) {
         threads.emplace_back([&]() {
             compio_file* f = compio_open_file(fname.c_str(), archive);
-            ASSERT_NE(f, nullptr);
+            if (!f) {
+                failure.store(true, std::memory_order_relaxed);
+                return;
+            }
             std::vector<uint8_t> buf(1024);
-            for(int j=0; j<100; ++j) {
+            for (int j = 0; j < 100; ++j) {
                 compio_read(buf.data(), buf.size(), f);
             }
             compio_close_file(f);
@@ -115,6 +119,8 @@ TEST_F(ConcurrencyTest, ConcurrentReadSameFile) {
     for (auto& t : threads) {
         t.join();
     }
+
+    ASSERT_FALSE(failure.load(std::memory_order_relaxed));
 }
 
 TEST_F(ConcurrencyTest, ConcurrentInsertEraseFlush) {
