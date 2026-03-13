@@ -260,28 +260,32 @@ TEST_F(AdvancedConcurrencyTest, DefragSafetyCheck) {
     }
 
     std::atomic<bool> file_opened{false};
+    std::atomic<bool> setup_complete{false};
     std::atomic<bool> can_close{false};
 
     std::thread reader([&]() {
         compio_file* f = compio_open_file(fname.c_str(), archive);
         if (f) {
             file_opened = true;
+            setup_complete = true;
             // Hold file open until main thread signals
             while (!can_close) {
                 std::this_thread::yield();
             }
             compio_close_file(f);
+        } else {
+            setup_complete = true;
         }
     });
 
     // Wait for reader to open file (bounded wait to avoid hanging indefinitely)
     auto wait_start = std::chrono::steady_clock::now();
     const auto wait_timeout = std::chrono::seconds(5);
-    while (!file_opened &&
+    while (!setup_complete &&
            std::chrono::steady_clock::now() - wait_start < wait_timeout) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    ASSERT_TRUE(file_opened) << "Reader thread failed to open file within timeout";
+    ASSERT_TRUE(file_opened) << "Reader thread failed to open file";
     
     // Attempt defrag while reader has file open
     // Should fail immediately because open_files_count > 0

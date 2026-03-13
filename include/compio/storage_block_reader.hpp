@@ -16,6 +16,7 @@
 #include "third_party/lrucache.hpp"
 
 #include <mutex>
+#include <atomic>
 
 namespace compio {
 
@@ -67,7 +68,7 @@ struct context_t {
      * on btree.
      */
     std::map<tree_key, uint64_t> temporary_index;
-    int temp_index_refcount = 0;
+    std::atomic<int> temp_index_refcount = 0;
     std::mutex temp_index_mutex;
 };
 
