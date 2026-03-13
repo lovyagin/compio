@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 #include "compio/allocator.hpp"
@@ -38,7 +39,7 @@ struct node_reader {
      * @param tree_degree The degree of the B-Tree (branching factor)
      * @param max_size Maximum number of nodes to cache
      */
-    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size);
+    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex);
 
     /**
      * @brief Read a node from the specified address
@@ -90,6 +91,7 @@ private:
     uint64_t tree_degree;
     /** @brief File handle for reading/writing nodes */
     FILE *file;
+    std::mutex *io_mutex;
     /** @brief LRU cache for storing frequently accessed nodes */
     cache::lru_cache<uint64_t, shared_node> cache;
 };
@@ -119,7 +121,7 @@ struct btree {
      * @param cache_size Maximum number of nodes to cache for performance optimization
      */
     btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
-          block_allocator *allocator, FILE *file, uint64_t cache_size);
+          block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex);
 
     /**
      * @brief Insert a key-value pair into the B-Tree

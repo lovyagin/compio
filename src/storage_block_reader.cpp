@@ -1,6 +1,7 @@
 #include "compio/storage_block_reader.hpp"
 
 #include <cassert>
+#include <mutex>
 
 #include "compio/debug_print.hpp"
 
@@ -27,7 +28,12 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
       _is_valid(true) {
 
     storage_block b;
-    b.read_from(context.file, addr);
+    {
+        std::unique_lock<std::mutex> lock;
+        if (context.io_mutex)
+            lock = std::unique_lock<std::mutex>(*context.io_mutex);
+        b.read_from(context.file, addr);
+    }
 
     _c_size = b.size;
     _size = b.original_size;
@@ -105,7 +111,12 @@ block::~block() {
             "[B][destructor]: writing to file "
             "(new_addr=%lu,addr=%lu,original_size=%lu,size=%lu,is_compressed=%d,key.pos=%lu)\n",
             new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
-        b.write_to(context.file, new_addr);
+        if (context.io_mutex) {
+            std::lock_guard<std::mutex> lock(*context.io_mutex);
+            b.write_to(context.file, new_addr);
+        } else {
+            b.write_to(context.file, new_addr);
+        }
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
@@ -179,9 +190,10 @@ uint64_t block::addr() const { return _addr; }
 uint64_t block::c_size() const { return _c_size; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
-                                           const compio_compressor *compressor, int max_size)
+                                           const compio_compressor *compressor, int max_size,
+                                           std::mutex *io_mutex)
     : cache(max_size),
-      context({file, allocator, index, compressor, {}, false}) {}
+      context({file, allocator, index, compressor, io_mutex, {}, false}) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%lu, key.hash=%lu, key.pos=%lu\n", addr, key.hash,
@@ -189,7 +201,7 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
     auto b_cached = cache.get(key);
     if (b_cached.has_value()) {
         DEBUG_PRINT("[SBR][read_block]: cache hit\n");
-        return *b_cached.value();
+        return b_cached.value();
     }
     DEBUG_PRINT("[SBR][read_block]: cache miss\n");
     if (context.is_temporary_index_enabled) {
@@ -222,7 +234,7 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
         WARNING_PRINT("warning: trying to create block with key (%lu, %lu), that "
                       "already exists in storage_block_reader.cache\n",
                       key.hash, key.pos);
-        return *b_cached.value();
+        return b_cached.value();
     }
     auto b = std::make_shared<block>(context, key, size, false);
     cache.put(key, b);
