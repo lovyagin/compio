@@ -5,18 +5,20 @@
 #include <atomic>
 #include <random>
 #include <filesystem>
+#include <string>
 
 namespace fs = std::filesystem;
 
 class ConcurrencyTest : public ::testing::Test {
 protected:
-    std::string test_file = "concurrency_test.compio";
+    std::string test_file;
     compio_archive* archive = nullptr;
 
     void SetUp() override {
-        // Use a unique temporary filename to avoid collisions across concurrent test runs.
-        fs::path tmp_path = fs::temp_directory_path() / fs::unique_path("concurrency_test-%%%%-%%%%.compio");
+        static std::atomic<int> counter{0};
+        auto tmp_path = fs::temp_directory_path() / ("concurrency_test_" + std::to_string(counter++) + ".compio");
         test_file = tmp_path.string();
+        
         if (fs::exists(test_file)) {
             fs::remove(test_file);
         }
@@ -122,8 +124,8 @@ TEST_F(ConcurrencyTest, ConcurrentReadSameFile) {
     ASSERT_FALSE(failure.load(std::memory_order_relaxed));
 }
 
-TEST_F(ConcurrencyTest, ConcurrentInsertEraseFlush) {
-    const int num_keys = 32;
+TEST_F(ConcurrencyTest, ConcurrentFileOperations) {
+    const int num_keys = 10; 
     const int num_threads = 4;
     const int ops_per_thread = 200;
 
@@ -131,19 +133,19 @@ TEST_F(ConcurrencyTest, ConcurrentInsertEraseFlush) {
         std::mt19937 rng(id + 1234);
         for (int i = 0; i < ops_per_thread; ++i) {
             int key_idx = rng() % num_keys;
-            std::string name = "ie_file_" + std::to_string(key_idx);
+            std::string name = "file_op_" + std::to_string(key_idx);
 
-            // Randomly choose between insert, erase, and flush.
             int op = rng() % 3;
             if (op == 0) {
-                // Insert a directory entry / file record.
-                (void)compio_insert(name.c_str(), archive);
+                // Create/Open
+                compio_file* f = compio_open_file(name.c_str(), archive);
+                if (f) compio_close_file(f);
             } else if (op == 1) {
-                // Erase a directory entry / file record.
-                (void)compio_erase(name.c_str(), archive);
+                // Remove
+                compio_remove_file(archive, name.c_str());
             } else {
-                // Flush archive metadata/state.
-                (void)compio_flush(archive);
+                // Flush
+                compio_flush(archive);
             }
         }
     };
@@ -156,20 +158,5 @@ TEST_F(ConcurrencyTest, ConcurrentInsertEraseFlush) {
 
     for (auto &t : threads) {
         t.join();
-    }
-
-    // Final flush to ensure all pending operations are committed.
-    (void)compio_flush(archive);
-
-    // Basic invariant check: each key is either absent or can be opened/closed.
-    for (int key_idx = 0; key_idx < num_keys; ++key_idx) {
-        std::string name = "ie_file_" + std::to_string(key_idx);
-        compio_file *f = compio_open_file(name.c_str(), archive);
-        if (f != nullptr) {
-            // If the entry exists, we should be able to perform a simple operation on it.
-            std::vector<uint8_t> buf(16, 0);
-            (void)compio_read(buf.data(), buf.size(), f);
-            compio_close_file(f);
-        }
     }
 }

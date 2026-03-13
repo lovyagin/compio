@@ -260,7 +260,9 @@ public:
      *
      * @param other The smart_infile_object to copy from
      */
-    smart_infile_object(const smart_infile_object &other) { *this = other; }
+    smart_infile_object(const smart_infile_object &other) : S(other.S) {
+        if (S) S->ref_count.fetch_add(1);
+    }
 
     /**
      * @brief Move constructor
@@ -270,7 +272,9 @@ public:
      *
      * @param other The smart_infile_object to move from
      */
-    smart_infile_object(smart_infile_object &&other) { *this = other; }
+    smart_infile_object(smart_infile_object &&other) noexcept : S(other.S) {
+        other.S = nullptr;
+    }
 
     /**
      * @brief Copy assignment operator
@@ -283,8 +287,14 @@ public:
      * @return Reference to this object
      */
     smart_infile_object &operator=(const smart_infile_object &other) {
-        S = other.S;
-        ++S->ref_count;
+        if (this != &other) {
+            storage *new_S = other.S;
+            if (new_S) new_S->ref_count.fetch_add(1);
+            if (S && S->ref_count.fetch_sub(1) == 1) {
+                delete S;
+            }
+            S = new_S;
+        }
         return *this;
     }
 
@@ -297,7 +307,7 @@ public:
      * @param other The smart_infile_object to move from
      * @return Reference to this object
      */
-    smart_infile_object &operator=(smart_infile_object &&other) {
+    smart_infile_object &operator=(smart_infile_object &&other) noexcept {
         std::swap(S, other.S);
         return *this;
     }
@@ -309,10 +319,8 @@ public:
      * count reaches zero, the storage (and the contained object) is destroyed.
      */
     ~smart_infile_object() {
-        if (S != nullptr) {
-            --S->ref_count;
-            if (S->ref_count == 0)
-                delete S;
+        if (S && S->ref_count.fetch_sub(1) == 1) {
+            delete S;
         }
     }
 
