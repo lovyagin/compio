@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
+#include <cinttypes>
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
@@ -165,8 +166,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         fseek64(file, 0, SEEK_END);
         int64_t actual_size = ftell64(file);
         if (actual_size < static_cast<int64_t>(sizeof(compio::header))) {
-            WARNING_PRINT("warning: archive file truncated (size=%lld, need>=%lu)\n",
-                          (long long)actual_size, (unsigned long)sizeof(compio::header));
+            WARNING_PRINT("warning: archive file truncated (size=%lld, need>=%" PRIu64 ")\n",
+                          (long long)actual_size, (uint64_t)sizeof(compio::header));
             errno = EINVAL;
             goto no_allocator;
         }
@@ -510,7 +511,7 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
 }
 
 static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_write_impl(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
+    DEBUG_PRINT("\ncompio_write_impl(cursor=%" PRIu64 ", size=%" PRIu64 ", file_size=%" PRIu64 ")\n", file->cursor, size, file->size);
 
     const auto archive = file->archive;
     const auto block_reader = archive->block_reader;
@@ -564,7 +565,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         block_reader->enable_temporary_index();
         for (const auto &[key, val] : range) {
             // read and decompress block from file
-            DEBUG_PRINT("[CW]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+            DEBUG_PRINT("[CW]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                         val.size);
             const auto b = block_reader->read_block(val.addr, key);
             if (!b) {
@@ -591,7 +592,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
             // write offset within block-range
             const uint64_t dec_offset =
                 (write_start > block_start) ? (write_start - block_start) : 0;
-            DEBUG_PRINT("[CW] EXISTING BLOCK DATA: (%lu, %lu, %lu)\n", dec_offset, copy_size, b->size() - dec_offset - copy_size);
+            DEBUG_PRINT("[CW] EXISTING BLOCK DATA: (%" PRIu64 ", %" PRIu64 ", %" PRIu64 ")\n", dec_offset, copy_size, b->size() - dec_offset - copy_size);
 
             std::copy_n(p_ptr, copy_size, b->data() + dec_offset);
             p_ptr += copy_size;
@@ -639,10 +640,10 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
             const uint64_t copy_size = std::min(current_block_size - left_pad, size - ptr_bytes_written);
             // size of zero-padding from the right
             const uint64_t right_pad = current_block_size - left_pad - copy_size;
-            DEBUG_PRINT("[CW] NEW BLOCK DATA: (%lu, %lu, %lu)\n", left_pad, copy_size, right_pad);
+            DEBUG_PRINT("[CW] NEW BLOCK DATA: (%" PRIu64 ", %" PRIu64 ", %" PRIu64 ")\n", left_pad, copy_size, right_pad);
 
             const tree_key key{file->hash, new_block_start};
-            DEBUG_PRINT("[CW]creating block ({%lu,%lu}-{?,%lu})\n", key.hash, key.pos,
+            DEBUG_PRINT("[CW]creating block ({%" PRIu64 ",%" PRIu64 "}-{?,%" PRIu64 "})\n", key.hash, key.pos,
                         current_block_size);
             const auto b = block_reader->create_block(current_block_size, key);
 
@@ -680,7 +681,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
-    DEBUG_PRINT("\ncompio_read(cursor=%lu, size=%lu, file_size=%lu)\n", file->cursor, size, file->size);
+    DEBUG_PRINT("\ncompio_read(cursor=%" PRIu64 ", size=%" PRIu64 ", file_size=%" PRIu64 ")\n", file->cursor, size, file->size);
     std::shared_lock<std::shared_mutex> lock(file->archive->mutex);
 
     const auto *archive = file->archive;
@@ -719,7 +720,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     // enable temporary index, so it will fix expired tree_vals, that we will have in our range
     block_reader->enable_temporary_index();
     for (const auto &[key, val] : range) {
-        DEBUG_PRINT("[CR]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+        DEBUG_PRINT("[CR]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                     val.size);
         const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
         if (!b) {
@@ -738,7 +739,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         assert(copy_end > copy_start); // if not, btree::get_range is broken
         const uint64_t copy_size = copy_end - copy_start;
         const uint64_t dec_offset = (read_start > block_start) ? (read_start - block_start) : 0;
-        DEBUG_PRINT("[CR]copying data of size %ld from block (offset=%ld)\n", copy_size,
+        DEBUG_PRINT("[CR]copying data of size %" PRIu64 " from block (offset=%" PRIu64 ")\n", copy_size,
                     dec_offset);
         assert(dec_offset + copy_size <= b->size());
 
@@ -861,7 +862,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     if (!file || !file->archive) {
         return 0;
     }
-    DEBUG_PRINT("\ncompio_erase(cursor=%lu, size=%lu)\n", file->cursor, size);
+    DEBUG_PRINT("\ncompio_erase(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
 
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
 

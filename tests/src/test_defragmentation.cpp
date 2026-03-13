@@ -62,7 +62,7 @@ TEST_F(CalculateFragmentationTest, SingleFreeBlock_ZeroFragmentation) {
     ASSERT_NE(off, (uint64_t)UINT64_MAX);
     archive->allocator->deallocate(off, 1024);
 
-    archive->allocator->get_fragmentation_stats(); // triggers recalc
+    (void)archive->allocator->get_fragmentation_stats(); // triggers recalc
     uint8_t f = archive->allocator->get_fragmentation();
     EXPECT_EQ(f, 0);
 }
@@ -152,7 +152,7 @@ TEST_F(DefragmentMergeTest, ThreeAdjacentFreeBlocks_MergeToOne) {
     // After freeing all three, the free block manager should have already
     // merged them (coalescing on dealloc).  Either way, after explicit
     // defragment the count must be 1.
-    archive->allocator->get_fragmentation_stats(); // force any deferred work
+    (void)archive->allocator->get_fragmentation_stats(); // force any deferred work
 
     // The allocator may or may not auto-merge on dealloc; call defragment explicitly.
     // Access blocks_manager_ via the public API if available, otherwise verify via stats.

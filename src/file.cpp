@@ -103,7 +103,7 @@ void header::write_to(FILE *file, uint64_t addr) const {
 }
 
 void index_node::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][index_node]addr=%lu\n", addr);
+    DEBUG_PRINT("[R][index_node]addr=%" PRIu64 "\n", addr);
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     uint8_t signature;
@@ -137,7 +137,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
 }
 
 void index_node::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][index_node]addr=%lu;size=%lu\n", addr, INDEX_NODE_SIZE(tree_degree));
+    DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%lu\n", addr, (unsigned long)INDEX_NODE_SIZE(tree_degree));
     validate();
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -233,12 +233,12 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread(data.get(), 1, size, file);
 
     if (!verify_checksum()) {
-        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%lu\n", addr);
+        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%" PRIu64 "\n", addr);
     }
 }
 
 void storage_block::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][storage_block]addr=%lu;size=%lu\n", addr, STORAGE_BLOCK_METASIZE + size);
+    DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE + size);
     assert(addr != 0);
     assert(size > 0);
     assert(original_size > 0);

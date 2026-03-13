@@ -1,6 +1,7 @@
 #include "compio/infile_object.hpp"
 
 #include <stdexcept>
+#include <cinttypes>
 
 #include "compio/debug_print.hpp"
 
@@ -48,7 +49,7 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
             }
         } else {
             WARNING_PRINT(
-                "warning: lendian_fwrite possible size values are 1, 2, 4, 8 (%lu was passed)\n",
+                "warning: lendian_fwrite possible size values are 1, 2, 4, 8 (%" PRIu64 " was passed)\n",
                 size);
         }
         ret = fwrite((void *)buffer, size, nmemb, stream);
@@ -59,7 +60,7 @@ uint64_t lendian_fwrite(const void *ptr, uint64_t size, uint64_t nmemb, FILE *st
 
     if (ret != nmemb) {
         WARNING_PRINT("warning: failed to fwrite bytes to file "
-                      "(expected: %lu bytes, actual: %lu bytes)\n",
+                      "(expected: %" PRIu64 " bytes, actual: %" PRIu64 " bytes)\n",
                       size * nmemb, ret * size);
     }
 
@@ -98,7 +99,7 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
                 }
             } else {
                 WARNING_PRINT(
-                    "warning: lendian_fread possible size values are 1, 2, 4, 8 (%lu was passed)\n",
+                    "warning: lendian_fread possible size values are 1, 2, 4, 8 (%" PRIu64 " was passed)\n",
                     size);
             }
         }
@@ -108,7 +109,7 @@ uint64_t lendian_fread(void *ptr, uint64_t size, uint64_t nmemb, FILE *stream) {
 
     if (ret != nmemb) {
         WARNING_PRINT("warning: failed to fread bytes from file "
-                      "(expected: %lu bytes, actual: %lu bytes)\n",
+                      "(expected: %" PRIu64 " bytes, actual: %" PRIu64 " bytes)\n",
                       size * nmemb, ret * size);
     }
 
