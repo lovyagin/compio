@@ -26,6 +26,7 @@ add_executable(compio_gtest
     src/test_concurrency.cpp
     src/test_concurrency_advanced.cpp
     src/test_header_validation.cpp
+    src/test_max_files_scalability.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)

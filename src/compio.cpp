@@ -76,8 +76,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
 
 bool compio_archive::is_readonly() const { return mode_b & mode_bit::r; }
 
-static bool validate_config(const compio_config *c) {
-    if (c->block_size <= 0) {
+static bool validate_config(const compio_config *c, bool allow_zeros = false) {
+    if (c->block_size <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: block_size=%d <= 0\n", c->block_size);
         return false;
     }
@@ -85,17 +85,19 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: block_size__minimum=%d < 0\n", c->block_size__minimum);
         return false;
     }
-    if (c->block_size__minimum > c->block_size) {
-        WARNING_PRINT("warning: block_size__minimum=%d > block_size=%d\n", c->block_size__minimum,
-                      c->block_size);
-        return false;
+    if (!allow_zeros) {
+        if (c->block_size__minimum > c->block_size) {
+            WARNING_PRINT("warning: block_size__minimum=%d > block_size=%d\n", c->block_size__minimum,
+                        c->block_size);
+            return false;
+        }
+        if (c->block_size__maximum < c->block_size * 2) {
+            WARNING_PRINT("warning: block_size__maximum=%d < block_size*2=%d\n", c->block_size__maximum,
+                        c->block_size * 2);
+            return false;
+        }
     }
-    if (c->block_size__maximum < c->block_size * 2) {
-        WARNING_PRINT("warning: block_size__maximum=%d < block_size*2=%d\n", c->block_size__maximum,
-                      c->block_size * 2);
-        return false;
-    }
-    if (c->b_tree_degree <= 0) {
+    if (c->b_tree_degree <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: b_tree_degree=%d <= 0\n", c->b_tree_degree);
         return false;
     }
@@ -110,7 +112,7 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: cache_size__nodes=%d < 4\nplease use cache_size__nodes >= 4 ", c->cache_size__nodes);
         return false;
     }
-    if (c->max_files <= 0) {
+    if (c->max_files <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: max_files=%d <= 0\n", c->max_files);
         return false;
     }
@@ -123,7 +125,7 @@ static bool validate_config(const compio_config *c) {
 }
 
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
-    if (!validate_config(c)) {
+    if (!validate_config(c, true)) {
         errno = EINVAL;
         goto end;
     }
@@ -161,6 +163,16 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     bool is_new_file;
     is_new_file = is_file_empty(file);
+
+    if (is_new_file) {
+        // For new files, we must have valid configuration (no zeros allowed)
+        if (!validate_config(c, false)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: cannot create new archive with zero parameters (auto-detect requires existing file)\n");
+            goto no_allocator;
+        }
+    }
+
     if (!is_new_file) {
         // Validate that file is large enough to contain a complete header
         fseek64(file, 0, SEEK_END);
@@ -176,27 +188,56 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         archive->header->compression_type = c->compressor.compression_type;
         archive->header->block_size = c->block_size;
         archive->header->b_tree_degree = c->b_tree_degree;
-    } else if (readonly(archive->header, header)->compression_type !=
-               c->compressor.compression_type) {
-        // compression type mismatch
-        errno = EINVAL;
-        WARNING_PRINT("warning: compression type mismatch while opening archive\n");
-        goto no_allocator;
-    } else if (readonly(archive->header, header)->block_size != static_cast<uint32_t>(c->block_size)) {
-        errno = EINVAL;
-        WARNING_PRINT("warning: block_size mismatch while opening archive (file=%u, config=%d)\n",
-                      readonly(archive->header, header)->block_size, c->block_size);
-        goto no_allocator;
-    } else if (readonly(archive->header, header)->b_tree_degree != static_cast<uint32_t>(c->b_tree_degree)) {
-        errno = EINVAL;
-        WARNING_PRINT("warning: b_tree_degree mismatch while opening archive (file=%u, config=%d)\n",
-                      readonly(archive->header, header)->b_tree_degree, c->b_tree_degree);
-        goto no_allocator;
-    } else if (readonly(archive->header, header)->ftable.max_files != static_cast<uint32_t>(c->max_files)) {
-        errno = EINVAL;
-        WARNING_PRINT("warning: max_files mismatch while opening archive (file=%u, config=%d)\n",
-                      readonly(archive->header, header)->ftable.max_files, c->max_files);
-        goto no_allocator;
+    } else {
+        // "Smart Open" logic:
+        // If config specifies 0 for a parameter, we use the value from the file.
+        // Otherwise, we enforce the config value (validation).
+
+        const auto& hdr = *readonly(archive->header, header);
+        
+        // 1. Compression Type
+        if (hdr.compression_type != c->compressor.compression_type) {
+             // For compression, we can't just "adopt" it because we need the function pointers
+             // in c->compressor to match. If the user passed a compressor that doesn't match
+             // the file's type, it's a hard error unless we implement a way to auto-switch compressors.
+             // For now, we keep the existing strict check.
+            errno = EINVAL;
+            WARNING_PRINT("warning: compression type mismatch while opening archive\n");
+            goto no_allocator;
+        }
+
+        // 2. Block Size
+        if (c->block_size == 0) {
+             // Auto-detect
+             // We cast away constness because compio_archive stores a local copy of config,
+             // and we need to update that copy to reflect the file's reality.
+             const_cast<compio_config&>(archive->config).block_size = hdr.block_size;
+        } else if (hdr.block_size != static_cast<uint32_t>(c->block_size)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: block_size mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.block_size, c->block_size);
+            goto no_allocator;
+        }
+
+        // 3. B-Tree Degree
+        if (c->b_tree_degree == 0) {
+             const_cast<compio_config&>(archive->config).b_tree_degree = hdr.b_tree_degree;
+        } else if (hdr.b_tree_degree != static_cast<uint32_t>(c->b_tree_degree)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: b_tree_degree mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.b_tree_degree, c->b_tree_degree);
+            goto no_allocator;
+        }
+
+        // 4. Max Files
+        if (c->max_files == 0) {
+             const_cast<compio_config&>(archive->config).max_files = hdr.ftable.max_files;
+        } else if (hdr.ftable.max_files != static_cast<uint32_t>(c->max_files)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: max_files mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.ftable.max_files, c->max_files);
+            goto no_allocator;
+        }
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node

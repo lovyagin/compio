@@ -151,8 +151,8 @@ typedef enum {
 typedef struct {
     compio_compressor compressor; /**< Compressor for data blocks */
 
-    int b_tree_degree;       /**< B-Tree branching factor (typically 3-10) */
-    int block_size;          /**< Block size for splitting files (in bytes) */
+    int b_tree_degree;       /**< B-Tree branching factor (typically 3-10). Set to 0 to auto-detect on open. */
+    int block_size;          /**< Block size for splitting files (in bytes). Set to 0 to auto-detect on open. */
     int block_size__minimum; /** Minimum size of an uncompressed block */
     int block_size__maximum; /** Maximum size of an uncompressed block */
 
@@ -163,7 +163,7 @@ typedef struct {
     bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */
     uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
                                         percentage (1-100) */
-    int max_files; /**< Maximum number of files in a single archive (default: COMPIO_MAX_FILES) */
+    int max_files; /**< Maximum number of files in a single archive (default: COMPIO_MAX_FILES). Set to 0 to auto-detect on open. */
 } compio_config;
 
 /**
