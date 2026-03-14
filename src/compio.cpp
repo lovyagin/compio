@@ -221,7 +221,10 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
         // 3. B-Tree Degree
         if (c->b_tree_degree == 0) {
+             // Auto-detect: adopt the degree from the file and update both the archive
+             // config and the local config pointer used later in this function.
              const_cast<compio_config&>(archive->config).b_tree_degree = hdr.b_tree_degree;
+             const_cast<compio_config*>(c)->b_tree_degree = static_cast<int>(hdr.b_tree_degree);
         } else if (hdr.b_tree_degree != static_cast<uint32_t>(c->b_tree_degree)) {
             errno = EINVAL;
             WARNING_PRINT("warning: b_tree_degree mismatch while opening archive (file=%u, config=%d)\n",
