@@ -210,12 +210,13 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
     DEBUG_PRINT("[SBR][read_block]: cache miss\n");
     
     if (context.temp_index_refcount.load(std::memory_order_acquire) > 0) {
+        // Only lock if temporary index is active (double-checked optimization)
         std::lock_guard<std::mutex> lock(context.temp_index_mutex);
         // check in temporary index first
         auto it = context.temporary_index.find(key);
         if (it != context.temporary_index.end()) {
             addr = it->second;
-            DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%" PRIu64 "\n", addr);
+            DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%" PRIu64 "\n", (uint64_t)addr);
         }
 #ifndef NDEBUG
             auto val = context.index->get(key);
@@ -243,13 +244,13 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
 }
 
 std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
-    DEBUG_PRINT("[SBR][create_block]: size=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", size, key.hash,
-                key.pos);
+    DEBUG_PRINT("[SBR][create_block]: size=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", 
+                (uint64_t)size, (uint64_t)key.hash, (uint64_t)key.pos);
     auto b_cached = cache.get(key);
     if (b_cached.has_value()) {
         WARNING_PRINT("warning: trying to create block with key (%" PRIu64 ", %" PRIu64 "), that "
                       "already exists in storage_block_reader.cache\n",
-                      key.hash, key.pos);
+                      (uint64_t)key.hash, (uint64_t)key.pos);
         return b_cached.value();
     }
     auto b = std::make_shared<block>(context, key, size, false);

@@ -54,7 +54,7 @@ uint64_t header::disk_size() const {
 }
 
 void header::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][header]addr=%lu\n", addr);
+    DEBUG_PRINT("[R][header]addr=%" PRIu64 "\n", addr);
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fread_member(magic_number, file);
@@ -92,7 +92,7 @@ void header::read_from(FILE *file, uint64_t addr) {
 }
 
 void header::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][header]addr=%lu;size=%lu\n", addr, disk_size());
+    DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
     lendian_fwrite_member(magic_number, file);
@@ -146,7 +146,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
 }
 
 void index_node::write_to(FILE *file, uint64_t addr) const {
-    DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%lu\n", addr, (unsigned long)INDEX_NODE_SIZE(tree_degree));
+    DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, (uint64_t)INDEX_NODE_SIZE(tree_degree));
     validate();
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -202,7 +202,7 @@ void index_node::validate() const {
             if (prev_end > keys[i].pos) {
                 DEBUG_PRINT("[NODE_VALIDATE]: node state:\n");
                 for (std::size_t j = 0; j < num_keys; ++j) {
-                    DEBUG_PRINT("\t{%lu,%lu} -> {%lu,%lu}\n", keys[j].hash, keys[j].pos,
+                    DEBUG_PRINT("\t{%" PRIu64 ",%" PRIu64 "} -> {%" PRIu64 ",%" PRIu64 "}\n", keys[j].hash, keys[j].pos,
                                 values[j].addr, values[j].size);
                 }
             }
@@ -213,7 +213,7 @@ void index_node::validate() const {
 }
 
 void storage_block::read_from(FILE *file, uint64_t addr) {
-    DEBUG_PRINT("[R][storage_block]addr=%lu\n", addr);
+    DEBUG_PRINT("[R][storage_block]addr=%" PRIu64 "\n", addr);
     assert(addr != 0);
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -230,7 +230,7 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     // Cap block size to prevent OOM on corrupted files
     static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB
     if (size > MAX_BLOCK_SIZE) {
-        WARNING_PRINT("warning: storage_block size %" PRIu64 " exceeds limit at addr=%lu\n", size, addr);
+        WARNING_PRINT("warning: storage_block size %" PRIu64 " exceeds limit at addr=%" PRIu64 "\n", size, addr);
         size = 0;
         return;
     }

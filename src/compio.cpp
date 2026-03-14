@@ -531,7 +531,7 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     }
 
     file->cursor = new_cursor;
-    DEBUG_PRINT("\ncompio_seek(new_cursor=%ld)\n", new_cursor);
+    DEBUG_PRINT("\ncompio_seek(new_cursor=%" PRId64 ")\n", new_cursor);
     return 0;
 }
 
@@ -550,7 +550,7 @@ static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree
 
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
-    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash);
+    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%" PRIu64 ":\n", file->hash);
     auto file_range = index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
     if (!allow_empty) {
         assert(!file_range.empty());
@@ -817,7 +817,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_insert(cursor=%lu, size=%lu)\n", file->cursor, size);
+    DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
 
     if (!file || !file->archive) {
         return 0;
@@ -973,7 +973,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     block_reader->enable_temporary_index();
     for (const auto &[key, val] : range) {
-        DEBUG_PRINT("[CE]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+        DEBUG_PRINT("[CE]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                     val.size);
         const auto b = block_reader->read_block(val.addr, key);
         if (!b) {
@@ -994,12 +994,12 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         const uint64_t erase_start_offset = block_erase_start - block_start;
         const uint64_t erase_end_offset = block_erase_end - block_start;
 
-        DEBUG_PRINT("[CE]block=(%lu, %lu), erase=(%lu, %lu) -> block_erase=(%lu, %lu)\n",
+        DEBUG_PRINT("[CE]block=(%" PRIu64 ", %" PRIu64 "), erase=(%" PRIu64 ", %" PRIu64 ") -> block_erase=(%" PRIu64 ", %" PRIu64 ")\n",
                     block_start, block_end, erase_start, erase_end, block_erase_start,
                     block_erase_end);
         const uint64_t left_size = erase_start_offset;
         const uint64_t right_size = block_end - block_erase_end;
-        DEBUG_PRINT("[CE]---left_size=%lu, erase_size=%lu, right_size=%lu\n", left_size,
+        DEBUG_PRINT("[CE]---left_size=%" PRIu64 ", erase_size=%" PRIu64 ", right_size=%" PRIu64 "\n", left_size,
                     block_erase_size, right_size);
 
         // TODO: merge with adjacent block if new size is small
@@ -1007,16 +1007,16 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         if (block_erase_size < b->size()) {
             // keep block in btree, but update key.pos and val.size
             if (right_size > 0) {
-                DEBUG_PRINT("[CE]---copying %lu bytes from offset=%lu to offset=%lu\n", right_size,
+                DEBUG_PRINT("[CE]---copying %" PRIu64 " bytes from offset=%" PRIu64 " to offset=%" PRIu64 "\n", right_size,
                             erase_end_offset, erase_start_offset);
                 std::copy(b->data() + erase_end_offset, b->data() + b->size(),
                           b->data() + erase_start_offset);
             }
-            DEBUG_PRINT("[CE]---shrinking from size=%lu to size=%lu\n", b->size(),
+            DEBUG_PRINT("[CE]---shrinking from size=%" PRIu64 " to size=%" PRIu64 "\n", b->size(),
                         b->size() - block_erase_size);
             b->shrink(b->size() - block_erase_size);
             if (left_size == 0) {
-                DEBUG_PRINT("[CE]---moving by offset=%lu\n", block_erase_size);
+                DEBUG_PRINT("[CE]---moving by offset=%" PRIu64 "\n", block_erase_size);
                 archive->index->add_to_range(block_erase_size, key, key);
                 if (!block_reader->cache_contains(key)) {
                     // if out block not in cache (if cache_size=0), then block_reader->add_to_range

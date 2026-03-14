@@ -342,7 +342,7 @@ void free_blocks_manager::defragment() {
 void free_blocks_manager::print_list() const {
     free_block *current = head_;
     while (current) {
-        DEBUG_PRINT("Block: %lu, %lu\n", current->offset, current->size);
+        DEBUG_PRINT("Block: %" PRIu64 ", %" PRIu64 "\n", current->offset, current->size);
         current = current->next;
     }
 }
@@ -743,7 +743,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         static constexpr size_t BUFFER_SIZE = 4096;
         static uint8_t zeros[BUFFER_SIZE] = {0};
 
-        DEBUG_PRINT("[W][deallocate]addr=%lu;size=%lu\n", offset, size);
+        DEBUG_PRINT("[W][deallocate]addr=%" PRIu64 ";size=%" PRIu64 "\n", offset, size);
         fseek64(archive_->file, offset, SEEK_SET);
 
         size_t remaining = size;

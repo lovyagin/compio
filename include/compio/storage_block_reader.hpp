@@ -71,6 +71,9 @@ struct context_t {
     std::atomic<int> temp_index_refcount = 0;
     std::mutex temp_index_mutex;
 
+    context_t(const context_t&) = delete;
+    context_t& operator=(const context_t&) = delete;
+
     context_t(FILE *file, block_allocator *allocator, btree *index,
               const compio_compressor *compressor, std::mutex *io_mutex)
         : file(file),
