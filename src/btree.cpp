@@ -1,7 +1,9 @@
+#define __STDC_FORMAT_MACROS
 #include "compio/btree.hpp"
 
 #include <algorithm>
 #include <cassert>
+#include <cinttypes>
 #include <limits>
 #include <optional>
 

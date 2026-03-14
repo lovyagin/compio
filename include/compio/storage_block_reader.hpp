@@ -287,6 +287,11 @@ public:
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                          const compio_compressor *compressor, int max_size, std::mutex *io_mutex);
 
+    storage_block_reader(const storage_block_reader &) = delete;
+    storage_block_reader &operator=(const storage_block_reader &) = delete;
+    storage_block_reader(storage_block_reader &&) = delete;
+    storage_block_reader &operator=(storage_block_reader &&) = delete;
+
     /**
      * @brief Read a block from file or cache
      *

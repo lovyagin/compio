@@ -325,7 +325,8 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
         file->cursor = 0;
 
     file->archive = archive;
-    strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
+    strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE - 1);
+    file->name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
 
     file->hash = fnv1a(name);
 
