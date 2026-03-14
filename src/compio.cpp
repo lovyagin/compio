@@ -76,8 +76,8 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
 
 bool compio_archive::is_readonly() const { return mode_b & mode_bit::r; }
 
-static bool validate_config(const compio_config *c) {
-    if (c->block_size <= 0) {
+static bool validate_config(const compio_config *c, bool allow_zeros = false) {
+    if (c->block_size <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: block_size=%d <= 0\n", c->block_size);
         return false;
     }
@@ -85,17 +85,19 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: block_size__minimum=%d < 0\n", c->block_size__minimum);
         return false;
     }
-    if (c->block_size__minimum > c->block_size) {
-        WARNING_PRINT("warning: block_size__minimum=%d > block_size=%d\n", c->block_size__minimum,
-                      c->block_size);
-        return false;
+    if (!allow_zeros) {
+        if (c->block_size__minimum > c->block_size) {
+            WARNING_PRINT("warning: block_size__minimum=%d > block_size=%d\n", c->block_size__minimum,
+                        c->block_size);
+            return false;
+        }
+        if (c->block_size__maximum < c->block_size * 2) {
+            WARNING_PRINT("warning: block_size__maximum=%d < block_size*2=%d\n", c->block_size__maximum,
+                        c->block_size * 2);
+            return false;
+        }
     }
-    if (c->block_size__maximum < c->block_size * 2) {
-        WARNING_PRINT("warning: block_size__maximum=%d < block_size*2=%d\n", c->block_size__maximum,
-                      c->block_size * 2);
-        return false;
-    }
-    if (c->b_tree_degree <= 0) {
+    if (c->b_tree_degree <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: b_tree_degree=%d <= 0\n", c->b_tree_degree);
         return false;
     }
@@ -110,7 +112,7 @@ static bool validate_config(const compio_config *c) {
         WARNING_PRINT("warning: cache_size__nodes=%d < 4\nplease use cache_size__nodes >= 4 ", c->cache_size__nodes);
         return false;
     }
-    if (c->max_files <= 0) {
+    if (c->max_files <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: max_files=%d <= 0\n", c->max_files);
         return false;
     }
@@ -123,7 +125,7 @@ static bool validate_config(const compio_config *c) {
 }
 
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
-    if (!validate_config(c)) {
+    if (!validate_config(c, true)) {
         errno = EINVAL;
         goto end;
     }
@@ -161,6 +163,16 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     bool is_new_file;
     is_new_file = is_file_empty(file);
+
+    if (is_new_file) {
+        // For new files, we must have valid configuration (no zeros allowed)
+        if (!validate_config(c, false)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: cannot create new archive with zero parameters (auto-detect requires existing file)\n");
+            goto no_allocator;
+        }
+    }
+
     if (!is_new_file) {
         // Validate that file is large enough to contain a complete header
         fseek64(file, 0, SEEK_END);
@@ -174,12 +186,61 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
     if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
-    } else if (readonly(archive->header, header)->compression_type !=
-               c->compressor.compression_type) {
-        // compression type mismatch
-        errno = EINVAL;
-        WARNING_PRINT("warning: compression type mismatch while opening archive\n");
-        goto no_allocator;
+        archive->header->block_size = c->block_size;
+        archive->header->b_tree_degree = c->b_tree_degree;
+    } else {
+        // "Smart Open" logic:
+        // If config specifies 0 for a parameter, we use the value from the file.
+        // Otherwise, we enforce the config value (validation).
+
+        const auto& hdr = *readonly(archive->header, header);
+        
+        // 1. Compression Type
+        if (hdr.compression_type != c->compressor.compression_type) {
+             // For compression, we can't just "adopt" it because we need the function pointers
+             // in c->compressor to match. If the user passed a compressor that doesn't match
+             // the file's type, it's a hard error unless we implement a way to auto-switch compressors.
+             // For now, we keep the existing strict check.
+            errno = EINVAL;
+            WARNING_PRINT("warning: compression type mismatch while opening archive\n");
+            goto no_allocator;
+        }
+
+        // 2. Block Size
+        if (c->block_size == 0) {
+             // Auto-detect
+             // We cast away constness because compio_archive stores a local copy of config,
+             // and we need to update that copy to reflect the file's reality.
+             const_cast<compio_config&>(archive->config).block_size = hdr.block_size;
+        } else if (hdr.block_size != static_cast<uint32_t>(c->block_size)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: block_size mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.block_size, c->block_size);
+            goto no_allocator;
+        }
+
+        // 3. B-Tree Degree
+        if (c->b_tree_degree == 0) {
+             // Auto-detect: adopt the degree from the file and update both the archive
+             // config and the local config pointer used later in this function.
+             const_cast<compio_config&>(archive->config).b_tree_degree = hdr.b_tree_degree;
+             const_cast<compio_config*>(c)->b_tree_degree = static_cast<int>(hdr.b_tree_degree);
+        } else if (hdr.b_tree_degree != static_cast<uint32_t>(c->b_tree_degree)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: b_tree_degree mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.b_tree_degree, c->b_tree_degree);
+            goto no_allocator;
+        }
+
+        // 4. Max Files
+        if (c->max_files == 0) {
+             const_cast<compio_config&>(archive->config).max_files = hdr.ftable.max_files;
+        } else if (hdr.ftable.max_files != static_cast<uint32_t>(c->max_files)) {
+            errno = EINVAL;
+            WARNING_PRINT("warning: max_files mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.ftable.max_files, c->max_files);
+            goto no_allocator;
+        }
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
@@ -264,7 +325,8 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
         file->cursor = 0;
 
     file->archive = archive;
-    strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE);
+    strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE - 1);
+    file->name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
 
     file->hash = fnv1a(name);
 
@@ -470,7 +532,7 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     }
 
     file->cursor = new_cursor;
-    DEBUG_PRINT("\ncompio_seek(new_cursor=%ld)\n", new_cursor);
+    DEBUG_PRINT("\ncompio_seek(new_cursor=%" PRId64 ")\n", new_cursor);
     return 0;
 }
 
@@ -489,7 +551,7 @@ static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree
 
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
-    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%lu:\n", file->hash);
+    DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%" PRIu64 ":\n", file->hash);
     auto file_range = index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
     if (!allow_empty) {
         assert(!file_range.empty());
@@ -756,7 +818,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_insert(cursor=%lu, size=%lu)\n", file->cursor, size);
+    DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
 
     if (!file || !file->archive) {
         return 0;
@@ -912,7 +974,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     block_reader->enable_temporary_index();
     for (const auto &[key, val] : range) {
-        DEBUG_PRINT("[CE]reading block ({%lu,%lu}-{%lu,%lu})\n", key.hash, key.pos, val.addr,
+        DEBUG_PRINT("[CE]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                     val.size);
         const auto b = block_reader->read_block(val.addr, key);
         if (!b) {
@@ -933,12 +995,12 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         const uint64_t erase_start_offset = block_erase_start - block_start;
         const uint64_t erase_end_offset = block_erase_end - block_start;
 
-        DEBUG_PRINT("[CE]block=(%lu, %lu), erase=(%lu, %lu) -> block_erase=(%lu, %lu)\n",
+        DEBUG_PRINT("[CE]block=(%" PRIu64 ", %" PRIu64 "), erase=(%" PRIu64 ", %" PRIu64 ") -> block_erase=(%" PRIu64 ", %" PRIu64 ")\n",
                     block_start, block_end, erase_start, erase_end, block_erase_start,
                     block_erase_end);
         const uint64_t left_size = erase_start_offset;
         const uint64_t right_size = block_end - block_erase_end;
-        DEBUG_PRINT("[CE]---left_size=%lu, erase_size=%lu, right_size=%lu\n", left_size,
+        DEBUG_PRINT("[CE]---left_size=%" PRIu64 ", erase_size=%" PRIu64 ", right_size=%" PRIu64 "\n", left_size,
                     block_erase_size, right_size);
 
         // TODO: merge with adjacent block if new size is small
@@ -946,16 +1008,16 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         if (block_erase_size < b->size()) {
             // keep block in btree, but update key.pos and val.size
             if (right_size > 0) {
-                DEBUG_PRINT("[CE]---copying %lu bytes from offset=%lu to offset=%lu\n", right_size,
+                DEBUG_PRINT("[CE]---copying %" PRIu64 " bytes from offset=%" PRIu64 " to offset=%" PRIu64 "\n", right_size,
                             erase_end_offset, erase_start_offset);
                 std::copy(b->data() + erase_end_offset, b->data() + b->size(),
                           b->data() + erase_start_offset);
             }
-            DEBUG_PRINT("[CE]---shrinking from size=%lu to size=%lu\n", b->size(),
+            DEBUG_PRINT("[CE]---shrinking from size=%" PRIu64 " to size=%" PRIu64 "\n", b->size(),
                         b->size() - block_erase_size);
             b->shrink(b->size() - block_erase_size);
             if (left_size == 0) {
-                DEBUG_PRINT("[CE]---moving by offset=%lu\n", block_erase_size);
+                DEBUG_PRINT("[CE]---moving by offset=%" PRIu64 "\n", block_erase_size);
                 archive->index->add_to_range(block_erase_size, key, key);
                 if (!block_reader->cache_contains(key)) {
                     // if out block not in cache (if cache_size=0), then block_reader->add_to_range

@@ -1,7 +1,9 @@
+#define __STDC_FORMAT_MACROS
 #include "compio/btree.hpp"
 
 #include <algorithm>
 #include <cassert>
+#include <cinttypes>
 #include <limits>
 #include <optional>
 
@@ -202,18 +204,18 @@ void btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
 std::vector<std::pair<tree_key, tree_val>> btree::get_range(const tree_key &key_min,
                                                             const tree_key &key_max) {
     if (key_max <= key_min) {
-        WARNING_PRINT("warning: btree::get_range received invalid range bounds (key_min={%lu,%lu} "
-                      ">= {%lu,%lu}=key_max)\n",
+        WARNING_PRINT("warning: btree::get_range received invalid range bounds (key_min={%" PRIu64 ",%" PRIu64 "} "
+                      ">= {%" PRIu64 ",%" PRIu64 "}=key_max)\n",
                       key_min.hash, key_min.pos, key_max.hash, key_max.pos);
         return {};
     }
     std::vector<std::pair<tree_key, tree_val>> result;
     auto root = read_root();
     _get_range(root, key_min, key_max, result);
-    DEBUG_PRINT("[BTREE]: get_range(key_min={...,%lu},key_max={...,%lu}) ->\n", key_min.pos,
+    DEBUG_PRINT("[BTREE]: get_range(key_min={...,%" PRIu64 "},key_max={...,%" PRIu64 "}) ->\n", key_min.pos,
                 key_max.pos);
     for (const auto &[key, val] : result) {
-        DEBUG_PRINT("\t{...,%lu} -> {%lu,%lu}\n", key.pos, val.addr, val.size);
+        DEBUG_PRINT("\t{...,%" PRIu64 "} -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
     }
     return result;
 }
@@ -244,7 +246,7 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
 }
 
 void btree::update(const tree_key &key, const tree_val &new_value) {
-    DEBUG_PRINT("[BTREE]: update(key={...,%lu},new_value={%lu,%lu})\n", key.pos, new_value.addr,
+    DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
     auto root = read_root();
     if (!_update(root, key, new_value)) {
@@ -262,12 +264,12 @@ std::optional<tree_val> btree::get(const tree_key &key) {
 
         if (idx < RO(current)->num_keys && RO(current)->keys[idx] == key) {
             const auto val = RO(current)->values[idx];
-            DEBUG_PRINT("[BTREE]: get(key={...,%lu}) -> {%lu,%lu}\n", key.pos, val.addr, val.size);
+            DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
             return val;
         } else if (!RO(current)->is_leaf) {
             current = read_child(current, idx);
         } else {
-            DEBUG_PRINT("[BTREE]: get(key={...,%lu}) -> nullopt\n", key.pos);
+            DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
             return std::nullopt;
         }
     }
@@ -279,15 +281,15 @@ std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &ke
     assert(range.size() < 2);
     if (!range.empty()) {
         if (key == range[0].first) {
-            DEBUG_PRINT("[BTREE]: get_block(key={...,%lu}) -> nullopt\n", key.pos);
+            DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
             return std::nullopt;
         } else {
-            DEBUG_PRINT("[BTREE]: get_block(key={...,%lu}) -> (key={...,%lu},val={%lu,%lu})\n",
+            DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> (key={...,%" PRIu64 "},val={%" PRIu64 ",%" PRIu64 "})\n",
                         key.pos, range[0].first.pos, range[0].second.addr, range[0].second.size);
             return range[0];
         }
     } else {
-        DEBUG_PRINT("[BTREE]: get_block(key={...,%lu}) -> nullopt\n", key.pos);
+        DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
         return std::nullopt;
     }
 }
@@ -328,11 +330,11 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
 }
 
 void btree::add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max) {
-    DEBUG_PRINT("[BTREE]: add_to_range(addition=%ld,key_min={...,%lu},key_max={...,%lu})\n",
+    DEBUG_PRINT("[BTREE]: add_to_range(addition=%" PRId64 ",key_min={...,%" PRIu64 "},key_max={...,%" PRIu64 "})\n",
                 addition, key_min.pos, key_max.pos);
     if (key_min > key_max) {
         WARNING_PRINT("warning: passed invalid range into btree::add_pos_to_keys_in_range "
-                      "(key_min={...,%lu} > {...,%lu}=key_max)\n",
+                      "(key_min={...,%" PRIu64 "} > {...,%" PRIu64 "}=key_max)\n",
                       key_min.pos, key_max.pos);
         return;
     }
@@ -352,7 +354,7 @@ void btree::_print(shared_node node, uint64_t depth) {
             auto val = node->values[i];
             UNUSED(key);
             UNUSED(val);
-            DEBUG_PRINT("%s{%lu, %lu} -> {%lu, %lu}\n", std::string(depth * 2, ' ').c_str(),
+            DEBUG_PRINT("%s{%" PRIu64 ", %" PRIu64 "} -> {%" PRIu64 ", %" PRIu64 "}\n", std::string(depth * 2, ' ').c_str(),
                         key.hash, key.pos, val.addr, val.size);
         }
     }
@@ -396,7 +398,7 @@ std::vector<uint64_t> btree::collect_node_addresses(uint64_t &node_size) {
 }
 
 void btree::split_child(shared_node &parent, shared_node &child, const uint64_t idx) {
-    DEBUG_PRINT("[BTREE]: split_child(parent.addr=%ld, child.addr=%ld, idx=%ld)\n", parent.addr(), child.addr(), idx);
+    DEBUG_PRINT("[BTREE]: split_child(parent.addr=%" PRIu64 ", child.addr=%" PRIu64 ", idx=%zu)\n", parent.addr(), child.addr(), idx);
     auto new_node = create_node();
 
     new_node->is_leaf = child->is_leaf;
@@ -570,7 +572,7 @@ void btree::free_node(const shared_node &node) {
 shared_node btree::create_node() { return reader.create_node(allocate_node()); }
 
 shared_node btree::read_node(uint64_t addr) {
-    DEBUG_PRINT("[BTREE][read_node]: addr=%lu\n", addr);
+    DEBUG_PRINT("[BTREE][read_node]: addr=%" PRIu64 "\n", addr);
     auto node = reader.read_node(addr);
     RO(node)->validate();
     return node;

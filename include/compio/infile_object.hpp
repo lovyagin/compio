@@ -141,6 +141,12 @@ private:
         uint64_t addr; /**< File address where object is stored */
         std::mutex *io_mutex;
 
+        // NOTE: We use std::atomic<int> for ref_count and fetch_add/fetch_sub
+        // for thread safety. The destructor is only called when fetch_sub(1)
+        // returns 1 (meaning the count dropped from 1 to 0).
+        // This prevents double-delete race conditions.
+
+
         /**
          * @brief Construct storage with existing data
          *
