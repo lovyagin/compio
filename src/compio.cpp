@@ -174,11 +174,28 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
     if (is_new_file) {
         archive->header->compression_type = c->compressor.compression_type;
+        archive->header->block_size = c->block_size;
+        archive->header->b_tree_degree = c->b_tree_degree;
     } else if (readonly(archive->header, header)->compression_type !=
                c->compressor.compression_type) {
         // compression type mismatch
         errno = EINVAL;
         WARNING_PRINT("warning: compression type mismatch while opening archive\n");
+        goto no_allocator;
+    } else if (readonly(archive->header, header)->block_size != static_cast<uint32_t>(c->block_size)) {
+        errno = EINVAL;
+        WARNING_PRINT("warning: block_size mismatch while opening archive (file=%u, config=%d)\n",
+                      readonly(archive->header, header)->block_size, c->block_size);
+        goto no_allocator;
+    } else if (readonly(archive->header, header)->b_tree_degree != static_cast<uint32_t>(c->b_tree_degree)) {
+        errno = EINVAL;
+        WARNING_PRINT("warning: b_tree_degree mismatch while opening archive (file=%u, config=%d)\n",
+                      readonly(archive->header, header)->b_tree_degree, c->b_tree_degree);
+        goto no_allocator;
+    } else if (readonly(archive->header, header)->ftable.max_files != static_cast<uint32_t>(c->max_files)) {
+        errno = EINVAL;
+        WARNING_PRINT("warning: max_files mismatch while opening archive (file=%u, config=%d)\n",
+                      readonly(archive->header, header)->ftable.max_files, c->max_files);
         goto no_allocator;
     }
 

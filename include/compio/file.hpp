@@ -55,6 +55,8 @@ struct header : public infile_object {
     uint64_t allocator_state_offset;
     uint64_t allocator_state_size;
     uint32_t compression_type; /**< Type of compression algorithm used */
+    uint32_t block_size;       /**< Size of data blocks */
+    uint32_t b_tree_degree;    /**< Degree of B-Tree index */
 
     /**
      * @brief Construct default header

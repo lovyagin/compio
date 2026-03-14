@@ -25,7 +25,9 @@ header::header()
       ftable(),
       allocator_state_offset(0),
       allocator_state_size(0),
-      compression_type(COMPIO_COMPRESS_ZLIB) {
+      compression_type(COMPIO_COMPRESS_ZLIB),
+      block_size(0),
+      b_tree_degree(0) {
     file_size = disk_size();
 }
 
@@ -36,15 +38,18 @@ header::header(uint32_t max_files)
       ftable(max_files),
       allocator_state_offset(0),
       allocator_state_size(0),
-      compression_type(COMPIO_COMPRESS_ZLIB) {
+      compression_type(COMPIO_COMPRESS_ZLIB),
+      block_size(0),
+      b_tree_degree(0) {
     file_size = disk_size();
 }
 
 uint64_t header::disk_size() const {
     // magic_number(4) + index_root(8) + file_size(8) + allocator_state_offset(8)
-    // + allocator_state_size(8) + compression_type(4) + max_files(4)
+    // + allocator_state_size(8) + compression_type(4) + block_size(4) + b_tree_degree(4)
+    // + max_files(4)
     // + n_files(8) + files[max_files] * (32 + 8)
-    return 4 + 8 + 8 + 8 + 8 + 4 + 4 + 8 +
+    return 4 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
            static_cast<uint64_t>(ftable.max_files) * (COMPIO_FNAME_MAX_SIZE + 8);
 }
 
@@ -65,6 +70,8 @@ void header::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(allocator_state_offset, file);
     lendian_fread_member(allocator_state_size, file);
     lendian_fread_member(compression_type, file);
+    lendian_fread_member(block_size, file);
+    lendian_fread_member(b_tree_degree, file);
     lendian_fread_member(ftable.max_files, file);
     if (ftable.max_files == 0 || ftable.max_files > COMPIO_MAX_FILES_LIMIT) {
         WARNING_PRINT("warning: header max_files=%u is out of valid range [1, %u]\n",
@@ -94,6 +101,8 @@ void header::write_to(FILE *file, uint64_t addr) const {
     lendian_fwrite_member(allocator_state_offset, file);
     lendian_fwrite_member(allocator_state_size, file);
     lendian_fwrite_member(compression_type, file);
+    lendian_fwrite_member(block_size, file);
+    lendian_fwrite_member(b_tree_degree, file);
     lendian_fwrite_member(ftable.max_files, file);
     lendian_fwrite_member(ftable.n_files, file);
     for (uint32_t i = 0; i < ftable.max_files; ++i) {
