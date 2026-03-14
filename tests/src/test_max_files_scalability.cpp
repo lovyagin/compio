@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdio>
+#include <cstdint>
 #include "compio/compio_file.hpp"
 
 // We need to define Test class
@@ -40,8 +41,8 @@ TEST_F(ScalabilityTest, HandleLargeFileCount) {
         ASSERT_NE(file, nullptr) << "Failed to open inner file " << name;
         
         std::string content = "Content of " + name;
-        ssize_t written = compio_write(content.c_str(), content.size(), file);
-        EXPECT_EQ(written, content.size());
+        int64_t written = compio_write(content.c_str(), content.size(), file);
+        EXPECT_EQ(written, static_cast<int64_t>(content.size()));
         
         compio_close_file(file);
         filenames.push_back(name);
@@ -66,7 +67,7 @@ TEST_F(ScalabilityTest, HandleLargeFileCount) {
         ASSERT_NE(file, nullptr) << "Failed to open inner file " << name;
         
         char buffer[100];
-        ssize_t bytes_read = compio_read(buffer, sizeof(buffer), file);
+        int64_t bytes_read = compio_read(buffer, sizeof(buffer), file);
         if (bytes_read >= 0) {
             buffer[bytes_read] = '\0';
             std::string expected = "Content of " + name;
