@@ -26,7 +26,7 @@ TEST_F(MaxFilesTest, DiskSizeReflectsMaxFiles) {
     ASSERT_NE(ar, nullptr);
 
     const uint64_t expected =
-        4 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
+        4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
         static_cast<uint64_t>(128) * (COMPIO_FNAME_MAX_SIZE + 8);
     EXPECT_EQ(ar->header->disk_size(), expected);
     EXPECT_EQ(ar->header->ftable.max_files, 128u);
@@ -66,7 +66,7 @@ TEST_F(MaxFilesTest, MaxFilesPersistsAcrossReopen) {
             << "max_files should be read back from disk unchanged";
 
         const uint64_t expected =
-            4 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
+            4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
             static_cast<uint64_t>(custom_max) * (COMPIO_FNAME_MAX_SIZE + 8);
         EXPECT_EQ(ar->header->disk_size(), expected);
 
