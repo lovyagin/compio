@@ -2023,7 +2023,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             // partial merge from bigger block into the smaller one
             const uint64_t new_left_size = (left_size + right_size) / 2;
             const uint64_t new_right_size = left_size + right_size - new_left_size;
-            const uint64_t gap_size = new_right_size - right_size;
+            const uint64_t gap_size = (left_size > right_size) ? (left_size - new_left_size)
+                                                               : (right_size - new_right_size);
             if (left_size > right_size) {
                 DEBUG_PRINT("[CE]---postmerge partial from left to right\n");
                 right_b->grow(new_right_size);
