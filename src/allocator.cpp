@@ -658,9 +658,12 @@ block_allocator::block_allocator(compio_archive *archive)
     // The header fields allocator_state_offset and allocator_state_size are initialized to 0
     // and will be set properly when save_state() is called
 
-    // Ensure we have valid initial file size
-    if (readonly(archive_->header, header)->file_size < readonly(archive_->header, header)->disk_size()) {
-        archive_->header->file_size = archive_->header->disk_size();
+    // Ensure we reserve space for double-buffered header
+    if (!(archive_->mode_b & mode_bit::r)) {
+        uint64_t reserved_size = readonly(archive_->header, header)->reserved_size();
+        if (readonly(archive_->header, header)->file_size < reserved_size) {
+            archive_->header->file_size = reserved_size;
+        }
     }
 }
 
@@ -849,7 +852,7 @@ void block_allocator::perform_defragmentation() {
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
 
-    uint64_t write_pos = readonly(archive_->header, header)->disk_size();
+    uint64_t write_pos = readonly(archive_->header, header)->reserved_size();
 
     // Collect final positions of placed storage blocks for gap computation.
     std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
@@ -1013,7 +1016,7 @@ void block_allocator::perform_defragmentation() {
     }
     std::sort(occupied.begin(), occupied.end());
 
-    uint64_t scan = readonly(archive_->header, header)->disk_size();
+    uint64_t scan = readonly(archive_->header, header)->disk_size() * 2;
     for (auto &[occ_start, occ_size] : occupied) {
         if (occ_start > scan) {
             blocks_manager_.add_free_block(scan, occ_start - scan);

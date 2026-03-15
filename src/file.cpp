@@ -27,7 +27,9 @@ header::header()
       allocator_state_size(0),
       compression_type(COMPIO_COMPRESS_ZLIB),
       block_size(0),
-      b_tree_degree(0) {
+      b_tree_degree(0),
+      sequence_id(0) {
+    memset(checksum, 0, sizeof(checksum));
     file_size = disk_size();
 }
 
@@ -40,31 +42,64 @@ header::header(uint32_t max_files)
       allocator_state_size(0),
       compression_type(COMPIO_COMPRESS_ZLIB),
       block_size(0),
-      b_tree_degree(0) {
+      b_tree_degree(0),
+      sequence_id(0) {
+    memset(checksum, 0, sizeof(checksum));
     file_size = disk_size();
 }
 
 uint64_t header::disk_size() const {
-    // magic_number(4) + index_root(8) + file_size(8) + allocator_state_offset(8)
-    // + allocator_state_size(8) + compression_type(4) + block_size(4) + b_tree_degree(4)
-    // + max_files(4)
-    // + n_files(8) + files[max_files] * (32 + 8)
-    return 4 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
+    // magic(4) + checksum(32) + sequence_id(8) + index_root(8) + file_size(8) 
+    // + allocator_state_offset(8) + allocator_state_size(8) + compression_type(4) 
+    // + block_size(4) + b_tree_degree(4) + max_files(4) + n_files(8)
+    // + files[max_files] * (32 + 8)
+    return 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
            static_cast<uint64_t>(ftable.max_files) * (COMPIO_FNAME_MAX_SIZE + 8);
 }
 
-void header::read_from(FILE *file, uint64_t addr) {
+void header::compute_checksum(uint8_t *out_hash) const {
+    SHA256 ctx;
+    // Digest fields in order, SKIPPING the checksum field itself
+    ctx.update(reinterpret_cast<const uint8_t*>(&magic_number), sizeof(magic_number));
+    // Skip checksum (32 bytes)
+    ctx.update(reinterpret_cast<const uint8_t*>(&sequence_id), sizeof(sequence_id));
+    ctx.update(reinterpret_cast<const uint8_t*>(&index_root), sizeof(index_root));
+    ctx.update(reinterpret_cast<const uint8_t*>(&file_size), sizeof(file_size));
+    ctx.update(reinterpret_cast<const uint8_t*>(&allocator_state_offset), sizeof(allocator_state_offset));
+    ctx.update(reinterpret_cast<const uint8_t*>(&allocator_state_size), sizeof(allocator_state_size));
+    ctx.update(reinterpret_cast<const uint8_t*>(&compression_type), sizeof(compression_type));
+    ctx.update(reinterpret_cast<const uint8_t*>(&block_size), sizeof(block_size));
+    ctx.update(reinterpret_cast<const uint8_t*>(&b_tree_degree), sizeof(b_tree_degree));
+    ctx.update(reinterpret_cast<const uint8_t*>(&ftable.max_files), sizeof(ftable.max_files));
+    ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
+    
+    for (uint32_t i = 0; i < ftable.max_files; ++i) {
+        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].name), sizeof(ftable.files[i].name));
+        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].size), sizeof(ftable.files[i].size));
+    }
+    
+    ctx.finalize(out_hash);
+}
+
+bool header::load_and_validate(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][header]addr=%" PRIu64 "\n", addr);
-    if (fseek64(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET)) {
         DEBUG_PRINT("warning: fseek failed\n");
+        return false;
+    }
+        
     lendian_fread_member(magic_number, file);
     if (magic_number != COMPIO_MAGIC_NUMBER) {
         WARNING_PRINT("warning: header magic_number does not match "
                       "(expected %d, got %d). "
                       "The archive may have been created with an incompatible format version.\n",
                       COMPIO_MAGIC_NUMBER, magic_number);
-        assert(false);
+        return false;
     }
+    
+    lendian_fread(checksum, 1, sizeof(checksum), file);
+    lendian_fread_member(sequence_id, file);
+    
     lendian_fread_member(index_root, file);
     lendian_fread_member(file_size, file);
     lendian_fread_member(allocator_state_offset, file);
@@ -73,29 +108,60 @@ void header::read_from(FILE *file, uint64_t addr) {
     lendian_fread_member(block_size, file);
     lendian_fread_member(b_tree_degree, file);
     lendian_fread_member(ftable.max_files, file);
+    
     if (ftable.max_files == 0 || ftable.max_files > COMPIO_MAX_FILES_LIMIT) {
         WARNING_PRINT("warning: header max_files=%u is out of valid range [1, %u]\n",
                       ftable.max_files, COMPIO_MAX_FILES_LIMIT);
-        assert(false);
+        return false;
     }
+    
     ftable.files.resize(ftable.max_files);
     lendian_fread_member(ftable.n_files, file);
+    
     if (ftable.n_files > ftable.max_files) {
-        WARNING_PRINT("warning: header n_files=%" PRIu64 " exceeds max_files=%u\n",
-                      ftable.n_files, ftable.max_files);
-        assert(false);
+        WARNING_PRINT("warning: header n_files=%llu exceeds max_files=%u\n",
+                      (unsigned long long)ftable.n_files, ftable.max_files);
+        return false;
     }
+    
     for (uint32_t i = 0; i < ftable.max_files; ++i) {
         lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
         lendian_fread_member(ftable.files[i].size, file);
+    }
+    
+    // Validate Checksum
+    uint8_t computed[32];
+    compute_checksum(computed);
+    if (memcmp(checksum, computed, 32) != 0) {
+         WARNING_PRINT("warning: header checksum mismatch! Archive header may be corrupted.\n");
+         return false;
+    }
+    return true;
+}
+
+void header::read_from(FILE *file, uint64_t addr) {
+    if (!load_and_validate(file, addr)) {
+        // Assert on failure as per original contract, but now we have validated it explicitly.
+        // In recovery paths, we will use load_and_validate directly.
+        assert(false);
     }
 }
 
 void header::write_to(FILE *file, uint64_t addr) const {
     DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
+    
+    // Auto-update checksum before writing
+    // We cast away const because we want the on-disk structure to be correct, 
+    // and updating the checksum member is logically part of the serialization process.
+    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
+
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
+        
     lendian_fwrite_member(magic_number, file);
+    lendian_fwrite(checksum, 1, sizeof(checksum), file);
+    lendian_fwrite_member(sequence_id, file);
+    
     lendian_fwrite_member(index_root, file);
     lendian_fwrite_member(file_size, file);
     lendian_fwrite_member(allocator_state_offset, file);
@@ -105,6 +171,7 @@ void header::write_to(FILE *file, uint64_t addr) const {
     lendian_fwrite_member(b_tree_degree, file);
     lendian_fwrite_member(ftable.max_files, file);
     lendian_fwrite_member(ftable.n_files, file);
+    
     for (uint32_t i = 0; i < ftable.max_files; ++i) {
         lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
         lendian_fwrite_member(ftable.files[i].size, file);
@@ -230,7 +297,8 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     // Cap block size to prevent OOM on corrupted files
     static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB
     if (size > MAX_BLOCK_SIZE) {
-        WARNING_PRINT("warning: storage_block size %" PRIu64 " exceeds limit at addr=%" PRIu64 "\n", size, addr);
+        WARNING_PRINT("warning: storage_block size %llu exceeds limit at addr=%llu\n", 
+                      (unsigned long long)size, (unsigned long long)addr);
         size = 0;
         return;
     }
@@ -242,7 +310,7 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread(data.get(), 1, size, file);
 
     if (!verify_checksum()) {
-        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%" PRIu64 "\n", addr);
+        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%llu\n", (unsigned long long)addr);
     }
 }
 

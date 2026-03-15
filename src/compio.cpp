@@ -44,27 +44,79 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     }
 
     header h;
-    h.read_from(file, 0);
+    if (!h.load_and_validate(file, 0)) {
+        // If slot 0 is invalid, try slot 1 if possible.
+        // We can't reliably know offset of slot 1 without valid slot 0 (because disk_size depends on max_files).
+        // However, we can try to read max_files from slot 0 even if checksum fails?
+        // Or assume default max_files?
+        // For now, fail gracefully instead of asserting.
+        WARNING_PRINT("warning: compio_get_compression_type: header at slot 0 is invalid/corrupted.\n");
+        fclose(file);
+        return -3; // Corruption error
+    }
     *t = (compio_compression_type)h.compression_type;
 
     fclose(file);
     return 0;
 }
 
+static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
+    if (is_file_empty(file)) {
+         out_slot = 0;
+         return smart_infile_object<header>(file, 0, new compio::header(), io_mutex);
+    }
+
+    header hA;
+    bool validA = hA.load_and_validate(file, 0);
+    
+    // Calculate where B should be based on A (if A is valid)
+    uint64_t offsetB = hA.disk_size(); 
+    header hB;
+    bool validB = hB.load_and_validate(file, offsetB);
+    
+    int chosen_slot = 0;
+    header* chosen_h = nullptr;
+    
+    if (validA && validB) {
+        if (hA.sequence_id >= hB.sequence_id) {
+            chosen_slot = 0;
+            chosen_h = new compio::header(hA);
+        } else {
+            chosen_slot = 1;
+            chosen_h = new compio::header(hB);
+        }
+    } else if (validA) {
+        chosen_slot = 0;
+        chosen_h = new compio::header(hA);
+    } else if (validB) {
+        chosen_slot = 1;
+        chosen_h = new compio::header(hB);
+    } else {
+        WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Unable to open archive.\n");
+        throw std::runtime_error("Both archive headers are corrupted");
+    }
+    
+    out_slot = chosen_slot;
+    uint64_t chosen_addr = (chosen_slot == 0) ? 0 : offsetB;
+    
+    // Return smart object marked as 'loaded_from_disk' (clean)
+    return smart_infile_object<compio::header>(file, chosen_addr, chosen_h, io_mutex, true);
+}
+
 compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
-    : file(file),
+    : current_header_slot(is_file_empty(file) ? 1 : 0),
+      file(file),
       config(*config),
+      header(is_file_empty(file)
+                 ? smart_infile_object<compio::header>(file, 0,
+                                                       new compio::header(static_cast<uint32_t>(config->max_files)),
+                                                       &io_mutex)
+                 : load_header_double_buffered(file, &io_mutex, current_header_slot)),
       index(nullptr),
       block_reader(nullptr),
       allocator(nullptr),
       mode_b(mode_b),
       open_files_count(0) {
-    if (is_file_empty(file))
-        header = smart_infile_object<compio::header>(file, 0,
-                     new compio::header(static_cast<uint32_t>(config->max_files)), &io_mutex);
-    else
-        header = smart_infile_object<compio::header>(file, 0, &io_mutex);
-
     // btree constructor is called in compio_open_archive to break
     // the dependence cycle (archive -> index -> allocator -> archive)
     //
@@ -127,14 +179,14 @@ static bool validate_config(const compio_config *c, bool allow_zeros = false) {
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
     if (!validate_config(c, true)) {
         errno = EINVAL;
-        goto end;
+        return NULL;
     }
 
     uint8_t mode_b;
     mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
-        goto end;
+        return NULL;
     }
 
     // if w+ passed as mode, we have to clear file contents (using w+)
@@ -151,11 +203,19 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     FILE *file;
     file = fopen(fp, archive_open_mode);
     if (file == nullptr) {
-        goto end;
+        return NULL;
     }
 
-    compio_archive *archive;
-    archive = new compio_archive(file, mode_b, c);
+    compio_archive *archive = nullptr;
+    try {
+        archive = new compio_archive(file, mode_b, c);
+    } catch (const std::exception& e) {
+        WARNING_PRINT("warning: failed to initialize compio_archive: %s\n", e.what());
+        fclose(file);
+        errno = EINVAL;
+        return NULL;
+    }
+
     if (!archive) {
         WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
         goto no_archive;
@@ -282,7 +342,6 @@ no_allocator:
     delete archive;
 no_archive:
     fclose(file);
-end:
     return NULL;
 }
 
@@ -444,6 +503,39 @@ int compio_defragment(compio_archive *archive) {
     return COMPIO_SUCCESS;
 }
 
+static void flush_header_double_buffered(compio_archive *archive) {
+    if (!archive || !archive->header) return;
+
+    // Double-buffered Header Write
+    if (!(archive->mode_b & mode_bit::r)) {
+        int target_slot = 1 - archive->current_header_slot;
+        uint64_t target_addr = (target_slot == 0) ? 0 : archive->header->reserved_size() / 2;
+
+        // Create new header data based on current in-memory header
+        compio::header* new_h_data = new compio::header(*archive->header);
+        new_h_data->sequence_id++;
+        new_h_data->compute_checksum(new_h_data->checksum); // Ensure checksum is fresh
+
+        // Write to the target (alternate) slot
+        smart_infile_object<compio::header> new_header_obj(archive->file, target_addr, new_h_data, &archive->io_mutex, true);
+        new_header_obj.write();
+
+        // Switch internal state to point to the new slot
+        archive->current_header_slot = target_slot;
+        
+        // Mark old header object as unmodified so it doesn't write on destruction
+        archive->header.unmodify();
+        
+        // Move new header object into place
+        archive->header = std::move(new_header_obj);
+
+        // Update allocator's file_size pointer since header object moved
+        if (archive->allocator) {
+             archive->allocator->update_file_size_ptr(&archive->header->file_size);
+        }
+    }
+}
+
 int compio_close_file(compio_file *file) {
     if (!file || !file->archive) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
@@ -476,6 +568,7 @@ int compio_close_archive(compio_archive *archive) {
 
     // 3) now safe to delete block_reader
     delete archive->block_reader;
+    archive->block_reader = nullptr;
 
     // 4) save allocator state to the end of the file, if not read-only mode
     if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
@@ -487,15 +580,20 @@ int compio_close_archive(compio_archive *archive) {
 
     // 5) delete allocator
     delete archive->allocator;
+    archive->allocator = nullptr;
 
     // 6) delete btree (it actually depends on allocator, but allocator also depends on index,
     // however they don't call each other in their destructors, so their destruction order does not
     // matter)
     delete archive->index;
+    archive->index = nullptr;
 
-    // 7) flush header
-    // not calling `delete header`, because it's not a pointer created with new,
-    // but a smart_infile_object, which will destroy and flush it's internal pointer
+    // 7) flush header safely using double-buffering
+    // This ensures that the final state (including allocator updates) is written atomically to the alternate slot.
+    // If we crash during this write, the previous valid header (in the other slot) is preserved.
+    flush_header_double_buffered(archive);
+
+    // Destroy the header object. It is now clean (unmodified) because flush_header_double_buffered just wrote it.
     archive->header = {};
 
     // 8) finally we close the file (block_reader, allocator and index are all deleted, so no
@@ -1052,5 +1150,18 @@ void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     if (archive->block_reader) archive->block_reader->clear_cache();
+    if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index) archive->index->clear_cache();
+
+    // Save allocator state (updates header fields)
+    if (archive->allocator && !(archive->mode_b & mode_bit::r)) {
+         archive->allocator->save_state(archive);
+    }
+    
+    // Double-buffered Header Write
+    flush_header_double_buffered(archive);
+
+    if (fflush(archive->file)) {
+        WARNING_PRINT("warning: fflush failed\n");
+    }
 }

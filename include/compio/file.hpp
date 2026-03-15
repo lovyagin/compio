@@ -14,6 +14,7 @@
 
 #include "compio/infile_object.hpp"
 #include "compio/tree_types.hpp"
+#include "compio/sha256.hpp"
 #include "compio.h"
 
 namespace compio {
@@ -57,6 +58,8 @@ struct header : public infile_object {
     uint32_t compression_type; /**< Type of compression algorithm used */
     uint32_t block_size;       /**< Size of data blocks */
     uint32_t b_tree_degree;    /**< Degree of B-Tree index */
+    uint64_t sequence_id;      /**< Monotonic counter for double-buffering updates */
+    uint8_t checksum[32];      /**< SHA-256 checksum of the header (excluding this field) */
 
     /**
      * @brief Construct default header
@@ -70,6 +73,18 @@ struct header : public infile_object {
 
     /** @brief On-disk size of this header (depends on ftable.max_files) */
     uint64_t disk_size() const;
+
+    /** @brief Size reserved for headers (double buffering implies 2x disk_size) */
+    uint64_t reserved_size() const { return disk_size() * 2; }
+
+    /** @brief Calculate SHA-256 checksum of the header content */
+    void compute_checksum(uint8_t *out_hash) const;
+
+    /** 
+     * @brief Read header and validate checksum without asserting
+     * @return true if valid, false if corrupted
+     */
+    bool load_and_validate(FILE *file, uint64_t addr);
 };
 
 /**

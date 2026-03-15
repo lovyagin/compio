@@ -40,7 +40,7 @@ protected:
 TEST_F(BoundaryConditionTest, AllocationAtFileStart) {
     // Test allocation immediately after header
     uint64_t offset = allocator->allocate(100);
-    EXPECT_EQ(offset, archive->header->disk_size() + INDEX_NODE_SIZE(config.b_tree_degree))
+    EXPECT_EQ(offset, archive->header->disk_size() * 2 + INDEX_NODE_SIZE(config.b_tree_degree))
         << "First allocation should be right after header and btree root node";
 }
 

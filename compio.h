@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#define COMPIO_MAGIC_NUMBER 27110655 /**< Bumped in format v2 (variable-size header) */
+#define COMPIO_MAGIC_NUMBER 27110661 /**< Bumped in format v4 (double-buffered header with strict reservation) */
 
 /**
  * @brief Compression algorithm types

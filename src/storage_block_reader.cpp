@@ -249,9 +249,9 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
                 (uint64_t)size, (uint64_t)key.hash, (uint64_t)key.pos);
     auto b_cached = cache.get(key);
     if (b_cached.has_value()) {
-        WARNING_PRINT("warning: trying to create block with key (%" PRIu64 ", %" PRIu64 "), that "
+        WARNING_PRINT("warning: trying to create block with key (%llu, %llu), that "
                       "already exists in storage_block_reader.cache\n",
-                      (uint64_t)key.hash, (uint64_t)key.pos);
+                      (unsigned long long)key.hash, (unsigned long long)key.pos);
         return b_cached.value();
     }
     auto b = std::make_shared<block>(context, key, size, false);

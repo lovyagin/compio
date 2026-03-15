@@ -152,6 +152,12 @@ public:
     const uint64_t *get_file_size_ptr() const { return file_size_; }
 
     /**
+     * @brief Update pointer to file size reference
+     * @param file_size New pointer to file size
+     */
+    void update_file_size_ptr(const uint64_t *file_size) { file_size_ = file_size; }
+
+    /**
      * @brief Serialize manager state to buffer
      * @param buffer Vector to store serialized data
      * @return Size of serialized data
@@ -421,6 +427,12 @@ public:
      * @return True if load was successful
      */
     bool load_state(compio_archive *archive);
+
+    /**
+     * @brief Update pointer to file size reference (used when header is relocated/reloaded)
+     * @param file_size New pointer to file size
+     */
+    void update_file_size_ptr(const uint64_t *file_size) { blocks_manager_.update_file_size_ptr(file_size); }
 
 private:
     compio_archive *archive_;            /**< Associated archive */

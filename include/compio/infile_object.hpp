@@ -148,6 +148,27 @@ private:
 
 
         /**
+         * @brief Construct storage with existing data, optionally loaded from disk
+         *
+         * Creates a storage structure with pre-existing object data.
+         * The object is marked as modified unless explicitly stated otherwise.
+         *
+         * @param file File stream
+         * @param addr File address where object is stored
+         * @param data Pointer to existing object data
+         * @param io_mutex Mutex for I/O operations
+         * @param loaded_from_disk If true, object is considered clean (not modified)
+         */
+        storage(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex, bool loaded_from_disk)
+            : ref_count(1),
+              modified(!loaded_from_disk),
+              removed(false),
+              data(data),
+              file(file),
+              addr(addr),
+              io_mutex(io_mutex) {}
+
+        /**
          * @brief Construct storage with existing data
          *
          * Creates a storage structure with pre-existing object data.
@@ -236,6 +257,28 @@ public:
 
     /**
      * @brief Construct with existing object data
+     *
+     * Creates a smart_infile_object that takes ownership of existing object data
+     * and associates it with a file location.
+     *
+     * @param file File stream
+     * @param addr File address where object is stored
+     * @param data Pointer to existing object data (ownership is transferred)
+     */
+    /**
+     * @brief Construct smart object with pre-loaded data, optionally marked as clean
+     *
+     * @param file File stream
+     * @param addr File address where object is stored
+     * @param data Pointer to pre-loaded object data (ownership is transferred)
+     * @param io_mutex Mutex for I/O operations
+     * @param loaded_from_disk If true, object is considered clean
+     */
+    smart_infile_object(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex, bool loaded_from_disk) 
+        : S(new storage(file, addr, data, io_mutex, loaded_from_disk)) {}
+
+    /**
+     * @brief Construct by taking ownership of existing data
      *
      * Creates a smart_infile_object that takes ownership of existing object data
      * and associates it with a file location.

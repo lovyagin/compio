@@ -21,6 +21,7 @@ struct compio_archive {
     std::mutex header_mutex;
     std::mutex allocator_mutex;
 
+    int current_header_slot; // 0 for A (offset 0), 1 for B (offset disk_size)
     FILE *file;
     const compio_config config;
     smart_infile_object<compio::header> header;
