@@ -449,6 +449,23 @@ TEST_P(InsertEraseTest, MultiBlockFileErase) {
     VerifyFileContent(expected);
 }
 
+TEST_P(InsertEraseTest, MultiBlockFileErase2) {
+    std::vector<unsigned char> data1 = {1, 2, 3, 4, 5};
+    std::vector<unsigned char> data2 = {5, 6, 7, 8, 9};
+    std::vector<unsigned char> data3 = {10, 11, 12, 13, 14};
+
+    compio_write(data1.data(), data1.size(), file);
+    compio_write(data2.data(), data2.size(), file);
+    compio_write(data3.data(), data3.size(), file);
+
+    compio_seek(file, 3, COMPIO_SEEK_SET);
+    uint64_t erased = compio_erase(9, file);
+
+    ASSERT_EQ(erased, 9);
+    std::vector<unsigned char> expected = {1, 2, 3, 12, 13, 14};
+    VerifyFileContent(expected);
+}
+
 // Parameterized tests for different data sizes
 TEST_P(InsertEraseParamTest, ParametrizedInsertTest) {
     auto [initial_size, insert_pos, insert_size] = GetParam();
