@@ -659,9 +659,11 @@ block_allocator::block_allocator(compio_archive *archive)
     // and will be set properly when save_state() is called
 
     // Ensure we reserve space for double-buffered header
-    uint64_t reserved_size = readonly(archive_->header, header)->disk_size() * 2;
-    if (readonly(archive_->header, header)->file_size < reserved_size) {
-        archive_->header->file_size = reserved_size;
+    if (!(archive_->mode_b & mode_bit::r)) {
+        uint64_t reserved_size = readonly(archive_->header, header)->reserved_size();
+        if (readonly(archive_->header, header)->file_size < reserved_size) {
+            archive_->header->file_size = reserved_size;
+        }
     }
 }
 
@@ -850,7 +852,7 @@ void block_allocator::perform_defragmentation() {
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
 
-    uint64_t write_pos = readonly(archive_->header, header)->disk_size() * 2;
+    uint64_t write_pos = readonly(archive_->header, header)->reserved_size();
 
     // Collect final positions of placed storage blocks for gap computation.
     std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;

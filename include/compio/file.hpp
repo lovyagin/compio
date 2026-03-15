@@ -74,6 +74,9 @@ struct header : public infile_object {
     /** @brief On-disk size of this header (depends on ftable.max_files) */
     uint64_t disk_size() const;
 
+    /** @brief Size reserved for headers (double buffering implies 2x disk_size) */
+    uint64_t reserved_size() const { return disk_size() * 2; }
+
     /** @brief Calculate SHA-256 checksum of the header content */
     void compute_checksum(uint8_t *out_hash) const;
 

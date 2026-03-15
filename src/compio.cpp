@@ -92,9 +92,8 @@ static smart_infile_object<compio::header> load_header_double_buffered(FILE *fil
         chosen_slot = 1;
         chosen_h = new compio::header(hB);
     } else {
-        WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Attempting to use Header A.\n");
-        chosen_slot = 0;
-        chosen_h = new compio::header(hA); 
+        WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Unable to open archive.\n");
+        throw std::runtime_error("Both archive headers are corrupted");
     }
     
     out_slot = chosen_slot;
@@ -180,14 +179,14 @@ static bool validate_config(const compio_config *c, bool allow_zeros = false) {
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
     if (!validate_config(c, true)) {
         errno = EINVAL;
-        goto end;
+        return NULL;
     }
 
     uint8_t mode_b;
     mode_b = parse_mode(mode);
     if (!mode_b) {
         errno = EINVAL;
-        goto end;
+        return NULL;
     }
 
     // if w+ passed as mode, we have to clear file contents (using w+)
@@ -204,11 +203,19 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     FILE *file;
     file = fopen(fp, archive_open_mode);
     if (file == nullptr) {
-        goto end;
+        return NULL;
     }
 
-    compio_archive *archive;
-    archive = new compio_archive(file, mode_b, c);
+    compio_archive *archive = nullptr;
+    try {
+        archive = new compio_archive(file, mode_b, c);
+    } catch (const std::exception& e) {
+        WARNING_PRINT("warning: failed to initialize compio_archive: %s\n", e.what());
+        fclose(file);
+        errno = EINVAL;
+        return NULL;
+    }
+
     if (!archive) {
         WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
         goto no_archive;
@@ -335,7 +342,6 @@ no_allocator:
     delete archive;
 no_archive:
     fclose(file);
-end:
     return NULL;
 }
 
@@ -503,7 +509,7 @@ static void flush_header_double_buffered(compio_archive *archive) {
     // Double-buffered Header Write
     if (!(archive->mode_b & mode_bit::r)) {
         int target_slot = 1 - archive->current_header_slot;
-        uint64_t target_addr = (target_slot == 0) ? 0 : archive->header->disk_size();
+        uint64_t target_addr = (target_slot == 0) ? 0 : archive->header->reserved_size() / 2;
 
         // Create new header data based on current in-memory header
         compio::header* new_h_data = new compio::header(*archive->header);
