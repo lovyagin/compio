@@ -119,8 +119,8 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     lendian_fread_member(ftable.n_files, file);
     
     if (ftable.n_files > ftable.max_files) {
-        WARNING_PRINT("warning: header n_files=%" PRIu64 " exceeds max_files=%u\n",
-                      ftable.n_files, ftable.max_files);
+        WARNING_PRINT("warning: header n_files=%llu exceeds max_files=%u\n",
+                      (unsigned long long)ftable.n_files, ftable.max_files);
         return false;
     }
     
@@ -297,7 +297,8 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     // Cap block size to prevent OOM on corrupted files
     static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB
     if (size > MAX_BLOCK_SIZE) {
-        WARNING_PRINT("warning: storage_block size %" PRIu64 " exceeds limit at addr=%" PRIu64 "\n", size, addr);
+        WARNING_PRINT("warning: storage_block size %llu exceeds limit at addr=%llu\n", 
+                      (unsigned long long)size, (unsigned long long)addr);
         size = 0;
         return;
     }
@@ -309,7 +310,7 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     lendian_fread(data.get(), 1, size, file);
 
     if (!verify_checksum()) {
-        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%" PRIu64 "\n", addr);
+        WARNING_PRINT("warning: storage_block checksum verification failed at addr=%llu\n", (unsigned long long)addr);
     }
 }
 

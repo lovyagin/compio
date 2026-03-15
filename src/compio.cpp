@@ -497,6 +497,39 @@ int compio_defragment(compio_archive *archive) {
     return COMPIO_SUCCESS;
 }
 
+static void flush_header_double_buffered(compio_archive *archive) {
+    if (!archive || !archive->header) return;
+
+    // Double-buffered Header Write
+    if (!(archive->mode_b & mode_bit::r)) {
+        int target_slot = 1 - archive->current_header_slot;
+        uint64_t target_addr = (target_slot == 0) ? 0 : archive->header->disk_size();
+
+        // Create new header data based on current in-memory header
+        compio::header* new_h_data = new compio::header(*archive->header);
+        new_h_data->sequence_id++;
+        new_h_data->compute_checksum(new_h_data->checksum); // Ensure checksum is fresh
+
+        // Write to the target (alternate) slot
+        smart_infile_object<compio::header> new_header_obj(archive->file, target_addr, new_h_data, &archive->io_mutex, true);
+        new_header_obj.write();
+
+        // Switch internal state to point to the new slot
+        archive->current_header_slot = target_slot;
+        
+        // Mark old header object as unmodified so it doesn't write on destruction
+        archive->header.unmodify();
+        
+        // Move new header object into place
+        archive->header = std::move(new_header_obj);
+
+        // Update allocator's file_size pointer since header object moved
+        if (archive->allocator) {
+             archive->allocator->update_file_size_ptr(&archive->header->file_size);
+        }
+    }
+}
+
 int compio_close_file(compio_file *file) {
     if (!file || !file->archive) {
         WARNING_PRINT("warning: passed nullptr into compio_close_file\n");
@@ -529,6 +562,7 @@ int compio_close_archive(compio_archive *archive) {
 
     // 3) now safe to delete block_reader
     delete archive->block_reader;
+    archive->block_reader = nullptr;
 
     // 4) save allocator state to the end of the file, if not read-only mode
     if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
@@ -540,15 +574,20 @@ int compio_close_archive(compio_archive *archive) {
 
     // 5) delete allocator
     delete archive->allocator;
+    archive->allocator = nullptr;
 
     // 6) delete btree (it actually depends on allocator, but allocator also depends on index,
     // however they don't call each other in their destructors, so their destruction order does not
     // matter)
     delete archive->index;
+    archive->index = nullptr;
 
-    // 7) flush header
-    // not calling `delete header`, because it's not a pointer created with new,
-    // but a smart_infile_object, which will destroy and flush it's internal pointer
+    // 7) flush header safely using double-buffering
+    // This ensures that the final state (including allocator updates) is written atomically to the alternate slot.
+    // If we crash during this write, the previous valid header (in the other slot) is preserved.
+    flush_header_double_buffered(archive);
+
+    // Destroy the header object. It is now clean (unmodified) because flush_header_double_buffered just wrote it.
     archive->header = {};
 
     // 8) finally we close the file (block_reader, allocator and index are all deleted, so no
@@ -1114,25 +1153,7 @@ void compio_flush(compio_archive *archive) {
     }
     
     // Double-buffered Header Write
-    if (!(archive->mode_b & mode_bit::r)) {
-        int target_slot = 1 - archive->current_header_slot;
-        uint64_t target_addr = (target_slot == 0) ? 0 : archive->header->disk_size();
-        
-        compio::header* new_h_data = new compio::header(*archive->header);
-        new_h_data->sequence_id++;
-        
-        smart_infile_object<compio::header> new_header_obj(archive->file, target_addr, new_h_data, &archive->io_mutex, true);
-        new_header_obj.write();
-        
-        archive->current_header_slot = target_slot;
-        archive->header.unmodify();
-        archive->header = std::move(new_header_obj);
-        
-        // Update allocator's file_size pointer since header object moved
-        if (archive->allocator) {
-             archive->allocator->update_file_size_ptr(&archive->header->file_size);
-        }
-    }
+    flush_header_double_buffered(archive);
 
     if (fflush(archive->file)) {
         WARNING_PRINT("warning: fflush failed\n");

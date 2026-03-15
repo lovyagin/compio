@@ -33,9 +33,18 @@ The `block_allocator` and `perform_defragmentation` logic have been updated to r
 - **Corruption Detection**: Checksums prevent using garbage data.
 - **Backward Compatibility**: The file format is updated (v4), but logic can be extended to support legacy reads if needed (currently enforces new format).
 
+## Limitations: Metadata vs. Data
+This protection mechanism secures the **Archive Structure** (File Table, Allocation Map, B-Tree Root). It ensures the archive remains "openable" and has a valid file list even after a crash.
+
+However, it does **not** provide full transactional data safety (ACID) for individual file contents:
+- **Data Blocks**: New or modified data blocks are written in-place or to new locations. If a crash occurs during a data write, that specific file's data may be truncated or corrupt.
+- **Index Nodes**: The B-tree structure is updated in-place. A crash during an index node update could theoretically corrupt the path to a file, though the Double Buffered Header points to the last *successfully committed* root.
+- **No WAL (Write-Ahead Log)**: We do not use a separate log file or journal. This means we rely on the atomic switch of the header to commit changes. Any data written *before* the header switch is "pending"; if the header switch fails (crash), that space is considered free/garbage by the old header. This is a form of "Shadow Paging" for the metadata.
+
 ## Verification
-- Comprehensive tests (`test_crash_protection.cpp`, `test_header_validation.cpp`) verify:
+- Comprehensive tests (`test_max_files.cpp`, `test_header_validation.cpp`, `test_concurrency.cpp`) verify:
   - Recovery from corrupted slot A or B.
   - Correct selection of highest sequence ID.
   - Rejection of invalid checksums.
-  - Data integrity after multiple crash-recovery cycles.
+  - Thread-safe access to headers during concurrent operations.
+- **Atomic Close**: The `compio_close_archive` operation now uses the double-buffering mechanism to ensure the final state is safely committed to disk, protecting against crashes during application shutdown.
