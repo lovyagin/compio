@@ -20,7 +20,7 @@ Each header includes a monotonic `sequence_id`.
 - This ensures that at least one valid header always exists on disk, even if a crash occurs during a write.
 
 ### 3. Checksum Validation
-Every header write includes a CRC32/SHA-256 checksum of its content.
+Every header write includes a SHA-256 checksum of its content.
 - Reads verify the checksum before accepting a header.
 - Corrupted headers (due to partial writes or bit rot) are rejected, falling back to the alternate slot.
 
