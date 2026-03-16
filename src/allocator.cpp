@@ -554,7 +554,14 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     }
 
     if (archive->wal) {
-        archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size);
+        if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
+            WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
+            return false;
+        }
+        if (!archive->wal->sync()) {
+            WARNING_PRINT("warning: WAL sync failed in allocator.save_state\n");
+            return false;
+        }
     }
 
     DEBUG_PRINT("[W][allocator]addr=%" PRId64 ";size=%" PRIu32 "\n", pos, size);
