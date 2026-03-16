@@ -227,6 +227,10 @@ bool WalManager::recover(FILE* archive_file) {
     rewind(wal_in);
     bool success = true;
     
+    // Buffer of pending records for the current transaction. These are only
+    // applied to the archive when a COMMIT record is encountered.
+    std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pending_records;
+
     while (ftell64(wal_in) < valid_limit) {
         uint8_t type_u8;
         if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) { success = false; break; }
@@ -245,23 +249,40 @@ bool WalManager::recover(FILE* archive_file) {
             if (fread(buffer.data(), 1, data_size, wal_in) != data_size) { success = false; break; }
         }
         
-        // Skip COMMIT records during replay
-        if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) continue;
-        
-        // Verify checksum
+        // Verify checksum before doing anything with the record
         if (calculate_checksum(buffer.data(), data_size) != expected_checksum) {
             fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Stopping recovery.\n", addr);
             success = false;
             break;
         }
-        
-        // Apply to archive
-        fseek64(archive_file, addr, SEEK_SET);
-        if (fwrite(buffer.data(), 1, data_size, archive_file) != data_size) {
-            fprintf(stderr, "[WAL] Failed to write recovered data to archive.\n");
-            success = false;
-            break;
+
+        // On COMMIT, apply all buffered records atomically to the archive.
+        if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
+            for (const auto &rec : pending_records) {
+                uint64_t rec_addr = rec.first;
+                const std::vector<uint8_t> &rec_data = rec.second;
+                if (fseek64(archive_file, rec_addr, SEEK_SET) != 0) {
+                    fprintf(stderr, "[WAL] Failed to seek during recovery.\n");
+                    success = false;
+                    break;
+                }
+                if (!rec_data.empty() &&
+                    fwrite(rec_data.data(), 1, rec_data.size(), archive_file) != rec_data.size()) {
+                    fprintf(stderr, "[WAL] Failed to write recovered data to archive.\n");
+                    success = false;
+                    break;
+                }
+            }
+            if (!success) {
+                break;
+            }
+            // Successfully applied this transaction; clear buffer for next one.
+            pending_records.clear();
+            continue;
         }
+        
+        // Non-COMMIT records are buffered until we see a COMMIT.
+        pending_records.emplace_back(addr, std::move(buffer));
     }
     
     fclose(wal_in);
