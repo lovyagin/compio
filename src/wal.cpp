@@ -54,7 +54,7 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     if (!wal_file_) return false;
 
     // Checksum
-    uint32_t checksum = calculate_checksum(data, size);
+    uint32_t checksum = (size == 0 && type == WalRecordType::COMMIT) ? 0 : calculate_checksum(data, size);
 
     // Prepare Header
     // We serialize type as uint8_t
@@ -270,8 +270,14 @@ bool WalManager::recover(FILE* archive_file) {
         }
         
         // Verify checksum before doing anything with the record
-        if (calculate_checksum(buffer.data(), data_size) != expected_checksum) {
-            fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Stopping recovery.\n", addr);
+        // COMMIT records have explicit checksum 0, others use FNV-1a
+        uint32_t computed_checksum = (data_size == 0 && type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT))
+            ? 0
+            : calculate_checksum(buffer.data(), data_size);
+            
+        if (computed_checksum != expected_checksum) {
+            fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Type=%u, Size=%" PRIu64 ", Expected Checksum=%u, Computed Checksum=%u\n",
+                    addr, type_u8, data_size, expected_checksum, computed_checksum);
             success = false;
             break;
         }
