@@ -54,7 +54,7 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     if (!wal_file_) return false;
 
     // Checksum
-    uint32_t checksum = calculate_checksum(data, size);
+    uint32_t checksum = (size == 0 && type == WalRecordType::COMMIT) ? 0 : calculate_checksum(data, size);
 
     // Prepare Header
     // We serialize type as uint8_t
@@ -80,9 +80,67 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     return true;
 }
 
+void WalManager::begin_transaction() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!wal_file_) return;
+
+    if (transaction_depth_ == 0) {
+        current_transaction_id_++;
+    }
+    transaction_depth_++;
+}
+
+bool WalManager::commit_transaction() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!wal_file_) return false;
+
+    if (transaction_depth_ == 0) return false;
+
+    transaction_depth_--;
+    if (transaction_depth_ > 0) return true; // Nested commit, defer actual commit
+
+    // Write COMMIT record
+    // Type=255, Addr=0, Size=0, Checksum=FNV1a(empty)
+    uint8_t type = static_cast<uint8_t>(WalRecordType::COMMIT);
+    uint64_t zero = 0;
+    
+    // Compute checksum of empty data for consistency
+    uint32_t checksum = calculate_checksum(nullptr, 0);
+    
+    if (fwrite(&type, sizeof(uint8_t), 1, wal_file_) != 1) return false;
+    if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Addr
+    if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Size
+    if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false; // Checksum
+    
+    if (fflush(wal_file_) != 0) return false;
+
+    // Force sync for durability
+#ifdef _WIN32
+    int fd = _fileno(wal_file_);
+    if (_commit(fd) != 0) return false;
+#else
+    int fd = fileno(wal_file_);
+    if (fsync(fd) != 0) return false;
+#endif
+
+    return true;
+}
+
+void WalManager::rollback_transaction() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (transaction_depth_ > 0) {
+        transaction_depth_--;
+    }
+}
+
 bool WalManager::sync() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!wal_file_) return false;
+    
+    if (transaction_depth_ > 0) {
+        // Defer sync until outermost commit
+        return true;
+    }
     
     if (fflush(wal_file_) != 0) return false;
     
@@ -144,55 +202,113 @@ bool WalManager::recover(FILE* archive_file) {
         return true;
     }
 
-    bool success = true;
+    // Pass 1: Scan for valid transactions
+    uint64_t valid_limit = 0;
     while (true) {
+        // current_pos was unused
+        
         uint8_t type_u8;
-        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) {
-            if (feof(wal_in)) break; // Clean EOF
-            success = false;
-            break; // Read error
-        }
+        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) break;
         
         uint64_t addr;
-        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) {
-            success = false;
-            break; // Partial record
-        }
+        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) break;
         
         uint64_t data_size;
-        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) {
-            success = false;
-            break;
+        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) break;
+        
+        // Sanity check for data size to prevent OOM on corrupt WAL
+        // 1GB limit seems reasonable for a single record? Or even smaller.
+        // Block size is usually 4KB-64KB. Header is small.
+        if (data_size > 1024 * 1024 * 1024) { // 1GB
+             break;
+        }
+
+        uint32_t expected_checksum;
+        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) break;
+        
+        if (data_size > 0) {
+            if (fseek64(wal_in, data_size, SEEK_CUR) != 0) break;
         }
         
-        uint32_t expected_checksum;
-        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) {
-            success = false;
-            break;
+        // Note: In Pass 1 we strictly rely on COMMIT record to mark valid boundary.
+        // But for backward compatibility (allocator records without COMMIT), we might need to be smarter.
+        // However, we just updated allocator to use COMMIT.
+        // What if we have old WALs? They will be ignored!
+        // This is a risk. But typically WAL is empty on upgrade.
+        // Let's assume we require COMMIT for durability.
+        
+        if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
+            // Validate COMMIT record structure: addr=0, size=0, checksum=valid
+            uint32_t valid_checksum = calculate_checksum(nullptr, 0);
+            if (addr == 0 && data_size == 0 && expected_checksum == valid_checksum) {
+                valid_limit = ftell64(wal_in);
+            }
         }
+    }
+    
+    // Pass 2: Replay up to valid_limit
+    rewind(wal_in);
+    bool success = true;
+    
+    // Buffer of pending records for the current transaction. These are only
+    // applied to the archive when a COMMIT record is encountered.
+    std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pending_records;
+
+    while (ftell64(wal_in) < valid_limit) {
+        uint8_t type_u8;
+        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) { success = false; break; }
+        
+        uint64_t addr;
+        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) { success = false; break; }
+        
+        uint64_t data_size;
+        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) { success = false; break; }
+        
+        uint32_t expected_checksum;
+        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) { success = false; break; }
         
         std::vector<uint8_t> buffer(data_size);
         if (data_size > 0) {
-            if (fread(buffer.data(), 1, data_size, wal_in) != data_size) {
-                success = false;
-                break;
-            }
+            if (fread(buffer.data(), 1, data_size, wal_in) != data_size) { success = false; break; }
         }
         
-        // Verify checksum
-        if (calculate_checksum(buffer.data(), data_size) != expected_checksum) {
-            fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Stopping recovery.\n", addr);
-            success = false;
-            break; // Stop or fail? Stop prevents writing bad data.
-        }
-        
-        // Apply to archive
-        fseek64(archive_file, addr, SEEK_SET);
-        if (fwrite(buffer.data(), 1, data_size, archive_file) != data_size) {
-            fprintf(stderr, "[WAL] Failed to write recovered data to archive.\n");
+        // Verify checksum before doing anything with the record
+        uint32_t computed_checksum = calculate_checksum(buffer.data(), data_size);
+            
+        if (computed_checksum != expected_checksum) {
+            fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Type=%u, Size=%" PRIu64 ", Expected Checksum=%u, Computed Checksum=%u\n",
+                    addr, type_u8, data_size, expected_checksum, computed_checksum);
             success = false;
             break;
         }
+
+        // On COMMIT, apply all buffered records atomically to the archive.
+        if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
+            for (const auto &rec : pending_records) {
+                uint64_t rec_addr = rec.first;
+                const std::vector<uint8_t> &rec_data = rec.second;
+                if (fseek64(archive_file, rec_addr, SEEK_SET) != 0) {
+                    fprintf(stderr, "[WAL] Failed to seek during recovery.\n");
+                    success = false;
+                    break;
+                }
+                if (!rec_data.empty() &&
+                    fwrite(rec_data.data(), 1, rec_data.size(), archive_file) != rec_data.size()) {
+                    fprintf(stderr, "[WAL] Failed to write recovered data to archive.\n");
+                    success = false;
+                    break;
+                }
+            }
+            if (!success) {
+                break;
+            }
+            // Successfully applied this transaction; clear buffer for next one.
+            pending_records.clear();
+            continue;
+        }
+        
+        // Non-COMMIT records are buffered until we see a COMMIT.
+        pending_records.emplace_back(addr, std::move(buffer));
     }
     
     fclose(wal_in);

@@ -148,13 +148,67 @@ void header::read_from(FILE *file, uint64_t addr) {
 }
 
 void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
-    UNUSED(wal_manager);
     DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
     
     // Auto-update checksum before writing
     // We cast away const because we want the on-disk structure to be correct, 
     // and updating the checksum member is logically part of the serialization process.
     const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
+
+    if (wal_manager) {
+        wal_manager->begin_transaction();
+        // Serialize to buffer for WAL
+        std::vector<uint8_t> buffer;
+        buffer.reserve(4096); 
+        
+        auto push_u32 = [&](uint32_t v) { 
+            for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        };
+        auto push_u64 = [&](uint64_t v) { 
+            for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        };
+        
+        // Serialize header fields
+        // magic(4)
+        for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(magic_number >> (i*8)));
+        // checksum(32)
+        buffer.insert(buffer.end(), checksum, checksum + 32);
+        // sequence_id(8)
+        push_u64(sequence_id);
+        // index_root(8)
+        push_u64(index_root);
+        // file_size(8)
+        push_u64(file_size);
+        // allocator_state_offset(8)
+        push_u64(allocator_state_offset);
+        // allocator_state_size(8)
+        push_u64(allocator_state_size);
+        // compression_type(4)
+        push_u32(compression_type);
+        // block_size(4)
+        push_u32(block_size);
+        // b_tree_degree(4)
+        push_u32(b_tree_degree);
+        // max_files(4)
+        push_u32(ftable.max_files);
+        // n_files(8)
+        push_u64(ftable.n_files);
+        
+        for (uint32_t i = 0; i < ftable.max_files; ++i) {
+            // name(32)
+            buffer.insert(buffer.end(), ftable.files[i].name, ftable.files[i].name + COMPIO_FNAME_MAX_SIZE);
+            // size(8)
+            push_u64(ftable.files[i].size);
+        }
+        
+        if (!wal_manager->log_write(WalRecordType::HEADER, addr, buffer.data(), buffer.size())) {
+            WARNING_PRINT("error: WAL log_write failed for header at addr=%" PRIu64 "\n", addr);
+        }
+        
+        if (!wal_manager->commit_transaction()) {
+            WARNING_PRINT("error: WAL commit failed for header at addr=%" PRIu64 "\n", addr);
+        }
+    }
 
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
@@ -258,11 +312,12 @@ void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
     }
 
     if (wal_manager) {
+        wal_manager->begin_transaction();
         if (!wal_manager->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size())) {
             WARNING_PRINT("error: WAL log_write failed for index_node at addr=%" PRIu64 "\n", addr);
         }
-        if (!wal_manager->sync()) {
-            WARNING_PRINT("error: WAL sync failed for index_node at addr=%" PRIu64 "\n", addr);
+        if (!wal_manager->commit_transaction()) {
+            WARNING_PRINT("error: WAL commit failed for index_node at addr=%" PRIu64 "\n", addr);
         }
     }
 
@@ -385,11 +440,12 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
     }
 
     if (wal_manager) {
+        wal_manager->begin_transaction();
         if (!wal_manager->log_write(WalRecordType::BLOCK, addr, buffer.data(), buffer.size())) {
             WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
         }
-        if (!wal_manager->sync()) {
-             WARNING_PRINT("error: WAL sync failed for storage_block at addr=%" PRIu64 "\n", addr);
+        if (!wal_manager->commit_transaction()) {
+            WARNING_PRINT("error: WAL commit failed for storage_block at addr=%" PRIu64 "\n", addr);
         }
     }
 

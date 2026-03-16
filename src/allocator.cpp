@@ -554,12 +554,14 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     }
 
     if (archive->wal) {
+        archive->wal->begin_transaction();
         if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
             WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
+            archive->wal->rollback_transaction();
             return false;
         }
-        if (!archive->wal->sync()) {
-            WARNING_PRINT("warning: WAL sync failed in allocator.save_state\n");
+        if (!archive->wal->commit_transaction()) {
+            WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
             return false;
         }
     }

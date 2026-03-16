@@ -34,6 +34,7 @@ class WalManager {
     FILE* wal_file_;
     std::mutex mutex_;
     uint64_t current_transaction_id_;
+    int transaction_depth_ = 0;
 
 public:
     explicit WalManager(const std::string& archive_path);
@@ -47,6 +48,15 @@ public:
 
     // Write a record to the WAL
     bool log_write(WalRecordType type, uint64_t addr, const void* data, uint64_t size);
+
+    // Begin a new transaction
+    void begin_transaction();
+
+    // Commit the current transaction
+    bool commit_transaction();
+
+    // Rollback transaction (decrements depth without writing COMMIT record)
+    void rollback_transaction();
 
     // Sync the WAL to disk
     bool sync();
