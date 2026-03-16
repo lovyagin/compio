@@ -122,3 +122,107 @@ TEST_F(WalRecoveryTest, ClearsWalAfterSuccessfulOpen) {
 
     // compio_close_archive(archive); // Handled by ScopedArchive
 }
+
+TEST_F(WalRecoveryTest, IgnoresIncompleteTransactions) {
+    compio_config config;
+    compio_build_default_config(&config);
+    compio_archive* archive = compio_open_archive(filename, "w", &config);
+    compio_close_archive(archive);
+
+    uint64_t addr = 1000;
+    std::vector<uint8_t> data(100, 'X');
+
+    // Ensure file is big enough
+    FILE* f_init = fopen(filename, "r+b");
+    if (f_init) {
+        fseek(f_init, 2000, SEEK_SET);
+        fputc(0, f_init);
+        fclose(f_init);
+    }
+
+    {
+        compio::WalManager wal(filename);
+        ASSERT_TRUE(wal.open());
+
+        // Transaction 1: Valid
+        wal.begin_transaction();
+        ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, addr, data.data(), data.size()));
+        ASSERT_TRUE(wal.commit_transaction());
+        wal.close();
+
+        // Transaction 2: Partial/Corrupt (append to file)
+        FILE* f = fopen(wal_filename.c_str(), "ab");
+        ASSERT_NE(f, nullptr);
+        uint8_t garbage[] = {0xAA, 0xBB, 0xCC};
+        fwrite(garbage, 1, sizeof(garbage), f);
+        fclose(f);
+    }
+
+    // Open archive - should recover Trans 1 and ignore garbage
+    archive = compio_open_archive(filename, "r+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_close_archive(archive);
+
+    // Verify data from Trans 1
+    std::ifstream file(filename, std::ios::binary);
+    file.seekg(addr);
+    std::vector<uint8_t> read_data(100);
+    file.read(reinterpret_cast<char*>(read_data.data()), 100);
+    for (int i=0; i<100; ++i) ASSERT_EQ(read_data[i], 'X');
+}
+
+TEST_F(WalRecoveryTest, NestedTransactionsAreAtomic) {
+    // 1. Create and close archive
+    compio_config config;
+    compio_build_default_config(&config);
+    compio_archive* archive = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_close_archive(archive);
+    
+    uint64_t addr1 = 2000;
+    uint64_t addr2 = 3000;
+    
+    // 2. Ensure file is large enough
+    FILE* f = fopen(filename, "r+b");
+    fseek(f, 4000, SEEK_SET);
+    fputc(0, f);
+    fclose(f);
+
+    {
+        compio::WalManager wal(filename);
+        ASSERT_TRUE(wal.open());
+
+        wal.begin_transaction(); // Outer
+        
+        const char* data1 = "OUTER";
+        wal.log_write(compio::WalRecordType::BLOCK, addr1, data1, 5);
+        
+        wal.begin_transaction(); // Inner
+        const char* data2 = "INNER";
+        wal.log_write(compio::WalRecordType::BLOCK, addr2, data2, 5);
+        
+        // Commit inner - should NOT write COMMIT record to disk yet
+        ASSERT_TRUE(wal.commit_transaction());
+        
+        // Close without outer commit
+        wal.close(); 
+    }
+
+    // Open archive - verify NOTHING recovered
+    archive = compio_open_archive(filename, "r+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_close_archive(archive);
+
+    std::ifstream file(filename, std::ios::binary);
+    file.seekg(addr1);
+    char buf[6] = {0};
+    file.read(buf, 5);
+    // Should check that it is NOT "OUTER"
+    // Since we initialized with zeros (implicitly or explicitly), it should be zero
+    // Or at least not "OUTER"
+    ASSERT_NE(std::string(buf), "OUTER"); 
+    
+    file.seekg(addr2);
+    file.read(buf, 5);
+    ASSERT_NE(std::string(buf), "INNER"); 
+}
