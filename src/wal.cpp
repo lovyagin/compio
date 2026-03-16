@@ -100,15 +100,17 @@ bool WalManager::commit_transaction() {
     if (transaction_depth_ > 0) return true; // Nested commit, defer actual commit
 
     // Write COMMIT record
-    // Type=255, Addr=0, Size=0, Checksum=0
+    // Type=255, Addr=0, Size=0, Checksum=FNV1a(empty)
     uint8_t type = static_cast<uint8_t>(WalRecordType::COMMIT);
     uint64_t zero = 0;
-    uint32_t zero32 = 0;
+    
+    // Compute checksum of empty data for consistency
+    uint32_t checksum = calculate_checksum(nullptr, 0);
     
     if (fwrite(&type, sizeof(uint8_t), 1, wal_file_) != 1) return false;
     if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Addr
     if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Size
-    if (fwrite(&zero32, sizeof(uint32_t), 1, wal_file_) != 1) return false; // Checksum
+    if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false; // Checksum
     
     if (fflush(wal_file_) != 0) return false;
 
@@ -236,8 +238,9 @@ bool WalManager::recover(FILE* archive_file) {
         // Let's assume we require COMMIT for durability.
         
         if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
-            // Validate COMMIT record structure: addr=0, size=0, checksum=0
-            if (addr == 0 && data_size == 0 && expected_checksum == 0) {
+            // Validate COMMIT record structure: addr=0, size=0, checksum=valid
+            uint32_t valid_checksum = calculate_checksum(nullptr, 0);
+            if (addr == 0 && data_size == 0 && expected_checksum == valid_checksum) {
                 valid_limit = ftell64(wal_in);
             }
         }
@@ -270,10 +273,7 @@ bool WalManager::recover(FILE* archive_file) {
         }
         
         // Verify checksum before doing anything with the record
-        // COMMIT records have explicit checksum 0, others use FNV-1a
-        uint32_t computed_checksum = (data_size == 0 && type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT))
-            ? 0
-            : calculate_checksum(buffer.data(), data_size);
+        uint32_t computed_checksum = calculate_checksum(buffer.data(), data_size);
             
         if (computed_checksum != expected_checksum) {
             fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Type=%u, Size=%" PRIu64 ", Expected Checksum=%u, Computed Checksum=%u\n",
