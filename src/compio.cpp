@@ -663,6 +663,9 @@ int compio_close_archive(compio_archive *archive) {
     // At this point, all data is synced to the archive file (via flush and header update).
     // The WAL is redundant now.
     if (archive->wal) {
+        // Commit any pending transaction before clearing (though close logic usually implies clean state)
+        // Actually, we don't need commit here, as flush_header_double_buffered creates its own atomic write.
+        // And compio_flush called earlier committed its changes.
         archive->wal->clear();
     }
 
@@ -1222,6 +1225,10 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    
+    // Start atomic transaction for the entire flush operation
+    if (archive->wal) archive->wal->begin_transaction();
+    
     if (archive->block_reader) archive->block_reader->clear_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index) archive->index->clear_cache();
@@ -1233,6 +1240,13 @@ void compio_flush(compio_archive *archive) {
     
     // Double-buffered Header Write
     flush_header_double_buffered(archive);
+    
+    // Commit transaction (this performs a single fsync on the WAL)
+    if (archive->wal) {
+        if (!archive->wal->commit_transaction()) {
+            WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
+        }
+    }
 
     if (fflush(archive->file)) {
         WARNING_PRINT("warning: fflush failed\n");
