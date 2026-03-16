@@ -57,7 +57,7 @@ TEST_F(WalRecoveryTest, RecoversDataFromWal) {
 
         wal.begin_transaction();
         ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, safe_offset, data.data(), data.size()));
-        wal.commit_transaction(); // Implicitly syncs
+        ASSERT_TRUE(wal.commit_transaction()); // Implicitly syncs
         wal.close();
     }
 
@@ -98,8 +98,8 @@ TEST_F(WalRecoveryTest, ClearsWalAfterSuccessfulOpen) {
         fclose(f);
 
         wal.begin_transaction();
-        wal.log_write(compio::WalRecordType::BLOCK, 1024 * 1024, data.data(), data.size());
-        wal.commit_transaction();
+        ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, 1024 * 1024, data.data(), data.size()));
+        ASSERT_TRUE(wal.commit_transaction());
         wal.close();
     }
     

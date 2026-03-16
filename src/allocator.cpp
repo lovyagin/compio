@@ -557,6 +557,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         archive->wal->begin_transaction();
         if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
             WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
+            archive->wal->rollback_transaction();
             return false;
         }
         if (!archive->wal->commit_transaction()) {

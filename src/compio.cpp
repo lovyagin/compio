@@ -1227,8 +1227,12 @@ void compio_flush(compio_archive *archive) {
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     
     // Start atomic transaction for the entire flush operation
-    if (archive->wal) archive->wal->begin_transaction();
-    
+    bool wal_active = false;
+    if (archive->wal && !(archive->mode_b & mode_bit::r)) {
+        archive->wal->begin_transaction();
+        wal_active = true;
+    }
+
     if (archive->block_reader) archive->block_reader->clear_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index) archive->index->clear_cache();
@@ -1242,7 +1246,7 @@ void compio_flush(compio_archive *archive) {
     flush_header_double_buffered(archive);
     
     // Commit transaction (this performs a single fsync on the WAL)
-    if (archive->wal) {
+    if (wal_active && archive->wal) {
         if (!archive->wal->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
         }

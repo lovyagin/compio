@@ -82,6 +82,8 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
 
 void WalManager::begin_transaction() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!wal_file_) return;
+
     if (transaction_depth_ == 0) {
         current_transaction_id_++;
     }
@@ -90,6 +92,8 @@ void WalManager::begin_transaction() {
 
 bool WalManager::commit_transaction() {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!wal_file_) return false;
+
     if (transaction_depth_ == 0) return false;
 
     transaction_depth_--;
@@ -118,6 +122,13 @@ bool WalManager::commit_transaction() {
 #endif
 
     return true;
+}
+
+void WalManager::rollback_transaction() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (transaction_depth_ > 0) {
+        transaction_depth_--;
+    }
 }
 
 bool WalManager::sync() {
@@ -191,9 +202,8 @@ bool WalManager::recover(FILE* archive_file) {
 
     // Pass 1: Scan for valid transactions
     uint64_t valid_limit = 0;
-    uint64_t current_pos = 0;
     while (true) {
-        current_pos = ftell64(wal_in);
+        // current_pos was unused
         
         uint8_t type_u8;
         if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) break;
@@ -204,6 +214,13 @@ bool WalManager::recover(FILE* archive_file) {
         uint64_t data_size;
         if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) break;
         
+        // Sanity check for data size to prevent OOM on corrupt WAL
+        // 1GB limit seems reasonable for a single record? Or even smaller.
+        // Block size is usually 4KB-64KB. Header is small.
+        if (data_size > 1024 * 1024 * 1024) { // 1GB
+             break;
+        }
+
         uint32_t expected_checksum;
         if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) break;
         
@@ -219,7 +236,10 @@ bool WalManager::recover(FILE* archive_file) {
         // Let's assume we require COMMIT for durability.
         
         if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
-            valid_limit = ftell64(wal_in);
+            // Validate COMMIT record structure: addr=0, size=0, checksum=0
+            if (addr == 0 && data_size == 0 && expected_checksum == 0) {
+                valid_limit = ftell64(wal_in);
+            }
         }
     }
     
