@@ -7,6 +7,7 @@
 
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
+#include "compio/wal.hpp"
 
 // forward declaration
 namespace compio {
@@ -28,10 +29,12 @@ struct compio_archive {
     compio::btree *index;
     compio::storage_block_reader *block_reader;
     compio::block_allocator *allocator;
+    std::unique_ptr<compio::WalManager> wal;
+    std::string path;
     uint8_t mode_b;
     uint32_t open_files_count;
 
-    compio_archive(FILE *file, uint8_t mode_b, const compio_config *config);
+    compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;
 };
 

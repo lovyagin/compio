@@ -1,10 +1,10 @@
 #include "compio/file.hpp"
-
+#include "compio/wal.hpp"
+#include <algorithm>
 #include <cassert>
-#include <cinttypes>
-#include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <inttypes.h>
+#include <vector>
 
 #include "compio/debug_print.hpp"
 #include "compio/utils.hpp"
@@ -147,7 +147,8 @@ void header::read_from(FILE *file, uint64_t addr) {
     }
 }
 
-void header::write_to(FILE *file, uint64_t addr) const {
+void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
+    UNUSED(wal_manager);
     DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
     
     // Auto-update checksum before writing
@@ -212,27 +213,64 @@ void index_node::read_from(FILE *file, uint64_t addr) {
     validate();
 }
 
-void index_node::write_to(FILE *file, uint64_t addr) const {
+void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, (uint64_t)INDEX_NODE_SIZE(tree_degree));
     validate();
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-    lendian_fwrite(&index_node_signature, sizeof(index_node_signature), 1, file);
-    lendian_fwrite_member(is_leaf, file);
+    
+    std::vector<uint8_t> buffer;
+    buffer.reserve(4096); 
+
+    auto push_u8 = [&](uint8_t v) { buffer.push_back(v); };
+    auto push_u32 = [&](uint32_t v) { 
+        for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+    };
+    auto push_u64 = [&](uint64_t v) { 
+        for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+    };
+    auto push_i64 = [&](int64_t v) { 
+        uint64_t uv = static_cast<uint64_t>(v);
+        for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(uv >> (i*8))); 
+    };
+
+    push_u8(index_node_signature);
+    push_u8(is_leaf);
+    
     const uint32_t actual_num_keys = keys.size();
     assert(num_keys == actual_num_keys);
-    lendian_fwrite_member(actual_num_keys, file);
+    push_u32(actual_num_keys);
+    
     for (auto &key : keys) {
-        lendian_fwrite_member(key.hash, file);
-        lendian_fwrite_member(key.pos, file);
+        push_u64(key.hash);
+        push_u64(key.pos);
     }
     for (auto &value : values) {
-        lendian_fwrite_member(value.addr, file);
-        lendian_fwrite_member(value.size, file);
+        push_u64(value.addr);
+        push_u64(value.size);
     }
+    
     if (!is_leaf) {
-        lendian_fwrite(children.data(), sizeof(uint64_t), children.size(), file);
-        lendian_fwrite(key_additions.data(), sizeof(int64_t), key_additions.size(), file);
+        for (auto &child : children) {
+            push_u64(child);
+        }
+        for (auto &add : key_additions) {
+            push_i64(add);
+        }
+    }
+
+    if (wal_manager) {
+        if (!wal_manager->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size())) {
+            WARNING_PRINT("error: WAL log_write failed for index_node at addr=%" PRIu64 "\n", addr);
+        }
+        if (!wal_manager->sync()) {
+            WARNING_PRINT("error: WAL sync failed for index_node at addr=%" PRIu64 "\n", addr);
+        }
+    }
+
+    if (fseek64(file, addr, SEEK_SET))
+        DEBUG_PRINT("warning: fseek failed\n");
+    
+    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size()) {
+        DEBUG_PRINT("warning: fwrite failed\n");
     }
 }
 
@@ -314,25 +352,53 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     }
 }
 
-void storage_block::write_to(FILE *file, uint64_t addr) const {
+void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE + size);
     assert(addr != 0);
     assert(size > 0);
     assert(original_size > 0);
     assert(is_compressed || size == original_size);
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
 
     // Calculate checksum before writing (non-const, so we cast)
     const_cast<storage_block*>(this)->calculate_checksum();
 
-    lendian_fwrite(&storage_block_signature, sizeof(storage_block_signature), 1, file);
-    lendian_fwrite_member(is_compressed, file);
-    lendian_fwrite_member(size, file);
-    lendian_fwrite_member(original_size, file);
-    lendian_fwrite_member(checksum, file);
+    std::vector<uint8_t> buffer;
+    buffer.reserve(STORAGE_BLOCK_METASIZE + size);
 
-    lendian_fwrite(data.get(), 1, size, file);
+    auto push_u8 = [&](uint8_t v) { buffer.push_back(v); };
+    auto push_u32 = [&](uint32_t v) { 
+        for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+    };
+    auto push_u64 = [&](uint64_t v) { 
+        for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+    };
+
+    push_u8(storage_block_signature);
+    push_u8(is_compressed);
+    push_u64(size);
+    push_u64(original_size);
+    push_u32(checksum);
+    
+    if (size > 0 && data) {
+        const uint8_t* ptr = data.get();
+        buffer.insert(buffer.end(), ptr, ptr + size);
+    }
+
+    if (wal_manager) {
+        if (!wal_manager->log_write(WalRecordType::BLOCK, addr, buffer.data(), buffer.size())) {
+            WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
+        }
+        if (!wal_manager->sync()) {
+             WARNING_PRINT("error: WAL sync failed for storage_block at addr=%" PRIu64 "\n", addr);
+        }
+    }
+
+    if (fseek64(file, addr, SEEK_SET))
+        DEBUG_PRINT("warning: fseek failed\n");
+        
+    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size()) {
+        DEBUG_PRINT("warning: fwrite failed\n");
+    }
 }
 
 index_node::index_node(int tree_degree)

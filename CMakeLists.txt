@@ -111,6 +111,7 @@ add_library(compio STATIC
     src/sha256.cpp
     src/storage_block_reader.cpp
     src/utils.cpp
+    src/wal.cpp
 )
 
 set_target_properties(compio PROPERTIES PUBLIC_HEADER compio.h)

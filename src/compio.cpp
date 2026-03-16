@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
+#include <memory>
+#include <utility>
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
@@ -103,7 +105,7 @@ static smart_infile_object<compio::header> load_header_double_buffered(FILE *fil
     return smart_infile_object<compio::header>(file, chosen_addr, chosen_h, io_mutex, true);
 }
 
-compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
+compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config)
     : current_header_slot(is_file_empty(file) ? 1 : 0),
       file(file),
       config(*config),
@@ -115,6 +117,7 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       index(nullptr),
       block_reader(nullptr),
       allocator(nullptr),
+      wal(std::move(wal)),
       mode_b(mode_b),
       open_files_count(0) {
     // btree constructor is called in compio_open_archive to break
@@ -191,14 +194,28 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     // if w+ passed as mode, we have to clear file contents (using w+)
     // otherwise we open with a+ mode to read and write
-    const char *archive_open_mode;
+    char archive_open_mode[5];
+    int mode_idx = 0;
+    
+    // Fix: Force update (+) mode for 'w' and 'a' to allow internal reads (e.g. reading header in 'a' mode)
+    // This matches previous behavior where 'w'/'a' implied 'w+'/'a+' capability for the library.
+    bool force_plus = (mode_b & mode_bit::w) || (mode_b & mode_bit::a);
+
     if (mode_b & mode_bit::w) {
-        archive_open_mode = "wb+";
+        archive_open_mode[mode_idx++] = 'w';
     } else if (mode_b & mode_bit::a) {
-        archive_open_mode = "ab+";
+        archive_open_mode[mode_idx++] = 'a';
     } else {
-        archive_open_mode = "rb";
+        archive_open_mode[mode_idx++] = 'r';
     }
+    
+    archive_open_mode[mode_idx++] = 'b';
+    
+    if ((mode_b & mode_bit::plus) || force_plus) {
+        archive_open_mode[mode_idx++] = '+';
+    }
+    
+    archive_open_mode[mode_idx] = '\0';
 
     FILE *file;
     file = fopen(fp, archive_open_mode);
@@ -206,9 +223,58 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         return NULL;
     }
 
+    // Initialize WAL Manager
+    auto wal = std::make_unique<compio::WalManager>(fp);
+    
+    // Check for recovery (only if we are not creating a new file from scratch with "w")
+    if (!(mode_b & mode_bit::w)) {
+        if (wal->has_pending_recovery()) {
+            // Need read-write access to file for recovery
+            // We use the derived force_plus logic or explicit plus
+            bool can_write = (mode_b & mode_bit::plus) || (mode_b & mode_bit::a) || force_plus;
+            
+            if (!can_write) {
+                 WARNING_PRINT("error: WAL file exists but opening in read-only mode. Cannot recover pending transactions.\n");
+                 fclose(file);
+                 errno = EROFS; // Read-only file system (or similar)
+                 return NULL;
+            } else {
+                if (!wal->recover(file)) {
+                    WARNING_PRINT("warning: WAL recovery failed\n");
+                    // Continue anyway? Or fail? 
+                    // Fail seems safer.
+                    fclose(file);
+                    errno = EIO;
+                    return NULL;
+                }
+            }
+        }
+    } else {
+        // "w" mode: truncate file. We should also clear any existing WAL.
+        if (!wal->clear()) {
+            WARNING_PRINT("warning: failed to clear existing WAL file in 'w' mode\n");
+            fclose(file);
+            errno = EIO;
+            return NULL;
+        }
+    }
+    
+    // Open WAL for writing if we are in write mode
+    // We can write if w, a, or + is set.
+    bool can_write_archive = (mode_b & mode_bit::w) || (mode_b & mode_bit::a) || (mode_b & mode_bit::plus);
+    if (can_write_archive) {
+        if (!wal->open()) {
+             WARNING_PRINT("warning: failed to open WAL file\n");
+             // Fail?
+             fclose(file);
+             errno = EIO;
+             return NULL;
+        }
+    }
+
     compio_archive *archive = nullptr;
     try {
-        archive = new compio_archive(file, mode_b, c);
+        archive = new compio_archive(std::move(wal), file, mode_b, c);
     } catch (const std::exception& e) {
         WARNING_PRINT("warning: failed to initialize compio_archive: %s\n", e.what());
         fclose(file);
@@ -304,14 +370,14 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
-    archive->allocator = new compio::block_allocator(archive);
+    archive->allocator = new compio::block_allocator(archive, archive->wal.get());
     if (!archive->allocator) {
         WARNING_PRINT("warning: failed to allocate memory for allocator\n");
         goto no_allocator;
     }
 
     archive->index = new btree(c->b_tree_degree, mode_b & mode_bit::r, archive->header,
-                               archive->allocator, file, c->cache_size__nodes, &archive->io_mutex);
+                               archive->allocator, file, c->cache_size__nodes, &archive->io_mutex, archive->wal.get());
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto no_index;
@@ -319,7 +385,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     archive->block_reader = new compio::storage_block_reader(
         file, archive->allocator, archive->index,
-        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex);
+        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get());
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
@@ -592,6 +658,13 @@ int compio_close_archive(compio_archive *archive) {
     // This ensures that the final state (including allocator updates) is written atomically to the alternate slot.
     // If we crash during this write, the previous valid header (in the other slot) is preserved.
     flush_header_double_buffered(archive);
+
+    // If WAL is enabled and we are closing cleanly, we should clear the WAL.
+    // At this point, all data is synced to the archive file (via flush and header update).
+    // The WAL is redundant now.
+    if (archive->wal) {
+        archive->wal->clear();
+    }
 
     // Destroy the header object. It is now clean (unmodified) because flush_header_double_buffered just wrote it.
     archive->header = {};

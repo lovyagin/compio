@@ -15,16 +15,17 @@ using namespace compio;
 
 #define RO(x) readonly(x, index_node)
 
-node_reader::node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex)
+node_reader::node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex, compio::WalManager *wal)
     : tree_degree(tree_degree),
       file(file),
       io_mutex(io_mutex),
+      wal(wal),
       cache(max_size) {}
 
 shared_node node_reader::read_node(uint64_t addr) {
     auto node = cache.get(addr);
     if (!node.has_value()) {
-        auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex);
+        auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex, true, wal);
         result.read();     // read from file (because constructor with obj& does not read)
         result.unmodify(); // constructor with obj& sets modified=true
         cache.put(addr, result);
@@ -35,7 +36,7 @@ shared_node node_reader::read_node(uint64_t addr) {
 }
 
 shared_node node_reader::create_node(uint64_t addr) {
-    auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex);
+    auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex, wal);
     cache.put(addr, result);
     return result;
 }
@@ -53,12 +54,12 @@ void node_reader::clear_cache() { cache.clear(); }
 double node_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
 
 btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
-             block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex)
+             block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex, compio::WalManager *wal)
     : degree(degree),
       is_readonly(is_readonly),
       archive_header(archive_header),
       allocator(allocator),
-      reader(file, degree, cache_size, io_mutex) {
+      reader(file, degree, cache_size, io_mutex, wal) {
     if (readonly(archive_header, header)->index_root != 0)
         return;
 

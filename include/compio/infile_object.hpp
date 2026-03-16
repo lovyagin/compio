@@ -21,6 +21,10 @@
 #include <atomic>
 #include <mutex>
 
+namespace compio {
+class WalManager;
+}
+
 /**
  * @brief Macro to create a const reference to a smart_infile_object
  *
@@ -92,8 +96,9 @@ public:
      *
      * @param file File stream to write to
      * @param addr File address (offset) where the object data should be stored
+     * @param wal_manager Optional pointer to WAL manager for transaction logging
      */
-    virtual void write_to(FILE *file, uint64_t addr) const = 0;
+    virtual void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const = 0;
 
     /**
      * @brief Virtual destructor
@@ -140,6 +145,7 @@ private:
         FILE *file;    /**< File stream */
         uint64_t addr; /**< File address where object is stored */
         std::mutex *io_mutex;
+        compio::WalManager *wal;     /**< WAL manager for transaction logging */
 
         // NOTE: We use std::atomic<int> for ref_count and fetch_add/fetch_sub
         // for thread safety. The destructor is only called when fetch_sub(1)
@@ -158,15 +164,17 @@ private:
          * @param data Pointer to existing object data
          * @param io_mutex Mutex for I/O operations
          * @param loaded_from_disk If true, object is considered clean (not modified)
+         * @param wal WAL manager
          */
-        storage(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex, bool loaded_from_disk)
+        storage(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex, bool loaded_from_disk, compio::WalManager *wal = nullptr)
             : ref_count(1),
               modified(!loaded_from_disk),
               removed(false),
               data(data),
               file(file),
               addr(addr),
-              io_mutex(io_mutex) {}
+              io_mutex(io_mutex),
+              wal(wal) {}
 
         /**
          * @brief Construct storage with existing data
@@ -179,14 +187,15 @@ private:
          * @param addr File address where object is stored
          * @param data Pointer to existing object data
          */
-        storage(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex = nullptr)
+        storage(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr)
             : ref_count(1),
               modified(true),
               removed(false),
               data(data),
               file(file),
               addr(addr),
-              io_mutex(io_mutex) {}
+              io_mutex(io_mutex),
+              wal(wal) {}
 
         /**
          * @brief Construct storage by reading from file
@@ -198,9 +207,9 @@ private:
          * @param file File stream to read from
          * @param addr File address where object data is stored
          */
-        storage(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr) : storage(file, addr, new T(), io_mutex) {
-            modified = false;
-            read();
+        storage(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr) 
+            : storage(file, addr, new T(), io_mutex, true, wal) { // Re-use main constructor
+            read(); // Then read
         }
 
         /**
@@ -238,9 +247,9 @@ private:
         void write() {
             if (io_mutex) {
                 std::lock_guard<std::mutex> lock(*io_mutex);
-                data->write_to(file, addr);
+                data->write_to(file, addr, wal);
             } else {
-                data->write_to(file, addr);
+                data->write_to(file, addr, wal);
             }
         }
     };
@@ -256,16 +265,6 @@ public:
     smart_infile_object() : S(nullptr) {}
 
     /**
-     * @brief Construct with existing object data
-     *
-     * Creates a smart_infile_object that takes ownership of existing object data
-     * and associates it with a file location.
-     *
-     * @param file File stream
-     * @param addr File address where object is stored
-     * @param data Pointer to existing object data (ownership is transferred)
-     */
-    /**
      * @brief Construct smart object with pre-loaded data, optionally marked as clean
      *
      * @param file File stream
@@ -273,9 +272,10 @@ public:
      * @param data Pointer to pre-loaded object data (ownership is transferred)
      * @param io_mutex Mutex for I/O operations
      * @param loaded_from_disk If true, object is considered clean
+     * @param wal WAL manager
      */
-    smart_infile_object(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex, bool loaded_from_disk) 
-        : S(new storage(file, addr, data, io_mutex, loaded_from_disk)) {}
+    smart_infile_object(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex, bool loaded_from_disk, compio::WalManager *wal = nullptr) 
+        : S(new storage(file, addr, data, io_mutex, loaded_from_disk, wal)) {}
 
     /**
      * @brief Construct by taking ownership of existing data
@@ -287,7 +287,8 @@ public:
      * @param addr File address where object is stored
      * @param data Pointer to existing object data (ownership is transferred)
      */
-    smart_infile_object(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex = nullptr) : S(new storage(file, addr, data, io_mutex)) {}
+    smart_infile_object(FILE *file, uint64_t addr, T *data, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr) 
+        : S(new storage(file, addr, data, io_mutex, wal)) {}
 
     /**
      * @brief Construct by reading from file
@@ -299,7 +300,8 @@ public:
      * @param file File stream to read from
      * @param addr File address where object data is stored
      */
-    smart_infile_object(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr) : S(new storage(file, addr, io_mutex)) {}
+    smart_infile_object(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr) 
+        : S(new storage(file, addr, io_mutex, wal)) {}
 
     /**
      * @brief Copy constructor
