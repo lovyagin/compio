@@ -43,7 +43,7 @@ struct node_reader {
      * @param io_mutex Mutex for I/O operations
      * @param wal WAL manager
      */
-    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex, WalManager *wal = nullptr);
+    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex, compio::WalManager *wal = nullptr);
 
     /**
      * @brief Read a node from the specified address
@@ -96,7 +96,7 @@ private:
     /** @brief File handle for reading/writing nodes */
     FILE *file;
     std::mutex *io_mutex;
-    WalManager *wal;
+    compio::WalManager *wal;
     /** @brief LRU cache for storing frequently accessed nodes */
     cache::lru_cache<uint64_t, shared_node> cache;
 };
@@ -128,7 +128,7 @@ struct btree {
      * @param wal WAL manager
      */
     btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
-          block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex, WalManager *wal = nullptr);
+          block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex, compio::WalManager *wal = nullptr);
 
     /**
      * @brief Insert a key-value pair into the B-Tree

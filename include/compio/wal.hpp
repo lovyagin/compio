@@ -23,7 +23,6 @@ enum class WalRecordType : uint8_t {
 };
 
 struct WalRecordHeader {
-    uint64_t transaction_id;
     WalRecordType type;
     uint64_t addr; // Address in the main archive file
     uint64_t size; // Size of the payload

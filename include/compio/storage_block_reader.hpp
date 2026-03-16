@@ -78,7 +78,7 @@ struct context_t {
     context_t& operator=(const context_t&) = delete;
 
     context_t(FILE *file, block_allocator *allocator, btree *index,
-              const compio_compressor *compressor, std::mutex *io_mutex, WalManager *wal)
+              const compio_compressor *compressor, std::mutex *io_mutex, compio::WalManager *wal)
         : file(file),
           allocator(allocator),
           index(index),
@@ -289,7 +289,7 @@ public:
      * @param max_size Maximum number of blocks to keep in the LRU cache
      */
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
-                         const compio_compressor *compressor, int max_size, std::mutex *io_mutex, WalManager *wal);
+                         const compio_compressor *compressor, int max_size, std::mutex *io_mutex, compio::WalManager *wal);
 
     storage_block_reader(const storage_block_reader &) = delete;
     storage_block_reader &operator=(const storage_block_reader &) = delete;

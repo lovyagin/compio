@@ -18,6 +18,8 @@
 
 namespace compio {
 
+class WalManager;
+
 /**
  * @brief Structure representing a free block in storage
  */
@@ -386,8 +388,9 @@ public:
     /**
      * @brief Initialize allocator with archive configuration
      * @param archive Pointer to opened archive
+     * @param wal Pointer to WAL manager (optional, can be nullptr)
      */
-    explicit block_allocator(compio_archive *archive);
+    explicit block_allocator(compio_archive *archive, WalManager *wal = nullptr);
 
     /**
      * @brief Allocate storage block
@@ -436,6 +439,7 @@ public:
 
 private:
     compio_archive *archive_;            /**< Associated archive */
+    WalManager *wal_;                    /**< WAL manager for ensuring durability */
     free_blocks_manager blocks_manager_; /**< Free blocks manager */
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
 

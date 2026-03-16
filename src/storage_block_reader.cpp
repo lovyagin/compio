@@ -199,7 +199,7 @@ uint64_t block::c_size() const { return _c_size; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size,
-                                           std::mutex *io_mutex, WalManager *wal)
+                                           std::mutex *io_mutex, compio::WalManager *wal)
     : cache(max_size),
       context{file, allocator, index, compressor, io_mutex, wal} {}
 

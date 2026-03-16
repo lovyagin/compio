@@ -1,10 +1,17 @@
 #include "compio/wal.hpp"
+#include "compio/compio_file.hpp"
+#include <vector>
+#include <iostream>
+#include <cinttypes> // for PRIu64
+
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
 #include <cstring>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <vector>
-#include <iostream>
+#endif
 
 // Use existing utils if possible, but FNV-1a is simple enough to include here
 // Or use utils.hpp
@@ -68,6 +75,8 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     }
     
     // Flush to OS buffer (not disk sync yet, caller calls sync())
+    if (fflush(wal_file_) != 0) return false;
+
     return true;
 }
 
@@ -78,11 +87,11 @@ bool WalManager::sync() {
     if (fflush(wal_file_) != 0) return false;
     
     // fsync
-    int fd = fileno(wal_file_);
 #ifdef _WIN32
-    // Windows equivalent? _commit(fd)
-    // For now assume POSIX or standard
+    int fd = _fileno(wal_file_);
+    if (_commit(fd) != 0) return false;
 #else
+    int fd = fileno(wal_file_);
     if (fsync(fd) != 0) return false;
 #endif
     return true;
@@ -126,8 +135,8 @@ bool WalManager::recover(FILE* archive_file) {
     if (!wal_in) return true; // No WAL, nothing to recover
 
     // Check size
-    fseek(wal_in, 0, SEEK_END);
-    long size = ftell(wal_in);
+    fseek64(wal_in, 0, SEEK_END);
+    int64_t size = ftell64(wal_in);
     rewind(wal_in);
     
     if (size == 0) {
@@ -135,47 +144,76 @@ bool WalManager::recover(FILE* archive_file) {
         return true;
     }
 
+    bool success = true;
     while (true) {
         uint8_t type_u8;
-        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) break; // EOF
+        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) {
+            if (feof(wal_in)) break; // Clean EOF
+            success = false;
+            break; // Read error
+        }
         
         uint64_t addr;
-        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) break; // Partial record
+        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) {
+            success = false;
+            break; // Partial record
+        }
         
         uint64_t data_size;
-        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) break;
+        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) {
+            success = false;
+            break;
+        }
         
         uint32_t expected_checksum;
-        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) break;
+        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) {
+            success = false;
+            break;
+        }
         
         std::vector<uint8_t> buffer(data_size);
         if (data_size > 0) {
-            if (fread(buffer.data(), 1, data_size, wal_in) != data_size) break;
+            if (fread(buffer.data(), 1, data_size, wal_in) != data_size) {
+                success = false;
+                break;
+            }
         }
         
         // Verify checksum
         if (calculate_checksum(buffer.data(), data_size) != expected_checksum) {
-            fprintf(stderr, "[WAL] Corrupt record at addr %lu. Stopping recovery.\n", addr);
+            fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Stopping recovery.\n", addr);
+            success = false;
             break; // Stop or fail? Stop prevents writing bad data.
         }
         
         // Apply to archive
-        fseek(archive_file, addr, SEEK_SET);
+        fseek64(archive_file, addr, SEEK_SET);
         if (fwrite(buffer.data(), 1, data_size, archive_file) != data_size) {
             fprintf(stderr, "[WAL] Failed to write recovered data to archive.\n");
-            fclose(wal_in);
-            return false;
+            success = false;
+            break;
         }
     }
     
     fclose(wal_in);
     
-    // Clear WAL after successful recovery?
-    // Usually yes, but only if we synced archive_file.
-    fflush(archive_file);
+    if (!success) {
+        fprintf(stderr, "[WAL] Recovery failed or incomplete. WAL file preserved.\n");
+        // Reopen for append? Or leave closed?
+        // Open logic usually expects WAL to be ready if we return true.
+        // Return false to signal failure.
+        return false;
+    }
+
+    // Clear WAL after successful recovery
+    // Sync archive first
+    if (fflush(archive_file) != 0) return false;
+#ifdef _WIN32
+    int fd = _fileno(archive_file);
+    if (_commit(fd) != 0) return false;
+#else
     int fd = fileno(archive_file);
-#ifndef _WIN32
-    fsync(fd);
+    if (fsync(fd) != 0) return false;
 #endif
 
     // Now clear WAL

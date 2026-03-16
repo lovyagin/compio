@@ -147,7 +147,7 @@ void header::read_from(FILE *file, uint64_t addr) {
     }
 }
 
-void header::write_to(FILE *file, uint64_t addr, void* wal_manager) const {
+void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     UNUSED(wal_manager);
     DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
     
@@ -213,7 +213,7 @@ void index_node::read_from(FILE *file, uint64_t addr) {
     validate();
 }
 
-void index_node::write_to(FILE *file, uint64_t addr, void* wal_manager) const {
+void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, (uint64_t)INDEX_NODE_SIZE(tree_degree));
     validate();
     
@@ -257,9 +257,13 @@ void index_node::write_to(FILE *file, uint64_t addr, void* wal_manager) const {
         }
     }
 
-    WalManager* wal = static_cast<WalManager*>(wal_manager);
-    if (wal) {
-        wal->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size());
+    if (wal_manager) {
+        if (!wal_manager->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size())) {
+            WARNING_PRINT("error: WAL log_write failed for index_node at addr=%" PRIu64 "\n", addr);
+        }
+        if (!wal_manager->sync()) {
+            WARNING_PRINT("error: WAL sync failed for index_node at addr=%" PRIu64 "\n", addr);
+        }
     }
 
     if (fseek64(file, addr, SEEK_SET))
@@ -348,7 +352,7 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
     }
 }
 
-void storage_block::write_to(FILE *file, uint64_t addr, void* wal_manager) const {
+void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE + size);
     assert(addr != 0);
     assert(size > 0);
@@ -380,9 +384,13 @@ void storage_block::write_to(FILE *file, uint64_t addr, void* wal_manager) const
         buffer.insert(buffer.end(), ptr, ptr + size);
     }
 
-    WalManager* wal = static_cast<WalManager*>(wal_manager);
-    if (wal) {
-        wal->log_write(WalRecordType::BLOCK, addr, buffer.data(), buffer.size());
+    if (wal_manager) {
+        if (!wal_manager->log_write(WalRecordType::BLOCK, addr, buffer.data(), buffer.size())) {
+            WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
+        }
+        if (!wal_manager->sync()) {
+             WARNING_PRINT("error: WAL sync failed for storage_block at addr=%" PRIu64 "\n", addr);
+        }
     }
 
     if (fseek64(file, addr, SEEK_SET))

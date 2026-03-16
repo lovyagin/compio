@@ -197,6 +197,10 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     char archive_open_mode[5];
     int mode_idx = 0;
     
+    // Fix: Force update (+) mode for 'w' and 'a' to allow internal reads (e.g. reading header in 'a' mode)
+    // This matches previous behavior where 'w'/'a' implied 'w+'/'a+' capability for the library.
+    bool force_plus = (mode_b & mode_bit::w) || (mode_b & mode_bit::a);
+
     if (mode_b & mode_bit::w) {
         archive_open_mode[mode_idx++] = 'w';
     } else if (mode_b & mode_bit::a) {
@@ -207,7 +211,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     
     archive_open_mode[mode_idx++] = 'b';
     
-    if (mode_b & mode_bit::plus) {
+    if ((mode_b & mode_bit::plus) || force_plus) {
         archive_open_mode[mode_idx++] = '+';
     }
     
@@ -226,17 +230,14 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     if (!(mode_b & mode_bit::w)) {
         if (wal->has_pending_recovery()) {
             // Need read-write access to file for recovery
-            bool can_write = (mode_b & mode_bit::plus) || (mode_b & mode_bit::a);
+            // We use the derived force_plus logic or explicit plus
+            bool can_write = (mode_b & mode_bit::plus) || (mode_b & mode_bit::a) || force_plus;
             
             if (!can_write) {
-                 // For read-only mode, we can't recover.
-                 // Should we fail or ignore? Ignoring is dangerous as data might be inconsistent.
-                 // But opening read-only shouldn't modify the file.
-                 // Maybe we should allow recovery if we can re-open as rw?
-                 // For now, let's warn and fail if WAL exists in read-only mode, 
-                 // or just ignore if user really wants to read potentially old data.
-                 // Better: Log warning.
-                 WARNING_PRINT("warning: WAL file exists but opening in read-only mode. Pending transactions ignored.\n");
+                 WARNING_PRINT("error: WAL file exists but opening in read-only mode. Cannot recover pending transactions.\n");
+                 fclose(file);
+                 errno = EROFS; // Read-only file system (or similar)
+                 return NULL;
             } else {
                 if (!wal->recover(file)) {
                     WARNING_PRINT("warning: WAL recovery failed\n");
@@ -250,11 +251,18 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
     } else {
         // "w" mode: truncate file. We should also clear any existing WAL.
-        wal->clear();
+        if (!wal->clear()) {
+            WARNING_PRINT("warning: failed to clear existing WAL file in 'w' mode\n");
+            fclose(file);
+            errno = EIO;
+            return NULL;
+        }
     }
     
     // Open WAL for writing if we are in write mode
-    if (!(mode_b & mode_bit::r)) {
+    // We can write if w, a, or + is set.
+    bool can_write_archive = (mode_b & mode_bit::w) || (mode_b & mode_bit::a) || (mode_b & mode_bit::plus);
+    if (can_write_archive) {
         if (!wal->open()) {
              WARNING_PRINT("warning: failed to open WAL file\n");
              // Fail?
@@ -362,7 +370,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     // initialize allocator before btree, because btree uses allocator for creating root node
-    archive->allocator = new compio::block_allocator(archive);
+    archive->allocator = new compio::block_allocator(archive, archive->wal.get());
     if (!archive->allocator) {
         WARNING_PRINT("warning: failed to allocate memory for allocator\n");
         goto no_allocator;
@@ -650,6 +658,13 @@ int compio_close_archive(compio_archive *archive) {
     // This ensures that the final state (including allocator updates) is written atomically to the alternate slot.
     // If we crash during this write, the previous valid header (in the other slot) is preserved.
     flush_header_double_buffered(archive);
+
+    // If WAL is enabled and we are closing cleanly, we should clear the WAL.
+    // At this point, all data is synced to the archive file (via flush and header update).
+    // The WAL is redundant now.
+    if (archive->wal) {
+        archive->wal->clear();
+    }
 
     // Destroy the header object. It is now clean (unmodified) because flush_header_double_buffered just wrote it.
     archive->header = {};

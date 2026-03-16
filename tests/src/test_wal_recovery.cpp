@@ -80,6 +80,7 @@ TEST_F(WalRecoveryTest, ClearsWalAfterSuccessfulOpen) {
     compio_config config;
     compio_build_default_config(&config);
     compio_archive* archive = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(archive, nullptr);
     compio_close_archive(archive);
 
     // 2. Create a WAL with some entries
