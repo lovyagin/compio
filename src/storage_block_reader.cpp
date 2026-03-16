@@ -1,5 +1,7 @@
 #define __STDC_FORMAT_MACROS
 #include "compio/storage_block_reader.hpp"
+#include "compio/wal.hpp"
+#include "compio/file.hpp"
 
 #include <cassert>
 #include <mutex>
@@ -113,11 +115,12 @@ block::~block() {
             "[B][destructor]: writing to file "
             "(new_addr=%" PRIu64 ",addr=%" PRIu64 ",original_size=%" PRIu64 ",size=%" PRIu64 ",is_compressed=%d,key.pos=%" PRIu64 ")\n",
             new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
+        
         if (context.io_mutex) {
             std::lock_guard<std::mutex> lock(*context.io_mutex);
-            b.write_to(context.file, new_addr);
+            b.write_to(context.file, new_addr, context.wal);
         } else {
-            b.write_to(context.file, new_addr);
+            b.write_to(context.file, new_addr, context.wal);
         }
 
         // block already in btree thanks to storage_block_reader
@@ -196,9 +199,9 @@ uint64_t block::c_size() const { return _c_size; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size,
-                                           std::mutex *io_mutex)
+                                           std::mutex *io_mutex, WalManager *wal)
     : cache(max_size),
-      context{file, allocator, index, compressor, io_mutex} {}
+      context{file, allocator, index, compressor, io_mutex, wal} {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,

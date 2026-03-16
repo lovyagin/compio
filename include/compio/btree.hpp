@@ -23,6 +23,8 @@
 
 namespace compio {
 
+class WalManager;
+
 using shared_node = smart_infile_object<index_node>;
 
 /**
@@ -38,8 +40,10 @@ struct node_reader {
      * @param file Pointer to the file handle for reading/writing nodes
      * @param tree_degree The degree of the B-Tree (branching factor)
      * @param max_size Maximum number of nodes to cache
+     * @param io_mutex Mutex for I/O operations
+     * @param wal WAL manager
      */
-    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex);
+    node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, std::mutex *io_mutex, WalManager *wal = nullptr);
 
     /**
      * @brief Read a node from the specified address
@@ -92,6 +96,7 @@ private:
     /** @brief File handle for reading/writing nodes */
     FILE *file;
     std::mutex *io_mutex;
+    WalManager *wal;
     /** @brief LRU cache for storing frequently accessed nodes */
     cache::lru_cache<uint64_t, shared_node> cache;
 };
@@ -119,9 +124,11 @@ struct btree {
      * @param allocator Pointer to allocator to allocate memory for index_nodes
      * @param file File handle for reading/writing B-Tree nodes
      * @param cache_size Maximum number of nodes to cache for performance optimization
+     * @param io_mutex Mutex for I/O operations
+     * @param wal WAL manager
      */
     btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
-          block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex);
+          block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex, WalManager *wal = nullptr);
 
     /**
      * @brief Insert a key-value pair into the B-Tree

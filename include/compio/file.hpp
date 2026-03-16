@@ -69,7 +69,7 @@ struct header : public infile_object {
     explicit header(uint32_t max_files);
 
     void read_from(FILE *file, uint64_t addr) override;
-    void write_to(FILE *file, uint64_t addr) const override;
+    void write_to(FILE *file, uint64_t addr, void* wal_manager = nullptr) const override;
 
     /** @brief On-disk size of this header (depends on ftable.max_files) */
     uint64_t disk_size() const;
@@ -112,6 +112,7 @@ struct header : public infile_object {
  *
  */
 struct index_node : public infile_object {
+    static constexpr uint8_t signature = 67;
     uint8_t is_leaf;                /**< Is this node a leaf */
     uint32_t num_keys;              /**< Number of used keys in node */
     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
@@ -130,7 +131,7 @@ struct index_node : public infile_object {
     index_node(int tree_degree);
 
     void read_from(FILE *file, uint64_t addr) override;
-    void write_to(FILE *file, uint64_t addr) const override;
+    void write_to(FILE *file, uint64_t addr, void* wal_manager = nullptr) const override;
     void validate() const;
 };
 
@@ -152,6 +153,7 @@ struct index_node : public infile_object {
  *
  */
 struct storage_block : public infile_object {
+    static constexpr uint8_t signature = 171;
     uint8_t is_compressed;           /**< Is this block compressed */
     uint64_t size;                   /**< Size of data array */
     uint64_t original_size;          /**< Original size (size of uncompressed data) */
@@ -170,7 +172,7 @@ struct storage_block : public infile_object {
     storage_block(uint64_t size);
 
     void read_from(FILE *file, uint64_t addr) override;
-    void write_to(FILE *file, uint64_t addr) const override;
+    void write_to(FILE *file, uint64_t addr, void* wal_manager = nullptr) const override;
 
     /**
      * @brief Calculate and store SHA-256 checksum of the data

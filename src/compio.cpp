@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cinttypes>
+#include <memory>
+#include <utility>
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
@@ -103,7 +105,7 @@ static smart_infile_object<compio::header> load_header_double_buffered(FILE *fil
     return smart_infile_object<compio::header>(file, chosen_addr, chosen_h, io_mutex, true);
 }
 
-compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *config)
+compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config)
     : current_header_slot(is_file_empty(file) ? 1 : 0),
       file(file),
       config(*config),
@@ -115,6 +117,7 @@ compio_archive::compio_archive(FILE *file, uint8_t mode_b, const compio_config *
       index(nullptr),
       block_reader(nullptr),
       allocator(nullptr),
+      wal(std::move(wal)),
       mode_b(mode_b),
       open_files_count(0) {
     // btree constructor is called in compio_open_archive to break
@@ -191,14 +194,24 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     // if w+ passed as mode, we have to clear file contents (using w+)
     // otherwise we open with a+ mode to read and write
-    const char *archive_open_mode;
+    char archive_open_mode[5];
+    int mode_idx = 0;
+    
     if (mode_b & mode_bit::w) {
-        archive_open_mode = "wb+";
+        archive_open_mode[mode_idx++] = 'w';
     } else if (mode_b & mode_bit::a) {
-        archive_open_mode = "ab+";
+        archive_open_mode[mode_idx++] = 'a';
     } else {
-        archive_open_mode = "rb";
+        archive_open_mode[mode_idx++] = 'r';
     }
+    
+    archive_open_mode[mode_idx++] = 'b';
+    
+    if (mode_b & mode_bit::plus) {
+        archive_open_mode[mode_idx++] = '+';
+    }
+    
+    archive_open_mode[mode_idx] = '\0';
 
     FILE *file;
     file = fopen(fp, archive_open_mode);
@@ -206,9 +219,54 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         return NULL;
     }
 
+    // Initialize WAL Manager
+    auto wal = std::make_unique<compio::WalManager>(fp);
+    
+    // Check for recovery (only if we are not creating a new file from scratch with "w")
+    if (!(mode_b & mode_bit::w)) {
+        if (wal->has_pending_recovery()) {
+            // Need read-write access to file for recovery
+            bool can_write = (mode_b & mode_bit::plus) || (mode_b & mode_bit::a);
+            
+            if (!can_write) {
+                 // For read-only mode, we can't recover.
+                 // Should we fail or ignore? Ignoring is dangerous as data might be inconsistent.
+                 // But opening read-only shouldn't modify the file.
+                 // Maybe we should allow recovery if we can re-open as rw?
+                 // For now, let's warn and fail if WAL exists in read-only mode, 
+                 // or just ignore if user really wants to read potentially old data.
+                 // Better: Log warning.
+                 WARNING_PRINT("warning: WAL file exists but opening in read-only mode. Pending transactions ignored.\n");
+            } else {
+                if (!wal->recover(file)) {
+                    WARNING_PRINT("warning: WAL recovery failed\n");
+                    // Continue anyway? Or fail? 
+                    // Fail seems safer.
+                    fclose(file);
+                    errno = EIO;
+                    return NULL;
+                }
+            }
+        }
+    } else {
+        // "w" mode: truncate file. We should also clear any existing WAL.
+        wal->clear();
+    }
+    
+    // Open WAL for writing if we are in write mode
+    if (!(mode_b & mode_bit::r)) {
+        if (!wal->open()) {
+             WARNING_PRINT("warning: failed to open WAL file\n");
+             // Fail?
+             fclose(file);
+             errno = EIO;
+             return NULL;
+        }
+    }
+
     compio_archive *archive = nullptr;
     try {
-        archive = new compio_archive(file, mode_b, c);
+        archive = new compio_archive(std::move(wal), file, mode_b, c);
     } catch (const std::exception& e) {
         WARNING_PRINT("warning: failed to initialize compio_archive: %s\n", e.what());
         fclose(file);
@@ -311,7 +369,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->index = new btree(c->b_tree_degree, mode_b & mode_bit::r, archive->header,
-                               archive->allocator, file, c->cache_size__nodes, &archive->io_mutex);
+                               archive->allocator, file, c->cache_size__nodes, &archive->io_mutex, archive->wal.get());
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto no_index;
@@ -319,7 +377,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     archive->block_reader = new compio::storage_block_reader(
         file, archive->allocator, archive->index,
-        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex);
+        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get());
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
