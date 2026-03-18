@@ -35,6 +35,7 @@ class WalManager {
     std::mutex mutex_;
     uint64_t current_transaction_id_;
     int transaction_depth_ = 0;
+    uint64_t current_wal_size_ = 0;
 
 public:
     explicit WalManager(const std::string& archive_path);
@@ -53,7 +54,8 @@ public:
     void begin_transaction();
 
     // Commit the current transaction
-    bool commit_transaction();
+    // Optional: provide archive_file and max_wal_size to trigger auto-checkpoint
+    bool commit_transaction(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
 
     // Rollback transaction (decrements depth without writing COMMIT record)
     void rollback_transaction();
@@ -104,7 +106,7 @@ public:
     TransactionGuard(const TransactionGuard&) = delete;
     TransactionGuard& operator=(const TransactionGuard&) = delete;
 
-    bool commit() {
+    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
         if (!wal_) return false;
         if (committed_) return true; // Already committed/attempted
         
@@ -113,7 +115,7 @@ public:
         // Current implementation of commit_transaction decrements depth unconditionally.
         // So we must mark as committed regardless of result to avoid double decrement 
         // (one in commit_transaction, one in ~TransactionGuard via rollback).
-        bool result = wal_->commit_transaction();
+        bool result = wal_->commit_transaction(archive_file, max_wal_size);
         committed_ = true;
         return result;
     }

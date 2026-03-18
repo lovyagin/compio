@@ -29,6 +29,7 @@ add_executable(compio_gtest
     src/test_max_files_scalability.cpp
     src/test_crash_protection.cpp
     src/test_wal_recovery.cpp
+    src/test_auto_checkpoint.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
