@@ -1135,7 +1135,10 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    txn.defer_commit(archive->file, archive->config.wal_max_size_bytes);
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+        errno = EIO;
+        return 0;
+    }
 
     return size;
 }
@@ -1273,7 +1276,10 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file, true);
 
-    txn.defer_commit(archive->file, archive->config.wal_max_size_bytes);
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+        errno = EIO;
+        return 0;
+    }
 
     return bytes_erased;
 }

@@ -2,7 +2,7 @@
 #include <filesystem>
 #include <vector>
 #include <cstring>
-#include <random>
+#include <cstdlib>
 #include "compio.h"
 #include "test_util.hpp"
 
@@ -66,7 +66,7 @@ TEST_F(AutoCheckpointTest, CheckpointOnSizeLimit) {
     EXPECT_EQ(wal_size, 0);
     
     // Verify data
-    compio_seek(file, 0, SEEK_SET);
+    compio_seek(file, 0, COMPIO_SEEK_SET);
     std::vector<uint8_t> read_buf(2000);
     ASSERT_EQ(compio_read(read_buf.data(), 2000, file), 2000);
     EXPECT_EQ(std::memcmp(read_buf.data(), data.data(), 2000), 0);

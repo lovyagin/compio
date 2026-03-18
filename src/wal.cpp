@@ -42,8 +42,18 @@ bool WalManager::open() {
     }
     
     // Initialize current WAL size
-    fseek64(wal_file_, 0, SEEK_END);
-    current_wal_size_ = ftell64(wal_file_);
+    if (fseek64(wal_file_, 0, SEEK_END) != 0) {
+        fclose(wal_file_);
+        wal_file_ = nullptr;
+        return false;
+    }
+    int64_t size = ftell64(wal_file_);
+    if (size < 0) {
+        fclose(wal_file_);
+        wal_file_ = nullptr;
+        return false;
+    }
+    current_wal_size_ = static_cast<uint64_t>(size);
     
     return true;
 }

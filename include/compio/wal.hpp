@@ -88,9 +88,6 @@ private:
 class TransactionGuard {
     WalManager* wal_;
     bool committed_;
-    bool commit_on_destruction_ = false;
-    FILE* archive_file_ = nullptr;
-    uint64_t max_wal_size_ = 0;
 
 public:
     explicit TransactionGuard(WalManager* wal) : wal_(wal), committed_(false) {
@@ -101,23 +98,13 @@ public:
 
     ~TransactionGuard() {
         if (wal_ && !committed_) {
-            if (commit_on_destruction_) {
-                wal_->commit_transaction(archive_file_, max_wal_size_);
-            } else {
-                wal_->rollback_transaction();
-            }
+            wal_->rollback_transaction();
         }
     }
 
     // Disable copy/move to keep it simple
     TransactionGuard(const TransactionGuard&) = delete;
     TransactionGuard& operator=(const TransactionGuard&) = delete;
-
-    void defer_commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
-        commit_on_destruction_ = true;
-        archive_file_ = archive_file;
-        max_wal_size_ = max_wal_size;
-    }
 
     bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
         if (!wal_) return false;
