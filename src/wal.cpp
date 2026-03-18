@@ -155,6 +155,28 @@ bool WalManager::sync() {
     return true;
 }
 
+bool WalManager::checkpoint() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    
+    // Can only checkpoint if no active transaction
+    if (transaction_depth_ > 0) return false;
+    
+    if (wal_file_) {
+        fclose(wal_file_);
+        wal_file_ = nullptr;
+    }
+    
+    // Truncate file
+    wal_file_ = fopen(wal_path_.c_str(), "wb"); // 'w' truncates
+    if (!wal_file_) return false;
+    fclose(wal_file_);
+    wal_file_ = nullptr;
+    
+    // Reopen in append mode
+    lock.unlock();
+    return open();
+}
+
 bool WalManager::clear() {
     std::unique_lock<std::mutex> lock(mutex_);
     if (wal_file_) {

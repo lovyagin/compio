@@ -64,6 +64,11 @@ public:
     // Clear the WAL (truncate) after a successful checkpoint
     bool clear();
 
+    // Checkpoint the WAL (sync main archive, then truncate WAL)
+    // Only works if transaction depth is 0.
+    // returns true on success, false if busy or error.
+    bool checkpoint();
+
     // Recover from WAL (replay records to the main archive file)
     // Returns true if recovery was successful or unnecessary (empty WAL)
     bool recover(FILE* archive_file);

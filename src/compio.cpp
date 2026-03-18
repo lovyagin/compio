@@ -8,6 +8,12 @@
 #include <memory>
 #include <utility>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
@@ -659,6 +665,21 @@ int compio_close_archive(compio_archive *archive) {
     // If we crash during this write, the previous valid header (in the other slot) is preserved.
     flush_header_double_buffered(archive);
 
+    // Ensure all data is physically on disk before clearing WAL.
+    // This prevents data loss if power fails between WAL clear and fclose.
+    if (fflush(archive->file) != 0) {
+        WARNING_PRINT("warning: fflush failed in compio_close_archive\n");
+    }
+#ifdef _WIN32
+    if (_commit(_fileno(archive->file)) != 0) {
+        WARNING_PRINT("warning: _commit failed in compio_close_archive\n");
+    }
+#else
+    if (fsync(fileno(archive->file)) != 0) {
+        WARNING_PRINT("warning: fsync failed in compio_close_archive\n");
+    }
+#endif
+
     // If WAL is enabled and we are closing cleanly, we should clear the WAL.
     // At this point, all data is synced to the archive file (via flush and header update).
     // The WAL is redundant now.
@@ -1254,5 +1275,28 @@ void compio_flush(compio_archive *archive) {
 
     if (fflush(archive->file)) {
         WARNING_PRINT("warning: fflush failed\n");
+    }
+    
+    // Now that everything is flushed to the OS buffer for the main file,
+    // and the WAL transaction is committed and synced (via commit_transaction),
+    // we can safely checkpoint.
+    //
+    // Checkpointing means:
+    // 1. fsync the main archive file (ensure data is durable).
+    // 2. Truncate the WAL (it is no longer needed since main file is up to date).
+    
+    if (wal_active && archive->wal) {
+#ifdef _WIN32
+        if (_commit(_fileno(archive->file)) != 0) {
+            WARNING_PRINT("warning: _commit failed in compio_flush checkpoint\n");
+        }
+#else
+        if (fsync(fileno(archive->file)) != 0) {
+            WARNING_PRINT("warning: fsync failed in compio_flush checkpoint\n");
+        }
+#endif
+        if (!archive->wal->checkpoint()) {
+             WARNING_PRINT("warning: WAL checkpoint failed\n");
+        }
     }
 }
