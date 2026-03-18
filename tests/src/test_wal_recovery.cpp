@@ -226,3 +226,45 @@ TEST_F(WalRecoveryTest, NestedTransactionsAreAtomic) {
     file.read(buf, 5);
     ASSERT_NE(std::string(buf), "INNER"); 
 }
+
+TEST_F(WalRecoveryTest, CompioFlushTruncatesWal) {
+    // 1. Create archive
+    compio_config config;
+    compio_build_default_config(&config);
+    config.block_size = 1024; // Small blocks
+    config.cache_size__blocks = 2; // Small cache to force evictions if we write many
+    
+    compio_archive* archive = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(archive, nullptr);
+    
+    // 2. Write enough data to trigger WAL activity
+    // Writing multiple blocks should cause cache evictions (writes to WAL)
+    // or at least put them in cache.
+    // compio_write itself doesn't guarantee WAL write until eviction or flush.
+    // But flush guarantees everything.
+    
+    compio_file* f = compio_open_file("test_file", archive);
+    ASSERT_NE(f, nullptr);
+    
+    std::vector<uint8_t> data(config.block_size * 5, 'D');
+    ASSERT_EQ(compio_write(data.data(), data.size(), f), data.size());
+    
+    // At this point, WAL might be empty or not, depending on cache eviction.
+    // But we want to test that flush truncates it.
+    
+    // Force a flush. This writes everything to WAL, syncs, then checkpoints (truncates).
+    compio_flush(archive);
+    
+    // Verify WAL is empty
+    ASSERT_TRUE(fs::exists(wal_filename));
+    ASSERT_EQ(fs::file_size(wal_filename), 0);
+    
+    // Verify data is still readable
+    std::vector<uint8_t> read_buf(data.size());
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_read(read_buf.data(), read_buf.size(), f), data.size());
+    ASSERT_EQ(read_buf, data);
+    
+    compio_close_file(f);
+    compio_close_archive(archive);
+}

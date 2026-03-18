@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #endif
 
 // Use existing utils if possible, but FNV-1a is simple enough to include here
@@ -81,8 +82,15 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
 }
 
 void WalManager::begin_transaction() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!wal_file_) return;
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!wal_file_) {
+        // We allow begin_transaction on unopened WAL to support read-only archives 
+        // that might call it via guards but never write.
+        // But if we intend to write, log_write will fail.
+        // We should track depth anyway to balance with commit/rollback.
+        transaction_depth_++;
+        return;
+    }
 
     if (transaction_depth_ == 0) {
         current_transaction_id_++;
@@ -91,12 +99,16 @@ void WalManager::begin_transaction() {
 }
 
 bool WalManager::commit_transaction() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!wal_file_) return false;
+    std::unique_lock<std::mutex> lock(mutex_);
+    
+    if (transaction_depth_ > 0) {
+        transaction_depth_--;
+    } else {
+        return false;
+    }
 
-    if (transaction_depth_ == 0) return false;
+    if (!wal_file_) return true; // No-op success for read-only scenario
 
-    transaction_depth_--;
     if (transaction_depth_ > 0) return true; // Nested commit, defer actual commit
 
     // Write COMMIT record
@@ -161,20 +173,28 @@ bool WalManager::checkpoint() {
     // Can only checkpoint if no active transaction
     if (transaction_depth_ > 0) return false;
     
-    if (wal_file_) {
-        fclose(wal_file_);
-        wal_file_ = nullptr;
-    }
+    if (!wal_file_) return true; // Nothing to truncate
+
+    if (fflush(wal_file_) != 0) return false;
+
+#ifdef _WIN32
+    int fd = _fileno(wal_file_);
+    if (_chsize_s(fd, 0) != 0) return false;
+    // Seek to beginning for subsequent writes
+    if (_lseek(fd, 0, SEEK_SET) == -1) return false;
+    if (_commit(fd) != 0) return false;
+#else
+    int fd = fileno(wal_file_);
+    if (ftruncate(fd, 0) != 0) return false;
+    // Seek to beginning for subsequent writes
+    if (lseek(fd, 0, SEEK_SET) < 0) return false;
+    if (fsync(fd) != 0) return false;
+#endif
+
+    // Update stdio buffer position as well
+    rewind(wal_file_);
     
-    // Truncate file
-    wal_file_ = fopen(wal_path_.c_str(), "wb"); // 'w' truncates
-    if (!wal_file_) return false;
-    fclose(wal_file_);
-    wal_file_ = nullptr;
-    
-    // Reopen in append mode
-    lock.unlock();
-    return open();
+    return true;
 }
 
 bool WalManager::clear() {
@@ -241,7 +261,13 @@ bool WalManager::recover(FILE* archive_file) {
         // Sanity check for data size to prevent OOM on corrupt WAL
         // 1GB limit seems reasonable for a single record? Or even smaller.
         // Block size is usually 4KB-64KB. Header is small.
-        if (data_size > 1024 * 1024 * 1024) { // 1GB
+        int64_t current_pos = ftell64(wal_in);
+        int64_t remaining = size - current_pos;
+        if (data_size > static_cast<uint64_t>(remaining)) {
+            // Record claims to be larger than remaining file size -> corrupt
+            break;
+        }
+        if (data_size > 64 * 1024 * 1024) { // 64MB hard limit for sanity
              break;
         }
 
@@ -261,6 +287,9 @@ bool WalManager::recover(FILE* archive_file) {
         
         if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
             // Validate COMMIT record structure: addr=0, size=0, checksum=valid
+            // And ensure we have seen valid records leading up to this commit.
+            // Since we don't track transaction boundaries in Pass 1, we just check
+            // that the COMMIT record itself is structurally valid.
             uint32_t valid_checksum = calculate_checksum(nullptr, 0);
             if (addr == 0 && data_size == 0 && expected_checksum == valid_checksum) {
                 valid_limit = ftell64(wal_in);

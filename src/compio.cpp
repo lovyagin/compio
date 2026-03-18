@@ -1247,12 +1247,18 @@ void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     
-    // Start atomic transaction for the entire flush operation
-    bool wal_active = false;
-    if (archive->wal && !(archive->mode_b & mode_bit::r)) {
-        archive->wal->begin_transaction();
-        wal_active = true;
-    }
+    // Check if we have write permission (w, a, or + modes)
+    // mode_bit::r is set for 'r' and 'r+'. 'w'/'a' don't set 'r'.
+    // So we need explicit check for write capability.
+    bool can_write = (archive->mode_b & mode_bit::w) || 
+                     (archive->mode_b & mode_bit::a) || 
+                     (archive->mode_b & mode_bit::plus);
+
+    // Start atomic transaction for the entire flush operation using RAII guard
+    // Pass nullptr if we shouldn't use WAL, so guard becomes no-op
+    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::TransactionGuard txn(wal_ptr);
+    bool wal_active = (wal_ptr != nullptr);
 
     // Track whether all durability operations succeed; used to decide if we can safely checkpoint.
     bool durable = true;
@@ -1262,7 +1268,7 @@ void compio_flush(compio_archive *archive) {
     if (archive->index) archive->index->clear_cache();
 
     // Save allocator state (updates header fields)
-    if (archive->allocator && !(archive->mode_b & mode_bit::r)) {
+    if (archive->allocator && can_write) {
          archive->allocator->save_state(archive);
     }
     
@@ -1270,8 +1276,8 @@ void compio_flush(compio_archive *archive) {
     flush_header_double_buffered(archive);
     
     // Commit transaction (this performs a single fsync on the WAL)
-    if (wal_active && archive->wal) {
-        if (!archive->wal->commit_transaction()) {
+    if (wal_active) {
+        if (!txn.commit()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
             durable = false;
         }
@@ -1290,7 +1296,7 @@ void compio_flush(compio_archive *archive) {
     // 1. fsync the main archive file (ensure data is durable).
     // 2. Truncate the WAL (it is no longer needed since main file is up to date).
     
-    if (wal_active && archive->wal && durable) {
+    if (wal_active && durable) {
         bool main_file_synced = true;
 #ifdef _WIN32
         if (_commit(_fileno(archive->file)) != 0) {
