@@ -164,6 +164,7 @@ typedef struct {
     uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
                                         percentage (1-100) */
     int max_files; /**< Maximum number of files in a single archive (default: COMPIO_MAX_FILES). Set to 0 to auto-detect on open. */
+    int wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
 } compio_config;
 
 /**

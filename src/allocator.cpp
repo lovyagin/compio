@@ -553,19 +553,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
-    compio::TransactionGuard txn(archive->wal.get());
-    if (archive->wal) {
-        if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
-            WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
-            // txn destructor will rollback automatically
-            return false;
-        }
-        if (!txn.commit()) {
-            WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
-            return false;
-        }
-    }
-
+    // Write to archive file first (buffered)
     DEBUG_PRINT("[W][allocator]addr=%" PRId64 ";size=%" PRIu32 "\n", pos, size);
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
@@ -574,6 +562,19 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
+    compio::TransactionGuard txn(archive->wal.get());
+    if (archive->wal) {
+        if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
+            WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
+            // txn destructor will rollback automatically
+            return false;
+        }
+        // Commit transaction (with optional auto-checkpoint)
+        if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+            WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
+            return false;
+        }
+    }
     archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
     archive->header->allocator_state_size = size;
     archive->header->file_size = static_cast<uint64_t>(pos) + size;

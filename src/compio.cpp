@@ -38,6 +38,7 @@ void compio_build_default_config(compio_config *result) {
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
+    result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -794,6 +795,14 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         return 0;
     }
 
+    // Start transaction
+    bool can_write = (archive->mode_b & mode_bit::w) || 
+                     (archive->mode_b & mode_bit::a) || 
+                     (archive->mode_b & mode_bit::plus);
+    
+    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::TransactionGuard txn(wal_ptr);
+
     // actual range in file, where we need to write (write-range)
     const uint64_t write_start = file->cursor;
     const uint64_t write_end = write_start + size;
@@ -920,6 +929,8 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     }
 
     validate_tree(archive->index, file);
+
+    txn.defer_commit(archive->file, archive->config.wal_max_size_bytes);
 
     assert(ptr_bytes_written == size);
     return size;
@@ -1051,6 +1062,14 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
+    // Start transaction
+    bool can_write = (archive->mode_b & mode_bit::w) || 
+                     (archive->mode_b & mode_bit::a) || 
+                     (archive->mode_b & mode_bit::plus);
+    
+    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::TransactionGuard txn(wal_ptr);
+
     const tree_key cursor_key = {file->hash, file->cursor};
     const auto key_val = archive->index->get_block(cursor_key);
 
@@ -1112,6 +1131,8 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
+    txn.defer_commit(archive->file, archive->config.wal_max_size_bytes);
+
     return size;
 }
 
@@ -1136,6 +1157,14 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         errno = EROFS;
         return 0;
     }
+
+    // Start transaction
+    bool can_write = (archive->mode_b & mode_bit::w) || 
+                     (archive->mode_b & mode_bit::a) || 
+                     (archive->mode_b & mode_bit::plus);
+    
+    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::TransactionGuard txn(wal_ptr);
 
     if (file->cursor > file->size) {
         return 0;
@@ -1240,6 +1269,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file, true);
 
+    txn.defer_commit(archive->file, archive->config.wal_max_size_bytes);
+
     return bytes_erased;
 }
 
@@ -1277,7 +1308,7 @@ void compio_flush(compio_archive *archive) {
     
     // Commit transaction (this performs a single fsync on the WAL)
     if (wal_active) {
-        if (!txn.commit()) {
+        if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
             durable = false;
         }

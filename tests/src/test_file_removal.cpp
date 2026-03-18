@@ -18,6 +18,8 @@ protected:
 
     void TearDown() override {
         std::remove(archive_path);
+        std::string wal_path = std::string(archive_path) + ".wal";
+        std::remove(wal_path.c_str());
     }
 };
 

@@ -15,6 +15,7 @@ protected:
 
     void TearDown() override {
         remove(filename.c_str());
+        remove((filename + ".wal").c_str());
     }
 
     // Helper to read entire file into vector

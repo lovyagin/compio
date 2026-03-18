@@ -23,7 +23,8 @@ namespace compio {
 WalManager::WalManager(const std::string& archive_path)
     : wal_path_(archive_path + ".wal"),
       wal_file_(nullptr),
-      current_transaction_id_(0) {}
+      current_transaction_id_(0),
+      current_wal_size_(0) {}
 
 WalManager::~WalManager() {
     close();
@@ -39,6 +40,11 @@ bool WalManager::open() {
         // Maybe try to create it? "ab+" should create if not exists.
         return false;
     }
+    
+    // Initialize current WAL size
+    fseek64(wal_file_, 0, SEEK_END);
+    current_wal_size_ = ftell64(wal_file_);
+    
     return true;
 }
 
@@ -75,8 +81,13 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
         if (fwrite(data, 1, size, wal_file_) != size) return false;
     }
     
-    // Flush to OS buffer (not disk sync yet, caller calls sync())
-    if (fflush(wal_file_) != 0) return false;
+    // Update size tracker
+    // Record size = 1 (type) + 8 (addr) + 8 (size) + 4 (checksum) + data_size
+    current_wal_size_ += (1 + 8 + 8 + 4 + size);
+
+    // Flush to OS buffer is DEFERRED until commit or sync
+    // This improves performance for batched writes.
+    // if (fflush(wal_file_) != 0) return false;
 
     return true;
 }
@@ -98,7 +109,7 @@ void WalManager::begin_transaction() {
     transaction_depth_++;
 }
 
-bool WalManager::commit_transaction() {
+bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
     std::unique_lock<std::mutex> lock(mutex_);
     
     if (transaction_depth_ > 0) {
@@ -124,6 +135,9 @@ bool WalManager::commit_transaction() {
     if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Size
     if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false; // Checksum
     
+    // Update size for COMMIT record (1+8+8+4 = 21 bytes)
+    current_wal_size_ += 21;
+
     if (fflush(wal_file_) != 0) return false;
 
     // Force sync for durability
@@ -134,6 +148,43 @@ bool WalManager::commit_transaction() {
     int fd = fileno(wal_file_);
     if (fsync(fd) != 0) return false;
 #endif
+
+    // Auto-Checkpoint if size exceeds limit and archive_file is provided
+    if (archive_file && max_wal_size > 0 && current_wal_size_ >= max_wal_size) {
+        // Must release lock for a moment? No, checkpoint takes lock.
+        // Wait, checkpoint takes unique_lock. But we already hold lock.
+        // We need an internal checkpoint function or recursive mutex?
+        // Or just implement logic here.
+        // Checkpoint logic: Sync Archive -> Flush WAL -> Truncate WAL -> Seek 0 -> Sync WAL.
+        
+        // 1. Sync Archive
+        if (fflush(archive_file) != 0) return false;
+#ifdef _WIN32
+        int arch_fd = _fileno(archive_file);
+        if (_commit(arch_fd) != 0) return false;
+#else
+        int arch_fd = fileno(archive_file);
+        if (fsync(arch_fd) != 0) return false;
+#endif
+
+        // 2. Truncate WAL (reuse checkpoint logic but without locking again)
+        // We can extract checkpoint logic to a private method `checkpoint_locked`.
+        // Or just copy it here since it is short.
+        
+        if (fflush(wal_file_) != 0) return false;
+
+#ifdef _WIN32
+        if (_chsize_s(fd, 0) != 0) return false;
+        if (_lseek(fd, 0, SEEK_SET) == -1) return false;
+        if (_commit(fd) != 0) return false;
+#else
+        if (ftruncate(fd, 0) != 0) return false;
+        if (lseek(fd, 0, SEEK_SET) < 0) return false;
+        if (fsync(fd) != 0) return false;
+#endif
+        rewind(wal_file_);
+        current_wal_size_ = 0;
+    }
 
     return true;
 }
@@ -193,6 +244,7 @@ bool WalManager::checkpoint() {
 
     // Update stdio buffer position as well
     rewind(wal_file_);
+    current_wal_size_ = 0;
     
     return true;
 }
