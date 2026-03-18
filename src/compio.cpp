@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include <memory>
 #include <utility>
+#include <cerrno>
 
 #ifdef _WIN32
 #include <io.h>
@@ -930,7 +931,10 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    txn.defer_commit(archive->file, archive->config.wal_max_size_bytes);
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+        errno = EIO;
+        return ptr_bytes_written;
+    }
 
     assert(ptr_bytes_written == size);
     return size;
