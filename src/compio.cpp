@@ -1254,6 +1254,9 @@ void compio_flush(compio_archive *archive) {
         wal_active = true;
     }
 
+    // Track whether all durability operations succeed; used to decide if we can safely checkpoint.
+    bool durable = true;
+
     if (archive->block_reader) archive->block_reader->clear_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index) archive->index->clear_cache();
@@ -1270,33 +1273,46 @@ void compio_flush(compio_archive *archive) {
     if (wal_active && archive->wal) {
         if (!archive->wal->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
+            durable = false;
         }
     }
 
     if (fflush(archive->file)) {
         WARNING_PRINT("warning: fflush failed\n");
+        durable = false;
     }
     
     // Now that everything is flushed to the OS buffer for the main file,
     // and the WAL transaction is committed and synced (via commit_transaction),
-    // we can safely checkpoint.
+    // we can safely checkpoint, but only if all durability steps have succeeded.
     //
     // Checkpointing means:
     // 1. fsync the main archive file (ensure data is durable).
     // 2. Truncate the WAL (it is no longer needed since main file is up to date).
     
-    if (wal_active && archive->wal) {
+    if (wal_active && archive->wal && durable) {
+        bool main_file_synced = true;
 #ifdef _WIN32
         if (_commit(_fileno(archive->file)) != 0) {
             WARNING_PRINT("warning: _commit failed in compio_flush checkpoint\n");
+            main_file_synced = false;
         }
 #else
         if (fsync(fileno(archive->file)) != 0) {
             WARNING_PRINT("warning: fsync failed in compio_flush checkpoint\n");
+            main_file_synced = false;
         }
 #endif
-        if (!archive->wal->checkpoint()) {
-             WARNING_PRINT("warning: WAL checkpoint failed\n");
+        if (!main_file_synced) {
+            WARNING_PRINT("warning: skipping WAL checkpoint due to main file sync failure\n");
+        } else {
+            if (!archive->wal->checkpoint()) {
+                 WARNING_PRINT("warning: WAL checkpoint failed\n");
+            }
         }
+    } else if (wal_active && archive->wal && !durable) {
+        // We had a durability failure earlier (e.g., WAL commit or fflush);
+        // do not truncate the WAL so that recovery remains possible.
+        WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
     }
 }
