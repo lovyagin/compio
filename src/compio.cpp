@@ -8,6 +8,12 @@
 #include <memory>
 #include <utility>
 
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
@@ -659,6 +665,21 @@ int compio_close_archive(compio_archive *archive) {
     // If we crash during this write, the previous valid header (in the other slot) is preserved.
     flush_header_double_buffered(archive);
 
+    // Ensure all data is physically on disk before clearing WAL.
+    // This prevents data loss if power fails between WAL clear and fclose.
+    if (fflush(archive->file) != 0) {
+        WARNING_PRINT("warning: fflush failed in compio_close_archive\n");
+    }
+#ifdef _WIN32
+    if (_commit(_fileno(archive->file)) != 0) {
+        WARNING_PRINT("warning: _commit failed in compio_close_archive\n");
+    }
+#else
+    if (fsync(fileno(archive->file)) != 0) {
+        WARNING_PRINT("warning: fsync failed in compio_close_archive\n");
+    }
+#endif
+
     // If WAL is enabled and we are closing cleanly, we should clear the WAL.
     // At this point, all data is synced to the archive file (via flush and header update).
     // The WAL is redundant now.
@@ -1226,19 +1247,28 @@ void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     
-    // Start atomic transaction for the entire flush operation
-    bool wal_active = false;
-    if (archive->wal && !(archive->mode_b & mode_bit::r)) {
-        archive->wal->begin_transaction();
-        wal_active = true;
-    }
+    // Check if we have write permission (w, a, or + modes)
+    // mode_bit::r is set for 'r' and 'r+'. 'w'/'a' don't set 'r'.
+    // So we need explicit check for write capability.
+    bool can_write = (archive->mode_b & mode_bit::w) || 
+                     (archive->mode_b & mode_bit::a) || 
+                     (archive->mode_b & mode_bit::plus);
+
+    // Start atomic transaction for the entire flush operation using RAII guard
+    // Pass nullptr if we shouldn't use WAL, so guard becomes no-op
+    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::TransactionGuard txn(wal_ptr);
+    bool wal_active = (wal_ptr != nullptr);
+
+    // Track whether all durability operations succeed; used to decide if we can safely checkpoint.
+    bool durable = true;
 
     if (archive->block_reader) archive->block_reader->clear_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index) archive->index->clear_cache();
 
     // Save allocator state (updates header fields)
-    if (archive->allocator && !(archive->mode_b & mode_bit::r)) {
+    if (archive->allocator && can_write) {
          archive->allocator->save_state(archive);
     }
     
@@ -1246,13 +1276,49 @@ void compio_flush(compio_archive *archive) {
     flush_header_double_buffered(archive);
     
     // Commit transaction (this performs a single fsync on the WAL)
-    if (wal_active && archive->wal) {
-        if (!archive->wal->commit_transaction()) {
+    if (wal_active) {
+        if (!txn.commit()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
+            durable = false;
         }
     }
 
     if (fflush(archive->file)) {
         WARNING_PRINT("warning: fflush failed\n");
+        durable = false;
+    }
+    
+    // Now that everything is flushed to the OS buffer for the main file,
+    // and the WAL transaction is committed and synced (via commit_transaction),
+    // we can safely checkpoint, but only if all durability steps have succeeded.
+    //
+    // Checkpointing means:
+    // 1. fsync the main archive file (ensure data is durable).
+    // 2. Truncate the WAL (it is no longer needed since main file is up to date).
+    
+    if (wal_active && durable) {
+        bool main_file_synced = true;
+#ifdef _WIN32
+        if (_commit(_fileno(archive->file)) != 0) {
+            WARNING_PRINT("warning: _commit failed in compio_flush checkpoint\n");
+            main_file_synced = false;
+        }
+#else
+        if (fsync(fileno(archive->file)) != 0) {
+            WARNING_PRINT("warning: fsync failed in compio_flush checkpoint\n");
+            main_file_synced = false;
+        }
+#endif
+        if (!main_file_synced) {
+            WARNING_PRINT("warning: skipping WAL checkpoint due to main file sync failure\n");
+        } else {
+            if (!archive->wal->checkpoint()) {
+                 WARNING_PRINT("warning: WAL checkpoint failed\n");
+            }
+        }
+    } else if (wal_active && archive->wal && !durable) {
+        // We had a durability failure earlier (e.g., WAL commit or fflush);
+        // do not truncate the WAL so that recovery remains possible.
+        WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
     }
 }

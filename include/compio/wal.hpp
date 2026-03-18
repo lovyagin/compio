@@ -64,6 +64,13 @@ public:
     // Clear the WAL (truncate) after a successful checkpoint
     bool clear();
 
+    // Checkpoint the WAL (sync main archive, then truncate WAL)
+    // Only works if transaction depth is 0.
+    // NOTE: The caller MUST ensure the main archive file is fully synced (fsync/flush)
+    // BEFORE calling this method. This method only truncates the WAL.
+    // returns true on success, false if busy or error.
+    bool checkpoint();
+
     // Recover from WAL (replay records to the main archive file)
     // Returns true if recovery was successful or unnecessary (empty WAL)
     bool recover(FILE* archive_file);
@@ -73,6 +80,43 @@ public:
 
 private:
     uint32_t calculate_checksum(const void* data, uint64_t size);
+};
+
+// RAII Guard for WAL Transactions
+class TransactionGuard {
+    WalManager* wal_;
+    bool committed_;
+
+public:
+    explicit TransactionGuard(WalManager* wal) : wal_(wal), committed_(false) {
+        if (wal_) {
+            wal_->begin_transaction();
+        }
+    }
+
+    ~TransactionGuard() {
+        if (wal_ && !committed_) {
+            wal_->rollback_transaction();
+        }
+    }
+
+    // Disable copy/move to keep it simple
+    TransactionGuard(const TransactionGuard&) = delete;
+    TransactionGuard& operator=(const TransactionGuard&) = delete;
+
+    bool commit() {
+        if (!wal_) return false;
+        if (committed_) return true; // Already committed/attempted
+        
+        // Mark as committed before calling, or assume commit_transaction 
+        // handles its own state. 
+        // Current implementation of commit_transaction decrements depth unconditionally.
+        // So we must mark as committed regardless of result to avoid double decrement 
+        // (one in commit_transaction, one in ~TransactionGuard via rollback).
+        bool result = wal_->commit_transaction();
+        committed_ = true;
+        return result;
+    }
 };
 
 } // namespace compio
