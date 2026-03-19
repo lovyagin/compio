@@ -15,6 +15,11 @@ using namespace compio;
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
+static size_t portable_strnlen(const char *s, size_t maxlen) {
+    const char *end = (const char *)memchr(s, '\0', maxlen);
+    return end ? (size_t)(end - s) : maxlen;
+}
+
 static const uint8_t index_node_signature = 67;
 static const uint8_t storage_block_signature = 171;
 
@@ -502,6 +507,43 @@ files_table::files_table(uint32_t max_files)
     : n_files(0), max_files(max_files), files(max_files) {
 }
 
+files_table::files_table(const files_table& other)
+    : n_files(other.n_files), max_files(other.max_files), files(other.files) {
+    // Index map is transient, but we must rebuild it so the new copy is usable for lookups
+    rebuild_index();
+}
+
+files_table& files_table::operator=(const files_table& other) {
+    if (this != &other) {
+        n_files = other.n_files;
+        max_files = other.max_files;
+        files = other.files;
+        // Rebuild index in the target
+        rebuild_index();
+    }
+    return *this;
+}
+
+files_table::files_table(files_table&& other) noexcept
+    : n_files(other.n_files), max_files(other.max_files),
+      files(std::move(other.files)), index_map_(std::move(other.index_map_)) {
+    other.n_files = 0;
+    other.max_files = 0;
+}
+
+files_table& files_table::operator=(files_table&& other) noexcept {
+    if (this != &other) {
+        n_files = other.n_files;
+        max_files = other.max_files;
+        files = std::move(other.files);
+        index_map_ = std::move(other.index_map_);
+        
+        other.n_files = 0;
+        other.max_files = 0;
+    }
+    return *this;
+}
+
 void files_table::rebuild_index() {
     index_map_.clear();
     index_map_.reserve(n_files);
@@ -522,7 +564,7 @@ const files_table::file *files_table::find(const char *name) const {
     // Construct key. 
     // We must handle names longer than MAX_SIZE by truncating, as add() does.
     std::string key;
-    size_t len = strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
     if (len >= COMPIO_FNAME_MAX_SIZE) {
         // Name is at least COMPIO_FNAME_MAX_SIZE bytes long (or not NUL-terminated);
         // mimic add() truncation by limiting to COMPIO_FNAME_MAX_SIZE - 1 characters.
@@ -573,11 +615,12 @@ int files_table::remove(const char *name) {
     
     // Find index first
     std::string key;
-    size_t len = strlen(name);
+    // Use portable_strnlen to avoid scanning unbounded memory if not null-terminated
+    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
     if (len >= COMPIO_FNAME_MAX_SIZE) {
         key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
     } else {
-        key = name;
+        key.assign(name, len);
     }
     
     auto it = index_map_.find(key);

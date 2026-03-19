@@ -41,6 +41,10 @@ struct files_table {
 
     files_table();
     explicit files_table(uint32_t max_files);
+    files_table(const files_table& other); // Custom copy constructor to skip index map
+    files_table& operator=(const files_table& other); // Custom assignment operator
+    files_table(files_table&& other) noexcept; // Custom move constructor
+    files_table& operator=(files_table&& other) noexcept; // Custom move assignment operator
 
     const file *find(const char *name) const;
     file *find(const char *name);

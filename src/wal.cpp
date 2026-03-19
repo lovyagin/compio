@@ -487,9 +487,18 @@ bool WalManager::recover(FILE* archive_file) {
     if (fsync(fd) != 0) return false;
 #endif
 
-    // Now clear WAL
+    // Now clear WAL (durable truncation)
     FILE* wal_trunc = fopen(wal_path_.c_str(), "wb");
-    if (wal_trunc) fclose(wal_trunc);
+    if (wal_trunc) {
+        if (fflush(wal_trunc) == 0) {
+#ifdef _WIN32
+            _commit(_fileno(wal_trunc));
+#else
+            fsync(fileno(wal_trunc));
+#endif
+        }
+        fclose(wal_trunc);
+    }
 
     // Reopen for append
     lock.unlock();

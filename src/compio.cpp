@@ -90,17 +90,17 @@ static smart_infile_object<compio::header> load_header_double_buffered(FILE *fil
     if (validA && validB) {
         if (hA.sequence_id >= hB.sequence_id) {
             chosen_slot = 0;
-            chosen_h = new compio::header(hA);
+            chosen_h = new compio::header(std::move(hA));
         } else {
             chosen_slot = 1;
-            chosen_h = new compio::header(hB);
+            chosen_h = new compio::header(std::move(hB));
         }
     } else if (validA) {
         chosen_slot = 0;
-        chosen_h = new compio::header(hA);
+        chosen_h = new compio::header(std::move(hA));
     } else if (validB) {
         chosen_slot = 1;
-        chosen_h = new compio::header(hB);
+        chosen_h = new compio::header(std::move(hB));
     } else {
         WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Unable to open archive.\n");
         throw std::runtime_error("Both archive headers are corrupted");
