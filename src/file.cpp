@@ -589,6 +589,13 @@ files_table::file *files_table::add(const char *name) {
     if (n_files >= max_files)
         return NULL;
     if (!name) return NULL;
+    
+    // Check if it already exists using string_view lookup
+    // If so, return existing entry to prevent duplicates.
+    auto it = index_map_.find(name);
+    if (it != index_map_.end()) {
+        return &files[it->second];
+    }
         
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE - 1);
     files[n_files].name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
@@ -596,10 +603,8 @@ files_table::file *files_table::add(const char *name) {
     
     // Update index
     // Use string_view to avoid allocation. Points to files[n_files].name.
-    // If duplicate exists, map keeps pointing to the FIRST one (old index).
-    if (index_map_.find(files[n_files].name) == index_map_.end()) {
-        index_map_.emplace(files[n_files].name, n_files);
-    }
+    // Map points to this new entry.
+    index_map_.emplace(files[n_files].name, n_files);
     
     return &files[n_files++];
 }
