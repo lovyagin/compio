@@ -147,6 +147,13 @@ TEST_F(FileRemovalTest, RemoveMiddleFilePreservesOthers) {
     // Remove middle file
     EXPECT_EQ(compio_remove_file(archive, "file2.txt"), 0);
     
+    // Verify file2 is gone or recreated empty
+    compio_file* f2 = compio_open_file("file2.txt", archive);
+    if (f2 != nullptr) {
+        EXPECT_EQ(f2->size, 0);
+        compio_close_file(f2);
+    }
+    
     // Check file1 is still there and has data
     compio_file* f1 = compio_open_file("file1.txt", archive);
     ASSERT_NE(f1, nullptr);
