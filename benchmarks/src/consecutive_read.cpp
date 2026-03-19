@@ -83,7 +83,7 @@ static void BM_stdio_ConsecutiveRead(benchmark::State &state) {
         benchmark::Counter(0, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 #endif
 
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 static void BM_compio_ConsecutiveRead(benchmark::State &state) {
@@ -188,7 +188,7 @@ static void BM_compio_ConsecutiveRead(benchmark::State &state) {
 
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
 
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {

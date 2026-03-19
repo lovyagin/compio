@@ -34,6 +34,7 @@ protected:
     void TearDown() override {
         compio_close_archive(archive);
         remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
     }
 
     // Helper to create allocator with specific strategy

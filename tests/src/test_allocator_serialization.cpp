@@ -21,7 +21,9 @@ protected:
 
     void TearDown() override {
         remove(fn1);
+        remove((std::string(fn1) + ".wal").c_str());
         remove(fn2);
+        remove((std::string(fn2) + ".wal").c_str());
     }
 };
 

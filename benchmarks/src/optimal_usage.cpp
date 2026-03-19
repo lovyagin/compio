@@ -173,7 +173,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
     state.counters["file_size"] = get_file_size(fn.c_str());
     state.counters[is_write ? "n_bytes_written" : "n_bytes_read"] =
         static_cast<double>(total_bytes_processed) / state.iterations();
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 static void BM_compio_OptimalUsage(benchmark::State &state) {
@@ -321,7 +321,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         static_cast<double>(get_n_read_bytes() - n_bytes_read) / state.iterations();
 #endif
 
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {

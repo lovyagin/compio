@@ -74,7 +74,7 @@ int main() {
         compio_close_archive(archive);
     }
 
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 
     return 0;
 }

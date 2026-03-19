@@ -37,6 +37,7 @@ protected:
         delete allocator2;
         compio_close_archive(archive);
         remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -254,6 +255,7 @@ protected:
     void TearDown() override {
         delete_archive_and_allocator();
         remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
     }
 };
 

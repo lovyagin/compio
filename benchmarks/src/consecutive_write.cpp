@@ -54,6 +54,7 @@ static void BM_stdio_ConsecutiveWrite(benchmark::State &state) {
 #endif
 
     remove(fn.c_str());
+    remove((fn + ".wal").c_str());
 }
 
 static void BM_compio_ConsecutiveWrite(benchmark::State &state) {
@@ -120,6 +121,7 @@ static void BM_compio_ConsecutiveWrite(benchmark::State &state) {
         get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
     remove(fn.c_str());
+    remove((fn + ".wal").c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {

@@ -73,7 +73,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -156,7 +156,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(FileShrinkTest, HeaderFileSizeShrinks) {
@@ -210,7 +210,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(IncompressibleDataTest, RandomDataIntactAfterDefrag) {
@@ -267,7 +267,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
@@ -329,7 +329,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(MultiBlockFileDefragTest, LargeFileIntactAfterDefragWithNeighbours) {
@@ -390,7 +390,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(RepeatedCycleTest, TenCyclesDataIntact) {

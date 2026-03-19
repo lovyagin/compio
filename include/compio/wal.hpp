@@ -50,6 +50,13 @@ public:
     // Write a record to the WAL
     bool log_write(WalRecordType type, uint64_t addr, const void* data, uint64_t size);
 
+    struct iovec_buf {
+        const void* data;
+        uint64_t size;
+    };
+    // Write a vectored record to the WAL (prevents allocation for combining buffers)
+    bool log_write_vectored(WalRecordType type, uint64_t addr, const std::vector<iovec_buf>& buffers);
+
     // Begin a new transaction
     void begin_transaction();
 
@@ -66,7 +73,7 @@ public:
     // Clear the WAL (truncate) after a successful checkpoint
     bool clear();
 
-    // Checkpoint the WAL (sync main archive, then truncate WAL)
+    // Checkpoint the WAL (truncate WAL after archive sync)
     // Only works if transaction depth is 0.
     // NOTE: The caller MUST ensure the main archive file is fully synced (fsync/flush)
     // BEFORE calling this method. This method only truncates the WAL.
