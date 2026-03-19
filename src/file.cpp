@@ -561,8 +561,16 @@ const files_table::file *files_table::find(const char *name) const {
     if (n_files == 0) return nullptr;
     if (!name) return nullptr;
     
-    // Find with string_view conversion
-    auto it = index_map_.find(name);
+    // Construct lookup key with truncation logic
+    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    std::string_view key;
+    if (len >= COMPIO_FNAME_MAX_SIZE) {
+        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
+    } else {
+        key = std::string_view(name, len);
+    }
+    
+    auto it = index_map_.find(key);
     if (it != index_map_.end()) {
         return &files[it->second];
     }
@@ -599,8 +607,17 @@ files_table::file *files_table::add(const char *name) {
 int files_table::remove(const char *name) {
     if (!name) return -1;
     
-    // Find index first using string_view lookup (implicit conversion)
-    auto it = index_map_.find(name);
+    // Construct lookup key with truncation logic (same as old behavior)
+    // Use string_view to avoid allocation.
+    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    std::string_view key;
+    if (len >= COMPIO_FNAME_MAX_SIZE) {
+        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
+    } else {
+        key = std::string_view(name, len);
+    }
+    
+    auto it = index_map_.find(key);
     if (it == index_map_.end()) {
         return -1;
     }
