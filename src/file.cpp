@@ -34,7 +34,7 @@ static void swap_uint64(uint64_t* val) {
 }
 
 // Helper to batch read files table
-static void read_files_batched(FILE* file, files_table& ftable) {
+static bool read_files_batched(FILE* file, files_table& ftable) {
     const size_t BATCH_SIZE = 4096; // 4096 files * 40 bytes = ~160KB buffer
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t); // 32 + 8 = 40
     
@@ -43,7 +43,9 @@ static void read_files_batched(FILE* file, files_table& ftable) {
     
     std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
     
-    size_t remaining = ftable.n_files;
+    // Read all max_files slots because the checksum covers the entire table
+    // (including unused slots), and we must advance the file pointer correctly.
+    size_t remaining = ftable.max_files;
     size_t current_idx = 0;
     bool is_be = is_big_endian();
     
@@ -51,14 +53,11 @@ static void read_files_batched(FILE* file, files_table& ftable) {
         size_t count = std::min(remaining, BATCH_SIZE);
         size_t bytes_to_read = count * ENTRY_SIZE;
         
-        if (fread(buffer.data(), 1, bytes_to_read, file) != bytes_to_read) {
-            // Error handling handled by caller via validation?
-            // load_and_validate checks checksum later.
-            // But if we fail here, we might crash or have partial data.
-            // Just fill with zeros or stop?
-            // The original code used lendian_fread which warns but continues (returns partial).
-            // We should arguably stop, but let's continue to match behavior + checksum check.
-            break;
+        size_t read_count = fread(buffer.data(), 1, bytes_to_read, file);
+        if (read_count != bytes_to_read) {
+            WARNING_PRINT("warning: short read in files table (expected %zu, got %zu)\n", 
+                          bytes_to_read, read_count);
+            return false;
         }
         
         for (size_t i = 0; i < count; ++i) {
@@ -80,10 +79,11 @@ static void read_files_batched(FILE* file, files_table& ftable) {
         current_idx += count;
         remaining -= count;
     }
+    return true;
 }
 
 // Helper to batch write files table
-static void write_files_batched(FILE* file, const files_table& ftable) {
+static bool write_files_batched(FILE* file, const files_table& ftable) {
     const size_t BATCH_SIZE = 4096;
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
     
@@ -112,11 +112,15 @@ static void write_files_batched(FILE* file, const files_table& ftable) {
         }
         
         size_t bytes_to_write = count * ENTRY_SIZE;
-        fwrite(buffer.data(), 1, bytes_to_write, file);
+        if (fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
+            WARNING_PRINT("warning: short write in files table\n");
+            return false;
+        }
         
         current_idx += count;
         remaining -= count;
     }
+    return true;
 }
 
 header::header()
@@ -226,7 +230,9 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     }
     
     // Batched read for performance (O(N) -> O(N/BATCH))
-    read_files_batched(file, ftable);
+    if (!read_files_batched(file, ftable)) {
+        return false;
+    }
     
     // Rebuild the lookup map since we bypassed add()
     ftable.rebuild_index();
@@ -325,7 +331,9 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
     lendian_fwrite_member(ftable.n_files, file);
     
     // Batched write for performance
-    write_files_batched(file, ftable);
+    if (!write_files_batched(file, ftable)) {
+         DEBUG_PRINT("warning: write_files_batched failed\n");
+    }
 }
 
 void index_node::read_from(FILE *file, uint64_t addr) {
@@ -682,9 +690,18 @@ files_table::file *files_table::add(const char *name) {
         return NULL;
     if (!name) return NULL;
     
+    // Create bounded string_view
+    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    std::string_view key;
+    if (len >= COMPIO_FNAME_MAX_SIZE) {
+        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
+    } else {
+        key = std::string_view(name, len);
+    }
+    
     // Check if it already exists using string_view lookup
     // If so, return existing entry to prevent duplicates.
-    auto it = index_map_.find(name);
+    auto it = index_map_.find(key);
     if (it != index_map_.end()) {
         return &files[it->second];
     }
@@ -696,7 +713,10 @@ files_table::file *files_table::add(const char *name) {
     // Update index
     // Use string_view to avoid allocation. Points to files[n_files].name.
     // Map points to this new entry.
-    index_map_.emplace(files[n_files].name, n_files);
+    // Explicitly construct bounded string_view to avoid scanning past safe bounds (though it is null-terminated)
+    // and match the logic used in find/remove.
+    std::string_view stored_key(files[n_files].name, key.length());
+    index_map_.emplace(stored_key, n_files);
     
     return &files[n_files++];
 }
@@ -737,7 +757,11 @@ int files_table::remove(const char *name) {
         
         // 2. Check if the last file is indexed and needs update.
         // It might be indexed (pointing to last_idx) or shadowed by a duplicate.
-        auto last_it = index_map_.find(last_name_ptr);
+        // Use bounded string_view for safety
+        size_t last_len = portable_strnlen(last_name_ptr, COMPIO_FNAME_MAX_SIZE);
+        std::string_view last_key(last_name_ptr, last_len < COMPIO_FNAME_MAX_SIZE ? last_len : COMPIO_FNAME_MAX_SIZE - 1);
+        
+        auto last_it = index_map_.find(last_key);
         
         // We need to update index if it points to last_idx.
         // Note: If last_name == name (of deleted file), last_it would have been 'it'
@@ -767,7 +791,10 @@ int files_table::remove(const char *name) {
         
         // 4. Update index for the moved file
         if (update_index) {
-            index_map_[files[i].name] = i;
+            // Reconstruct string_view pointing to the NEW location (files[i].name)
+            // Length is known (last_key.length())
+            std::string_view new_key(files[i].name, last_key.length());
+            index_map_[new_key] = i;
         }
     } else {
         // Removing the last element. Just decrement count.
