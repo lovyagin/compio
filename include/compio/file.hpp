@@ -11,13 +11,13 @@
 #include <cstdio>
 #include <memory>
 #include <vector>
-#include <unordered_map>
 #include <string>
 #include <string_view>
 
 #include "compio/infile_object.hpp"
 #include "compio/tree_types.hpp"
 #include "compio/sha256.hpp"
+#include "compio/detail/flat_map.hpp"
 #include "compio.h"
 
 namespace compio {
@@ -35,13 +35,6 @@ struct files_table {
     };
     std::vector<file> files;
     
-    // Hash map for fast O(1) file lookups by name.
-    // Maps filename (std::string_view) to index in 'files' vector.
-    // Transient (not serialized to disk), rebuilt on load/add/remove.
-    // Key points to storage inside 'files' vector, so pointers must be stable.
-    // Since 'files' is pre-allocated to max_files, pointers are stable.
-    std::unordered_map<std::string_view, uint32_t> index_map_;
-
     files_table();
     explicit files_table(uint32_t max_files);
     files_table(const files_table& other); // Custom copy constructor to skip index map
@@ -56,6 +49,15 @@ struct files_table {
     
     // Rebuild the index_map from the current files vector
     void rebuild_index();
+
+private:
+    // Hash map for fast O(1) file lookups by name.
+    // Maps filename (std::string_view) to index in 'files' vector.
+    // Transient (not serialized to disk), rebuilt on load/add/remove.
+    // Key points to storage inside 'files' vector, so pointers must be stable.
+    // Since 'files' is pre-allocated to max_files, pointers are stable.
+    // USING CUSTOM FLAT MAP for memory efficiency and startup speed.
+    detail::flat_map index_map_;
 };
 
 /**

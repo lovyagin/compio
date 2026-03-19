@@ -107,6 +107,7 @@ add_library(compio STATIC
     src/compio.cpp
     src/compressor.cpp
     src/file.cpp
+    src/flat_map.cpp
     src/infile_object.cpp
     src/sha256.cpp
     src/storage_block_reader.cpp
