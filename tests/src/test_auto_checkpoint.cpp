@@ -104,3 +104,39 @@ TEST_F(AutoCheckpointTest, CheckpointDisabledWithZeroLimit) {
     compio_close_file(file);
     compio_close_archive(archive);
 }
+
+TEST_F(AutoCheckpointTest, FlushTruncatesWal) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_max_size_bytes = 1024 * 1024; // Large limit to prevent auto-checkpoint
+    config.block_size = 512;
+    config.cache_size__blocks = 100; // Large cache to hold data until flush
+    
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    
+    compio_file* file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    
+    // Write data
+    std::vector<uint8_t> data(2000, 'A');
+    uint64_t written = compio_write(data.data(), data.size(), file);
+    ASSERT_EQ(written, data.size());
+    
+    // Force flush
+    compio_flush(archive);
+    
+    // After flush, WAL size should be 0 (truncated).
+    // Note: get_wal_size() returns actual file size. 
+    // If truncated properly, it should be 0.
+    EXPECT_EQ(get_wal_size(), 0);
+    
+    // Verify data is readable
+    compio_seek(file, 0, COMPIO_SEEK_SET);
+    std::vector<uint8_t> read_buf(2000);
+    ASSERT_EQ(compio_read(read_buf.data(), 2000, file), 2000);
+    EXPECT_EQ(std::memcmp(read_buf.data(), data.data(), 2000), 0);
+    
+    compio_close_file(file);
+    compio_close_archive(archive);
+}

@@ -75,7 +75,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -179,7 +179,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -277,7 +277,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -353,7 +353,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(MaintenanceAutoTriggerTest, MaintenanceTriggersWhenThresholdExceeded) {
@@ -420,7 +420,7 @@ protected:
     char fn[256];
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(StatePersistencePerStrategyTest, BestFitStateRoundTrip) {

@@ -417,15 +417,16 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
     // Calculate checksum before writing (non-const, so we cast)
     const_cast<storage_block*>(this)->calculate_checksum();
 
-    std::vector<uint8_t> buffer;
-    buffer.reserve(STORAGE_BLOCK_METASIZE + size);
+    // Prepare metadata buffer
+    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE];
+    size_t meta_idx = 0;
 
-    auto push_u8 = [&](uint8_t v) { buffer.push_back(v); };
+    auto push_u8 = [&](uint8_t v) { meta_buffer[meta_idx++] = v; };
     auto push_u32 = [&](uint32_t v) { 
-        for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        for(int i=0; i<4; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8)); 
     };
     auto push_u64 = [&](uint64_t v) { 
-        for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        for(int i=0; i<8; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8)); 
     };
 
     push_u8(storage_block_signature);
@@ -434,14 +435,18 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
     push_u64(original_size);
     push_u32(checksum);
     
-    if (size > 0 && data) {
-        const uint8_t* ptr = data.get();
-        buffer.insert(buffer.end(), ptr, ptr + size);
-    }
+    assert(meta_idx == STORAGE_BLOCK_METASIZE);
 
     if (wal_manager) {
         wal_manager->begin_transaction();
-        if (!wal_manager->log_write(WalRecordType::BLOCK, addr, buffer.data(), buffer.size())) {
+        
+        std::vector<compio::WalManager::iovec_buf> buffers;
+        buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE});
+        if (size > 0 && data) {
+            buffers.push_back({data.get(), size});
+        }
+        
+        if (!wal_manager->log_write_vectored(WalRecordType::BLOCK, addr, buffers)) {
             WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
         }
         if (!wal_manager->commit_transaction()) {
@@ -452,8 +457,13 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
         
-    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size()) {
-        DEBUG_PRINT("warning: fwrite failed\n");
+    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE, file) != STORAGE_BLOCK_METASIZE) {
+        DEBUG_PRINT("warning: fwrite failed for metadata\n");
+    }
+    if (size > 0 && data) {
+        if (fwrite(data.get(), 1, size, file) != size) {
+            DEBUG_PRINT("warning: fwrite failed for dataBody\n");
+        }
     }
 }
 

@@ -99,7 +99,7 @@ static void BM_stdio_RandomRead(benchmark::State &state) {
 #endif
 
     delete[] buffer;
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 static void BM_compio_RandomRead(benchmark::State &state) {
@@ -220,7 +220,7 @@ static void BM_compio_RandomRead(benchmark::State &state) {
     state.SetBytesProcessed(state.iterations() * n_blocks * block_size);
 
     delete[] buffer;
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {

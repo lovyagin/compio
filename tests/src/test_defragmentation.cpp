@@ -46,7 +46,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -131,7 +131,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -202,7 +202,7 @@ protected:
 
     void TearDown() override {
         if (archive) compio_close_archive(archive);
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -309,7 +309,7 @@ TEST(DefragmentationApiTest, RejectsDefragWithOpenFiles) {
     EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
 
     compio_close_archive(archive);
-    remove(fn);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +366,7 @@ TEST(DefragmentationPhysicalTest, FileShrinkAfterDefrag) {
     EXPECT_LE(stats_after.total_free_bytes, free_before);
 
     compio_close_archive(archive);
-    remove(fn);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -604,7 +604,7 @@ TEST(DefragmentationCompressionTest, DataIntegrityWithZlibCompression) {
     }
 
     compio_close_archive(archive);
-    remove(fn);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
 }
 
 // Defrag with dummy (no) compression — ensures the code path that uses
@@ -660,7 +660,7 @@ TEST(DefragmentationCompressionTest, DataIntegrityWithDummyCompression) {
     }
 
     compio_close_archive(archive);
-    remove(fn);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
 }
 
 // Close archive (which calls maintenance()) should not corrupt data.
@@ -717,7 +717,7 @@ TEST(DefragmentationCloseTest, MaintenanceOnClose_DataIntact) {
     EXPECT_EQ(buf, data_keep) << "data corrupted after maintenance-on-close";
 
     compio_close_archive(archive);
-    remove(fn);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
 }
 
 // Many small files — stress the defragmentation with many entries.

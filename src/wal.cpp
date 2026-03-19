@@ -102,6 +102,45 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     return true;
 }
 
+bool WalManager::log_write_vectored(WalRecordType type, uint64_t addr, const std::vector<iovec_buf>& buffers) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!wal_file_) return false;
+
+    uint64_t total_size = 0;
+    for (const auto& buf : buffers) {
+        total_size += buf.size;
+    }
+
+    // Checksum
+    uint32_t checksum = 0;
+    if (!(total_size == 0 && type == WalRecordType::COMMIT)) {
+        checksum = 0x811c9dc5; // FNV-1a 32-bit offset basis
+        for (const auto& buf : buffers) {
+            checksum = fnv1a_32_continue(checksum, static_cast<const uint8_t*>(buf.data), buf.size);
+        }
+    }
+
+    // Prepare Header
+    uint8_t type_u8 = static_cast<uint8_t>(type);
+    
+    if (fwrite(&type_u8, sizeof(uint8_t), 1, wal_file_) != 1) return false;
+    if (fwrite(&addr, sizeof(uint64_t), 1, wal_file_) != 1) return false;
+    if (fwrite(&total_size, sizeof(uint64_t), 1, wal_file_) != 1) return false;
+    if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false;
+    
+    // Write Data
+    for (const auto& buf : buffers) {
+        if (buf.size > 0) {
+            if (fwrite(buf.data, 1, buf.size, wal_file_) != buf.size) return false;
+        }
+    }
+    
+    // Update size tracker
+    current_wal_size_ += (1 + 8 + 8 + 4 + total_size);
+
+    return true;
+}
+
 void WalManager::begin_transaction() {
     std::unique_lock<std::mutex> lock(mutex_);
     if (!wal_file_) {

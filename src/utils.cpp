@@ -63,6 +63,13 @@ uint32_t fnv1a_32(const uint8_t *data, size_t size) {
     return hash;
 }
 
+uint32_t fnv1a_32_continue(uint32_t hash, const uint8_t *data, size_t size) {
+    for (size_t i = 0; i < size; ++i) {
+        hash = (hash ^ data[i]) * 0x01000193;
+    }
+    return hash;
+}
+
 bool is_file_empty(FILE *file) {
     fseek64(file, 0, SEEK_END);
     int64_t fsize = ftell64(file);

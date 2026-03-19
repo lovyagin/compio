@@ -14,7 +14,7 @@ protected:
 
     void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
 
-    void TearDown() override { remove(fn); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
 };
 
 TEST_F(MaxFilesTest, DiskSizeReflectsMaxFiles) {

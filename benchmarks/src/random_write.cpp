@@ -61,7 +61,7 @@ static void BM_stdio_RandomWrite(benchmark::State &state) {
         benchmark::Counter(block_size, benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 #endif
 
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 static void BM_compio_RandomWrite(benchmark::State &state) {
@@ -142,7 +142,7 @@ static void BM_compio_RandomWrite(benchmark::State &state) {
     state.counters["file_size"] = benchmark::Counter(
         get_file_size(fn.c_str()), benchmark::Counter::kDefaults, benchmark::Counter::kIs1024);
 
-    remove(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {

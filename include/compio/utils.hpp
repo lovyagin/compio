@@ -48,6 +48,15 @@ uint64_t fnv1a(const uint8_t *data, size_t size);
 uint32_t fnv1a_32(const uint8_t *data, size_t size);
 
 /**
+ * @brief Continues calculating 32-bit fnv1a hash
+ * @param hash Initial hash value
+ * @param data Pointer to binary data
+ * @param size Size of data in bytes
+ * @return resulting hash
+ */
+uint32_t fnv1a_32_continue(uint32_t hash, const uint8_t *data, size_t size);
+
+/**
  * @brief Portable 64-bit file seek
  *
  * Uses _fseeki64 on Windows (where long is 32-bit) and fseeko on POSIX

@@ -43,7 +43,7 @@ protected:
             ASSERT_EQ(compio_close_archive(archive), 0);
         }
 
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 
     // Helper function to verify file content
@@ -103,7 +103,7 @@ protected:
             ASSERT_EQ(compio_close_archive(archive), 0);
         }
 
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 
     // Helper function to verify file content
@@ -584,7 +584,7 @@ protected:
             ASSERT_EQ(compio_close_archive(archive), 0);
         }
 
-        remove(fn);
+        remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
 
