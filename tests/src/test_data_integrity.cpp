@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <vector>
+#include <random>
 
 #include "compio.h"
 
@@ -19,8 +20,11 @@ protected:
     compio_config config;
 
     void SetUp() override {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 999999);
         auto tmp = std::filesystem::temp_directory_path() /
-                   ("test_integrity_" + std::to_string(rand()) + ".compio");
+                   ("test_integrity_" + std::to_string(dis(gen)) + ".compio");
         snprintf(archive_name, sizeof(archive_name), "%s", tmp.string().c_str());
         compio_build_default_config(&config);
         archive = nullptr;
