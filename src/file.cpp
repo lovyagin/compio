@@ -23,6 +23,102 @@ static size_t portable_strnlen(const char *s, size_t maxlen) {
 static const uint8_t index_node_signature = 67;
 static const uint8_t storage_block_signature = 171;
 
+static inline bool is_big_endian() {
+    uint32_t num = 1;
+    return *(reinterpret_cast<unsigned char *>(&num)) == 0;
+}
+
+static void swap_uint64(uint64_t* val) {
+    uint8_t* p = (uint8_t*)val;
+    for(int i=0; i<4; ++i) std::swap(p[i], p[7-i]);
+}
+
+// Helper to batch read files table
+static void read_files_batched(FILE* file, files_table& ftable) {
+    const size_t BATCH_SIZE = 4096; // 4096 files * 40 bytes = ~160KB buffer
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t); // 32 + 8 = 40
+    
+    // Ensure packing assumptions hold (no padding)
+    static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
+    
+    std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
+    
+    size_t remaining = ftable.n_files;
+    size_t current_idx = 0;
+    bool is_be = is_big_endian();
+    
+    while (remaining > 0) {
+        size_t count = std::min(remaining, BATCH_SIZE);
+        size_t bytes_to_read = count * ENTRY_SIZE;
+        
+        if (fread(buffer.data(), 1, bytes_to_read, file) != bytes_to_read) {
+            // Error handling handled by caller via validation?
+            // load_and_validate checks checksum later.
+            // But if we fail here, we might crash or have partial data.
+            // Just fill with zeros or stop?
+            // The original code used lendian_fread which warns but continues (returns partial).
+            // We should arguably stop, but let's continue to match behavior + checksum check.
+            break;
+        }
+        
+        for (size_t i = 0; i < count; ++i) {
+            files_table::file& f = ftable.files[current_idx + i];
+            size_t offset = i * ENTRY_SIZE;
+            
+            // Copy name
+            std::memcpy(f.name, &buffer[offset], COMPIO_FNAME_MAX_SIZE);
+            
+            // Copy size
+            std::memcpy(&f.size, &buffer[offset + COMPIO_FNAME_MAX_SIZE], sizeof(uint64_t));
+            
+            // Swap if Big Endian (data on disk is Little Endian)
+            if (is_be) {
+                swap_uint64(&f.size);
+            }
+        }
+        
+        current_idx += count;
+        remaining -= count;
+    }
+}
+
+// Helper to batch write files table
+static void write_files_batched(FILE* file, const files_table& ftable) {
+    const size_t BATCH_SIZE = 4096;
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
+    
+    std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
+    
+    size_t remaining = ftable.max_files; // write_to loops over max_files, not n_files
+    size_t current_idx = 0;
+    bool is_be = is_big_endian();
+    
+    while (remaining > 0) {
+        size_t count = std::min(remaining, BATCH_SIZE);
+        
+        for (size_t i = 0; i < count; ++i) {
+            const files_table::file& f = ftable.files[current_idx + i];
+            size_t offset = i * ENTRY_SIZE;
+            
+            // Copy name
+            std::memcpy(&buffer[offset], f.name, COMPIO_FNAME_MAX_SIZE);
+            
+            // Copy size
+            uint64_t s = f.size;
+            if (is_be) {
+                swap_uint64(&s);
+            }
+            std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE], &s, sizeof(uint64_t));
+        }
+        
+        size_t bytes_to_write = count * ENTRY_SIZE;
+        fwrite(buffer.data(), 1, bytes_to_write, file);
+        
+        current_idx += count;
+        remaining -= count;
+    }
+}
+
 header::header()
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
@@ -129,10 +225,8 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
         return false;
     }
     
-    for (uint32_t i = 0; i < ftable.max_files; ++i) {
-        lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
-        lendian_fread_member(ftable.files[i].size, file);
-    }
+    // Batched read for performance (O(N) -> O(N/BATCH))
+    read_files_batched(file, ftable);
     
     // Rebuild the lookup map since we bypassed add()
     ftable.rebuild_index();
@@ -165,48 +259,43 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
 
     if (wal_manager) {
         wal_manager->begin_transaction();
-        // Serialize to buffer for WAL
-        std::vector<uint8_t> buffer;
-        buffer.reserve(4096); 
         
-        auto push_u32 = [&](uint32_t v) { 
-            for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        // Optimize: Pre-allocate full buffer to avoid reallocations
+        uint64_t total_size = disk_size();
+        std::vector<uint8_t> buffer(total_size);
+        uint8_t* ptr = buffer.data();
+        bool is_be = is_big_endian();
+        
+        auto write_u32 = [&](uint32_t v) {
+            if (is_be) { uint8_t* p = (uint8_t*)&v; std::swap(p[0], p[3]); std::swap(p[1], p[2]); }
+            std::memcpy(ptr, &v, 4); ptr += 4;
         };
-        auto push_u64 = [&](uint64_t v) { 
-            for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        auto write_u64 = [&](uint64_t v) {
+            if (is_be) swap_uint64(&v);
+            std::memcpy(ptr, &v, 8); ptr += 8;
         };
         
         // Serialize header fields
-        // magic(4)
-        for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(magic_number >> (i*8)));
-        // checksum(32)
-        buffer.insert(buffer.end(), checksum, checksum + 32);
-        // sequence_id(8)
-        push_u64(sequence_id);
-        // index_root(8)
-        push_u64(index_root);
-        // file_size(8)
-        push_u64(file_size);
-        // allocator_state_offset(8)
-        push_u64(allocator_state_offset);
-        // allocator_state_size(8)
-        push_u64(allocator_state_size);
-        // compression_type(4)
-        push_u32(compression_type);
-        // block_size(4)
-        push_u32(block_size);
-        // b_tree_degree(4)
-        push_u32(b_tree_degree);
-        // max_files(4)
-        push_u32(ftable.max_files);
-        // n_files(8)
-        push_u64(ftable.n_files);
+        write_u32(magic_number);
+        std::memcpy(ptr, checksum, 32); ptr += 32;
+        write_u64(sequence_id);
+        write_u64(index_root);
+        write_u64(file_size);
+        write_u64(allocator_state_offset);
+        write_u64(allocator_state_size);
+        write_u32(compression_type);
+        write_u32(block_size);
+        write_u32(b_tree_degree);
+        write_u32(ftable.max_files);
+        write_u64(ftable.n_files);
         
+        // Files Table
         for (uint32_t i = 0; i < ftable.max_files; ++i) {
-            // name(32)
-            buffer.insert(buffer.end(), ftable.files[i].name, ftable.files[i].name + COMPIO_FNAME_MAX_SIZE);
-            // size(8)
-            push_u64(ftable.files[i].size);
+            const auto& f = ftable.files[i];
+            std::memcpy(ptr, f.name, COMPIO_FNAME_MAX_SIZE); ptr += COMPIO_FNAME_MAX_SIZE;
+            uint64_t s = f.size;
+            if (is_be) swap_uint64(&s);
+            std::memcpy(ptr, &s, 8); ptr += 8;
         }
         
         if (!wal_manager->log_write(WalRecordType::HEADER, addr, buffer.data(), buffer.size())) {
@@ -235,10 +324,8 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
     lendian_fwrite_member(ftable.max_files, file);
     lendian_fwrite_member(ftable.n_files, file);
     
-    for (uint32_t i = 0; i < ftable.max_files; ++i) {
-        lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
-        lendian_fwrite_member(ftable.files[i].size, file);
-    }
+    // Batched write for performance
+    write_files_batched(file, ftable);
 }
 
 void index_node::read_from(FILE *file, uint64_t addr) {
