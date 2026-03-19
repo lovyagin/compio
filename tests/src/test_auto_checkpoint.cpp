@@ -50,11 +50,11 @@ TEST_F(AutoCheckpointTest, CheckpointOnSizeLimit) {
     ASSERT_NE(file, nullptr);
 
     std::mt19937 rng(12345);
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
     
     // Use random data to ensure it doesn't compress much
     std::vector<uint8_t> data(2000);
-    for(size_t i=0; i<data.size(); ++i) data[i] = dist(rng);
+    for(size_t i=0; i<data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
     
     // Write 2000 bytes. ~4 blocks.
     // With cache=1, 3 blocks evicted.
@@ -94,9 +94,9 @@ TEST_F(AutoCheckpointTest, CheckpointDisabledWithZeroLimit) {
     
     // Write incompressible data
     std::mt19937 rng(12345);
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
     std::vector<uint8_t> data(2000);
-    for(size_t i=0; i<data.size(); ++i) data[i] = dist(rng);
+    for(size_t i=0; i<data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
     
     uint64_t written = compio_write(data.data(), data.size(), file);
     ASSERT_EQ(written, data.size());
