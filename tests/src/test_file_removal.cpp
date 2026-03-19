@@ -46,7 +46,7 @@ TEST_F(FileRemovalTest, RemoveFileFreesBlocks) {
     // Flush to ensure blocks are allocated
     compio_flush(archive);
 
-    // Remove the file - this should deallocate all blocks
+    // Remove the file - should deallocate all blocks
     int result = compio_remove_file(archive, "test.txt");
     EXPECT_EQ(result, 0);
 
@@ -129,3 +129,35 @@ TEST_F(FileRemovalTest, RemoveLargeFile) {
     compio_close_archive(archive);
 }
 
+TEST_F(FileRemovalTest, RemoveMiddleFilePreservesOthers) {
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+
+    // Create 3 files
+    const char* names[] = {"file1.txt", "file2.txt", "file3.txt"};
+    for (const char* name : names) {
+        compio_file* f = compio_open_file(name, archive);
+        ASSERT_NE(f, nullptr);
+        // Write something so size > 0
+        compio_write("data", 4, f);
+        compio_close_file(f);
+    }
+    compio_flush(archive);
+    
+    // Remove middle file
+    EXPECT_EQ(compio_remove_file(archive, "file2.txt"), 0);
+    
+    // Check file1 is still there and has data
+    compio_file* f1 = compio_open_file("file1.txt", archive);
+    ASSERT_NE(f1, nullptr);
+    EXPECT_EQ(f1->size, 4);
+    compio_close_file(f1);
+    
+    // Check file3 is still there (moved index) and has data
+    compio_file* f3 = compio_open_file("file3.txt", archive);
+    ASSERT_NE(f3, nullptr);
+    EXPECT_EQ(f3->size, 4);
+    compio_close_file(f3);
+    
+    compio_close_archive(archive);
+}

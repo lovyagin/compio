@@ -630,15 +630,30 @@ int files_table::remove(const char *name) {
     
     uint32_t i = it->second;
     
-    // Move memory
-    if (i < n_files - 1) {
-        memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));
-    } else {
-        --n_files;
+    // Move memory: Swap with the last element to avoid O(N) shift
+    // This changes the order of files in the table, but that is permitted.
+    // The B-Tree index relies on name hashes, not file table position.
+    
+    if (i != n_files - 1) {
+        // We are removing an element from the middle.
+        // Move the last element to this position.
+        uint32_t last_idx = n_files - 1;
+        
+        // Ensure string copy happens before overwrite
+        std::string last_name(files[last_idx].name);
+        
+        // Overwrite the removed element
+        files[i] = files[last_idx];
+        
+        // Update index for the moved file
+        index_map_[last_name] = i;
     }
     
-    // Rebuild index because indices shifted
-    rebuild_index();
+    // Decrease count
+    --n_files;
+    
+    // Remove the deleted file from the index
+    index_map_.erase(key);
     
     return 0;
 }
