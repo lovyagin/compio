@@ -10,7 +10,9 @@ const char* flat_map::deleted_ptr() {
 void flat_map::reserve(size_t n) {
     if (n == 0) return;
     size_t needed = static_cast<size_t>(n / 0.75) + 1;
-    size_t cap = 16;
+    // Grow-only: if current capacity already satisfies the request, do nothing.
+    if (capacity_ >= needed) return;
+    size_t cap = capacity_ > 0 ? capacity_ : 16;
     while (cap < needed) cap *= 2;
     rehash(cap);
 }
