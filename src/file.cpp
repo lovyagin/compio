@@ -637,9 +637,14 @@ void files_table::rebuild_index() {
     for (uint32_t i = 0; i < n_files; ++i) {
         // Only insert if not exists to mimic linear search finding the first one
         // (though duplicates shouldn't exist)
-        // Emplace string_view pointing to files[i].name
-        if (index_map_.find(files[i].name) == index_map_.end()) {
-            index_map_.emplace(files[i].name, i);
+        // Construct a bounded string_view pointing to files[i].name
+        size_t len = portable_strnlen(files[i].name, COMPIO_FNAME_MAX_SIZE);
+        if (len >= COMPIO_FNAME_MAX_SIZE) {
+            len = COMPIO_FNAME_MAX_SIZE - 1;
+        }
+        std::string_view key(files[i].name, len);
+        if (index_map_.find(key) == index_map_.end()) {
+            index_map_.emplace(key, i);
         }
     }
 }
