@@ -129,6 +129,9 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
         lendian_fread_member(ftable.files[i].size, file);
     }
     
+    // Rebuild the lookup map since we bypassed add()
+    ftable.rebuild_index();
+    
     // Validate Checksum
     uint8_t computed[32];
     compute_checksum(computed);
@@ -492,42 +495,107 @@ storage_block::storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size)
 storage_block::storage_block(uint64_t size)
     : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
 
-files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), files(COMPIO_MAX_FILES) {}
+files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), files(COMPIO_MAX_FILES) {
+}
 
 files_table::files_table(uint32_t max_files)
-    : n_files(0), max_files(max_files), files(max_files) {}
+    : n_files(0), max_files(max_files), files(max_files) {
+}
+
+void files_table::rebuild_index() {
+    index_map_.clear();
+    index_map_.reserve(n_files);
+    for (uint32_t i = 0; i < n_files; ++i) {
+        // Only insert if not exists to mimic linear search finding the first one
+        // (though duplicates shouldn't exist)
+        std::string name(files[i].name);
+        if (index_map_.find(name) == index_map_.end()) {
+            index_map_[name] = i;
+        }
+    }
+}
 
 const files_table::file *files_table::find(const char *name) const {
-    for (uint64_t i = 0; i < n_files; ++i)
-        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
-            return &files[i];
-    return NULL;
+    if (n_files == 0) return nullptr;
+    if (!name) return nullptr;
+    
+    // Construct key. 
+    // We must handle names longer than MAX_SIZE by truncating, as add() does.
+    std::string key;
+    size_t len = strlen(name);
+    if (len >= COMPIO_FNAME_MAX_SIZE) {
+        key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
+    } else {
+        key = name;
+    }
+    
+    auto it = index_map_.find(key);
+    if (it != index_map_.end()) {
+        return &files[it->second];
+    }
+    
+    return nullptr;
 }
 
 files_table::file *files_table::find(const char *name) {
-    for (uint64_t i = 0; i < n_files; ++i)
-        if (!strncmp(name, files[i].name, COMPIO_FNAME_MAX_SIZE))
-            return &files[i];
-    return NULL;
+    // Cast constness away to reuse implementation
+    return const_cast<files_table::file*>(
+        static_cast<const files_table*>(this)->find(name)
+    );
 }
 
 files_table::file *files_table::add(const char *name) {
     if (n_files >= max_files)
         return NULL;
+    if (!name) return NULL;
+        
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE - 1);
     files[n_files].name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
     files[n_files].size = 0;
+    
+    // Update index
+    std::string key(files[n_files].name);
+    // If duplicate exists, map keeps pointing to the FIRST one (old index).
+    // This maintains linear search semantics but might be confusing if duplicates are allowed.
+    // However, existing code overwrites if we just append.
+    // Let's assume unique names. If not, map points to first.
+    if (index_map_.find(key) == index_map_.end()) {
+        index_map_[key] = n_files;
+    }
+    
     return &files[n_files++];
 }
 
 int files_table::remove(const char *name) {
-    for (uint64_t i = 0; i < n_files; ++i) {
-        if (!strncmp(files[i].name, name, COMPIO_FNAME_MAX_SIZE)) {
-            memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));
-            return 0;
-        }
+    if (!name) return -1;
+    
+    // Find index first
+    std::string key;
+    size_t len = strlen(name);
+    if (len >= COMPIO_FNAME_MAX_SIZE) {
+        key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
+    } else {
+        key = name;
     }
-    return -1;
+    
+    auto it = index_map_.find(key);
+    if (it == index_map_.end()) {
+        return -1;
+    }
+    
+    uint32_t i = it->second;
+    
+    // Move memory
+    if (i < n_files - 1) {
+        memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));
+    } else {
+        --n_files;
+    }
+    
+    // Rebuild index because indices shifted
+    rebuild_index();
+    
+    return 0;
 }
 
 void storage_block::calculate_checksum() {
