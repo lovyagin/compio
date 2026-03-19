@@ -741,58 +741,31 @@ int files_table::remove(const char *name) {
     
     uint32_t i = *ptr;
     
-    // OPTIMIZED REMOVAL logic with string_view index map
-    // The index map stores string_views pointing to files[i].name.
-    // When we swap files, we overwrite files[i].name.
-    // We MUST erase the map entry pointing to files[i].name BEFORE overwriting it.
-    
     // 1. Remove the entry for the file being deleted.
     index_map_.erase(key);
 
     if (i != n_files - 1) {
-        // We are removing an element from the middle.
-        // Move the last element to this position.
         uint32_t last_idx = n_files - 1;
         const char* last_name_ptr = files[last_idx].name;
         
-        // 2. Check if the last file is indexed and needs update.
-        // It might be indexed (pointing to last_idx) or shadowed by a duplicate.
-        // Use bounded string_view for safety
         size_t last_len = portable_strnlen(last_name_ptr, COMPIO_FNAME_MAX_SIZE);
         std::string_view last_key(last_name_ptr, last_len < COMPIO_FNAME_MAX_SIZE ? last_len : COMPIO_FNAME_MAX_SIZE - 1);
         
         auto last_ptr = index_map_.find(last_key);
         
-        // We need to update index if it points to last_idx.
-        // Note: If last_name == name (of deleted file), last_ptr would have been 'ptr'
-        // which is already erased. So last_ptr will be null.
-        // In that case (duplicate at end), we need to re-insert it pointing to 'i'.
-        
         bool update_index = false;
         if (last_ptr) {
              if (*last_ptr == last_idx) {
-                 // It points to the old location. We must move it.
-                 // Erase old entry because key points to old location.
                  index_map_.erase(last_key);
                  update_index = true;
              }
-             // If it points to something else (e.g. earlier duplicate), leave it alone.
         } else {
-             // Not found. This means the file we just deleted (at 'i') was likely 
-             // shadowing this one (same name). Or it wasn't indexed?
-             // Since we deleted 'i', and 'i' was previously indexed (we found 'it'),
-             // if last_name == name(i), then last_ptr was 'ptr' and is now invalid/end.
-             // So if not found, we assume we should index it at 'i'.
              update_index = true;
         }
 
-        // 3. Move the last element to position i
         files[i] = files[last_idx];
         
-        // 4. Update index for the moved file
         if (update_index) {
-            // Reconstruct string_view pointing to the NEW location (files[i].name)
-            // Length is known (last_key.length())
             std::string_view new_key(files[i].name, last_key.length());
             index_map_.insert_or_assign(new_key, i);
         }
