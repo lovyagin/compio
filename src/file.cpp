@@ -522,11 +522,13 @@ const files_table::file *files_table::find(const char *name) const {
     // Construct key. 
     // We must handle names longer than MAX_SIZE by truncating, as add() does.
     std::string key;
-    size_t len = strlen(name);
+    size_t len = strnlen(name, COMPIO_FNAME_MAX_SIZE);
     if (len >= COMPIO_FNAME_MAX_SIZE) {
+        // Name is at least COMPIO_FNAME_MAX_SIZE bytes long (or not NUL-terminated);
+        // mimic add() truncation by limiting to COMPIO_FNAME_MAX_SIZE - 1 characters.
         key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
     } else {
-        key = name;
+        key.assign(name, len);
     }
     
     auto it = index_map_.find(key);
