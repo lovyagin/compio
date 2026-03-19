@@ -645,15 +645,28 @@ int files_table::remove(const char *name) {
         // Overwrite the removed element
         files[i] = files[last_idx];
         
-        // Update index for the moved file
-        index_map_[last_name] = i;
+        // Update index for the moved file ONLY if it currently points to the old position
+        // This preserves correctness if duplicates exist (though duplicates are generally discouraged)
+        auto last_it = index_map_.find(last_name);
+        if (last_it != index_map_.end() && last_it->second == last_idx) {
+            index_map_[last_name] = i;
+        }
     }
     
     // Decrease count
     --n_files;
     
     // Remove the deleted file from the index
-    index_map_.erase(key);
+    // Only erase if the index actually points to the deleted slot
+    // AND we didn't just replace it with a file of the same name (e.g. swap with last)
+    auto key_it = index_map_.find(key);
+    if (key_it != index_map_.end() && key_it->second == i) {
+        // Check if the slot 'i' now holds a file with the same name (duplicate moved from end)
+        bool slot_has_same_name = (i < n_files && std::string(files[i].name) == key);
+        if (!slot_has_same_name) {
+            index_map_.erase(key_it);
+        }
+    }
     
     return 0;
 }

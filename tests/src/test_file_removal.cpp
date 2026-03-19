@@ -149,9 +149,12 @@ TEST_F(FileRemovalTest, RemoveMiddleFilePreservesOthers) {
     
     // Verify file2 is gone or recreated empty
     compio_file* f2 = compio_open_file("file2.txt", archive);
+    // Depending on semantics, it might return nullptr or a new empty file
     if (f2 != nullptr) {
         EXPECT_EQ(f2->size, 0);
         compio_close_file(f2);
+    } else {
+        SUCCEED();
     }
     
     // Check file1 is still there and has data
