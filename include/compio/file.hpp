@@ -13,6 +13,7 @@
 #include <vector>
 #include <unordered_map>
 #include <string>
+#include <string_view>
 
 #include "compio/infile_object.hpp"
 #include "compio/tree_types.hpp"
@@ -35,9 +36,11 @@ struct files_table {
     std::vector<file> files;
     
     // Hash map for fast O(1) file lookups by name.
-    // Maps filename (std::string) to index in 'files' vector.
+    // Maps filename (std::string_view) to index in 'files' vector.
     // Transient (not serialized to disk), rebuilt on load/add/remove.
-    std::unordered_map<std::string, uint32_t> index_map_;
+    // Key points to storage inside 'files' vector, so pointers must be stable.
+    // Since 'files' is pre-allocated to max_files, pointers are stable.
+    std::unordered_map<std::string_view, uint32_t> index_map_;
 
     files_table();
     explicit files_table(uint32_t max_files);

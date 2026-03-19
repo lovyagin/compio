@@ -23,6 +23,106 @@ static size_t portable_strnlen(const char *s, size_t maxlen) {
 static const uint8_t index_node_signature = 67;
 static const uint8_t storage_block_signature = 171;
 
+static inline bool is_big_endian() {
+    uint32_t num = 1;
+    return *(reinterpret_cast<unsigned char *>(&num)) == 0;
+}
+
+static void swap_uint64(uint64_t* val) {
+    uint8_t* p = (uint8_t*)val;
+    for(int i=0; i<4; ++i) std::swap(p[i], p[7-i]);
+}
+
+// Helper to batch read files table
+static bool read_files_batched(FILE* file, files_table& ftable) {
+    const size_t BATCH_SIZE = 4096; // 4096 files * 40 bytes = ~160KB buffer
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t); // 32 + 8 = 40
+    
+    // Ensure packing assumptions hold (no padding)
+    static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
+    
+    std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
+    
+    // Read all max_files slots because the checksum covers the entire table
+    // (including unused slots), and we must advance the file pointer correctly.
+    size_t remaining = ftable.max_files;
+    size_t current_idx = 0;
+    bool is_be = is_big_endian();
+    
+    while (remaining > 0) {
+        size_t count = std::min(remaining, BATCH_SIZE);
+        size_t bytes_to_read = count * ENTRY_SIZE;
+        
+        size_t read_count = fread(buffer.data(), 1, bytes_to_read, file);
+        if (read_count != bytes_to_read) {
+            WARNING_PRINT("warning: short read in files table (expected %zu, got %zu)\n", 
+                          bytes_to_read, read_count);
+            return false;
+        }
+        
+        for (size_t i = 0; i < count; ++i) {
+            files_table::file& f = ftable.files[current_idx + i];
+            size_t offset = i * ENTRY_SIZE;
+            
+            // Copy name
+            std::memcpy(f.name, &buffer[offset], COMPIO_FNAME_MAX_SIZE);
+            
+            // Copy size
+            std::memcpy(&f.size, &buffer[offset + COMPIO_FNAME_MAX_SIZE], sizeof(uint64_t));
+            
+            // Swap if Big Endian (data on disk is Little Endian)
+            if (is_be) {
+                swap_uint64(&f.size);
+            }
+        }
+        
+        current_idx += count;
+        remaining -= count;
+    }
+    return true;
+}
+
+// Helper to batch write files table
+static bool write_files_batched(FILE* file, const files_table& ftable) {
+    const size_t BATCH_SIZE = 4096;
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
+    
+    std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
+    
+    size_t remaining = ftable.max_files; // write_to loops over max_files, not n_files
+    size_t current_idx = 0;
+    bool is_be = is_big_endian();
+    
+    while (remaining > 0) {
+        size_t count = std::min(remaining, BATCH_SIZE);
+        
+        for (size_t i = 0; i < count; ++i) {
+            const files_table::file& f = ftable.files[current_idx + i];
+            size_t offset = i * ENTRY_SIZE;
+            
+            // Copy name
+            std::memcpy(&buffer[offset], f.name, COMPIO_FNAME_MAX_SIZE);
+            
+            // Copy size
+            uint64_t s = f.size;
+            if (is_be) {
+                swap_uint64(&s);
+            }
+            std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE], &s, sizeof(uint64_t));
+        }
+        
+        size_t bytes_to_write = count * ENTRY_SIZE;
+        if (fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
+            WARNING_PRINT("warning: short write in files table\n");
+            return false;
+        }
+        
+        current_idx += count;
+        remaining -= count;
+    }
+    return true;
+}
+
 header::header()
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
@@ -129,9 +229,9 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
         return false;
     }
     
-    for (uint32_t i = 0; i < ftable.max_files; ++i) {
-        lendian_fread(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
-        lendian_fread_member(ftable.files[i].size, file);
+    // Batched read for performance (O(N) -> O(N/BATCH))
+    if (!read_files_batched(file, ftable)) {
+        return false;
     }
     
     // Rebuild the lookup map since we bypassed add()
@@ -165,48 +265,43 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
 
     if (wal_manager) {
         wal_manager->begin_transaction();
-        // Serialize to buffer for WAL
-        std::vector<uint8_t> buffer;
-        buffer.reserve(4096); 
         
-        auto push_u32 = [&](uint32_t v) { 
-            for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        // Optimize: Pre-allocate full buffer to avoid reallocations
+        uint64_t total_size = disk_size();
+        std::vector<uint8_t> buffer(total_size);
+        uint8_t* ptr = buffer.data();
+        bool is_be = is_big_endian();
+        
+        auto write_u32 = [&](uint32_t v) {
+            if (is_be) { uint8_t* p = (uint8_t*)&v; std::swap(p[0], p[3]); std::swap(p[1], p[2]); }
+            std::memcpy(ptr, &v, 4); ptr += 4;
         };
-        auto push_u64 = [&](uint64_t v) { 
-            for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
+        auto write_u64 = [&](uint64_t v) {
+            if (is_be) swap_uint64(&v);
+            std::memcpy(ptr, &v, 8); ptr += 8;
         };
         
         // Serialize header fields
-        // magic(4)
-        for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(magic_number >> (i*8)));
-        // checksum(32)
-        buffer.insert(buffer.end(), checksum, checksum + 32);
-        // sequence_id(8)
-        push_u64(sequence_id);
-        // index_root(8)
-        push_u64(index_root);
-        // file_size(8)
-        push_u64(file_size);
-        // allocator_state_offset(8)
-        push_u64(allocator_state_offset);
-        // allocator_state_size(8)
-        push_u64(allocator_state_size);
-        // compression_type(4)
-        push_u32(compression_type);
-        // block_size(4)
-        push_u32(block_size);
-        // b_tree_degree(4)
-        push_u32(b_tree_degree);
-        // max_files(4)
-        push_u32(ftable.max_files);
-        // n_files(8)
-        push_u64(ftable.n_files);
+        write_u32(magic_number);
+        std::memcpy(ptr, checksum, 32); ptr += 32;
+        write_u64(sequence_id);
+        write_u64(index_root);
+        write_u64(file_size);
+        write_u64(allocator_state_offset);
+        write_u64(allocator_state_size);
+        write_u32(compression_type);
+        write_u32(block_size);
+        write_u32(b_tree_degree);
+        write_u32(ftable.max_files);
+        write_u64(ftable.n_files);
         
+        // Files Table
         for (uint32_t i = 0; i < ftable.max_files; ++i) {
-            // name(32)
-            buffer.insert(buffer.end(), ftable.files[i].name, ftable.files[i].name + COMPIO_FNAME_MAX_SIZE);
-            // size(8)
-            push_u64(ftable.files[i].size);
+            const auto& f = ftable.files[i];
+            std::memcpy(ptr, f.name, COMPIO_FNAME_MAX_SIZE); ptr += COMPIO_FNAME_MAX_SIZE;
+            uint64_t s = f.size;
+            if (is_be) swap_uint64(&s);
+            std::memcpy(ptr, &s, 8); ptr += 8;
         }
         
         if (!wal_manager->log_write(WalRecordType::HEADER, addr, buffer.data(), buffer.size())) {
@@ -235,9 +330,9 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
     lendian_fwrite_member(ftable.max_files, file);
     lendian_fwrite_member(ftable.n_files, file);
     
-    for (uint32_t i = 0; i < ftable.max_files; ++i) {
-        lendian_fwrite(&ftable.files[i].name, 1, sizeof(ftable.files[i].name), file);
-        lendian_fwrite_member(ftable.files[i].size, file);
+    // Batched write for performance
+    if (!write_files_batched(file, ftable)) {
+         DEBUG_PRINT("warning: write_files_batched failed\n");
     }
 }
 
@@ -550,9 +645,14 @@ void files_table::rebuild_index() {
     for (uint32_t i = 0; i < n_files; ++i) {
         // Only insert if not exists to mimic linear search finding the first one
         // (though duplicates shouldn't exist)
-        std::string name(files[i].name);
-        if (index_map_.find(name) == index_map_.end()) {
-            index_map_[name] = i;
+        // Construct a bounded string_view pointing to files[i].name
+        size_t len = portable_strnlen(files[i].name, COMPIO_FNAME_MAX_SIZE);
+        if (len >= COMPIO_FNAME_MAX_SIZE) {
+            len = COMPIO_FNAME_MAX_SIZE - 1;
+        }
+        std::string_view key(files[i].name, len);
+        if (index_map_.find(key) == index_map_.end()) {
+            index_map_.emplace(key, i);
         }
     }
 }
@@ -561,16 +661,13 @@ const files_table::file *files_table::find(const char *name) const {
     if (n_files == 0) return nullptr;
     if (!name) return nullptr;
     
-    // Construct key. 
-    // We must handle names longer than MAX_SIZE by truncating, as add() does.
-    std::string key;
+    // Construct lookup key with truncation logic
     size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    std::string_view key;
     if (len >= COMPIO_FNAME_MAX_SIZE) {
-        // Name is at least COMPIO_FNAME_MAX_SIZE bytes long (or not NUL-terminated);
-        // mimic add() truncation by limiting to COMPIO_FNAME_MAX_SIZE - 1 characters.
-        key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
+        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
     } else {
-        key.assign(name, len);
+        key = std::string_view(name, len);
     }
     
     auto it = index_map_.find(key);
@@ -592,20 +689,34 @@ files_table::file *files_table::add(const char *name) {
     if (n_files >= max_files)
         return NULL;
     if (!name) return NULL;
+    
+    // Create bounded string_view
+    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    std::string_view key;
+    if (len >= COMPIO_FNAME_MAX_SIZE) {
+        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
+    } else {
+        key = std::string_view(name, len);
+    }
+    
+    // Check if it already exists using string_view lookup
+    // If so, return existing entry to prevent duplicates.
+    auto it = index_map_.find(key);
+    if (it != index_map_.end()) {
+        return &files[it->second];
+    }
         
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE - 1);
     files[n_files].name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
     files[n_files].size = 0;
     
     // Update index
-    std::string key(files[n_files].name);
-    // If duplicate exists, map keeps pointing to the FIRST one (old index).
-    // This maintains linear search semantics but might be confusing if duplicates are allowed.
-    // However, existing code overwrites if we just append.
-    // Let's assume unique names. If not, map points to first.
-    if (index_map_.find(key) == index_map_.end()) {
-        index_map_[key] = n_files;
-    }
+    // Use string_view to avoid allocation. Points to files[n_files].name.
+    // Map points to this new entry.
+    // Explicitly construct bounded string_view to avoid scanning past safe bounds (though it is null-terminated)
+    // and match the logic used in find/remove.
+    std::string_view stored_key(files[n_files].name, key.length());
+    index_map_.emplace(stored_key, n_files);
     
     return &files[n_files++];
 }
@@ -613,14 +724,14 @@ files_table::file *files_table::add(const char *name) {
 int files_table::remove(const char *name) {
     if (!name) return -1;
     
-    // Find index first
-    std::string key;
-    // Use portable_strnlen to avoid scanning unbounded memory if not null-terminated
+    // Construct lookup key with truncation logic
+    // Use string_view to avoid allocation.
     size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
+    std::string_view key;
     if (len >= COMPIO_FNAME_MAX_SIZE) {
-        key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
+        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
     } else {
-        key.assign(name, len);
+        key = std::string_view(name, len);
     }
     
     auto it = index_map_.find(key);
@@ -630,43 +741,68 @@ int files_table::remove(const char *name) {
     
     uint32_t i = it->second;
     
-    // Move memory: Swap with the last element to avoid O(N) shift
-    // This changes the order of files in the table, but that is permitted.
-    // The B-Tree index relies on name hashes, not file table position.
+    // OPTIMIZED REMOVAL logic with string_view index map
+    // The index map stores string_views pointing to files[i].name.
+    // When we swap files, we overwrite files[i].name.
+    // We MUST erase the map entry pointing to files[i].name BEFORE overwriting it.
     
+    // 1. Remove the entry for the file being deleted.
+    index_map_.erase(it);
+
     if (i != n_files - 1) {
         // We are removing an element from the middle.
         // Move the last element to this position.
         uint32_t last_idx = n_files - 1;
+        const char* last_name_ptr = files[last_idx].name;
         
-        // Ensure string copy happens before overwrite
-        std::string last_name(files[last_idx].name);
+        // 2. Check if the last file is indexed and needs update.
+        // It might be indexed (pointing to last_idx) or shadowed by a duplicate.
+        // Use bounded string_view for safety
+        size_t last_len = portable_strnlen(last_name_ptr, COMPIO_FNAME_MAX_SIZE);
+        std::string_view last_key(last_name_ptr, last_len < COMPIO_FNAME_MAX_SIZE ? last_len : COMPIO_FNAME_MAX_SIZE - 1);
         
-        // Overwrite the removed element
+        auto last_it = index_map_.find(last_key);
+        
+        // We need to update index if it points to last_idx.
+        // Note: If last_name == name (of deleted file), last_it would have been 'it'
+        // which is already erased. So last_it will be end().
+        // In that case (duplicate at end), we need to re-insert it pointing to 'i'.
+        
+        bool update_index = false;
+        if (last_it != index_map_.end()) {
+             if (last_it->second == last_idx) {
+                 // It points to the old location. We must move it.
+                 // Erase old entry because key points to old location.
+                 index_map_.erase(last_it);
+                 update_index = true;
+             }
+             // If it points to something else (e.g. earlier duplicate), leave it alone.
+        } else {
+             // Not found. This means the file we just deleted (at 'i') was likely 
+             // shadowing this one (same name). Or it wasn't indexed?
+             // Since we deleted 'i', and 'i' was previously indexed (we found 'it'),
+             // if last_name == name(i), then last_it was 'it' and is now invalid/end.
+             // So if not found, we assume we should index it at 'i'.
+             update_index = true;
+        }
+
+        // 3. Move the last element to position i
         files[i] = files[last_idx];
         
-        // Update index for the moved file ONLY if it currently points to the old position
-        // This preserves correctness if duplicates exist (though duplicates are generally discouraged)
-        auto last_it = index_map_.find(last_name);
-        if (last_it != index_map_.end() && last_it->second == last_idx) {
-            index_map_[last_name] = i;
+        // 4. Update index for the moved file
+        if (update_index) {
+            // Reconstruct string_view pointing to the NEW location (files[i].name)
+            // Length is known (last_key.length())
+            std::string_view new_key(files[i].name, last_key.length());
+            index_map_[new_key] = i;
         }
+    } else {
+        // Removing the last element. Just decrement count.
+        // index_map_ entry already erased.
     }
     
     // Decrease count
     --n_files;
-    
-    // Remove the deleted file from the index
-    // Only erase if the index actually points to the deleted slot
-    // AND we didn't just replace it with a file of the same name (e.g. swap with last)
-    auto key_it = index_map_.find(key);
-    if (key_it != index_map_.end() && key_it->second == i) {
-        // Check if the slot 'i' now holds a file with the same name (duplicate moved from end)
-        bool slot_has_same_name = (i < n_files && std::string(files[i].name) == key);
-        if (!slot_has_same_name) {
-            index_map_.erase(key_it);
-        }
-    }
     
     return 0;
 }
