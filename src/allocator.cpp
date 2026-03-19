@@ -1033,7 +1033,16 @@ void block_allocator::perform_defragmentation() {
         write_pos += block_size;
     }
 
+    // Flush all updated index nodes to disk BEFORE truncating the file.
+    // If we crash after truncation but before index write, we lose data.
+    archive_->index->clear_cache();
+
     fflush(archive_->file);
+    #ifdef _WIN32
+    _commit(_fileno(archive_->file));
+    #else
+    fsync(fileno(archive_->file));
+    #endif
 
     // Compute safe truncation point: max of write_pos and end of last B-tree node.
     uint64_t truncate_pos = write_pos;
