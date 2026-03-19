@@ -550,9 +550,9 @@ void files_table::rebuild_index() {
     for (uint32_t i = 0; i < n_files; ++i) {
         // Only insert if not exists to mimic linear search finding the first one
         // (though duplicates shouldn't exist)
-        std::string name(files[i].name);
-        if (index_map_.find(name) == index_map_.end()) {
-            index_map_[name] = i;
+        // Emplace string_view pointing to files[i].name
+        if (index_map_.find(files[i].name) == index_map_.end()) {
+            index_map_.emplace(files[i].name, i);
         }
     }
 }
@@ -561,19 +561,8 @@ const files_table::file *files_table::find(const char *name) const {
     if (n_files == 0) return nullptr;
     if (!name) return nullptr;
     
-    // Construct key. 
-    // We must handle names longer than MAX_SIZE by truncating, as add() does.
-    std::string key;
-    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
-    if (len >= COMPIO_FNAME_MAX_SIZE) {
-        // Name is at least COMPIO_FNAME_MAX_SIZE bytes long (or not NUL-terminated);
-        // mimic add() truncation by limiting to COMPIO_FNAME_MAX_SIZE - 1 characters.
-        key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
-    } else {
-        key.assign(name, len);
-    }
-    
-    auto it = index_map_.find(key);
+    // Find with string_view conversion
+    auto it = index_map_.find(name);
     if (it != index_map_.end()) {
         return &files[it->second];
     }
@@ -598,13 +587,10 @@ files_table::file *files_table::add(const char *name) {
     files[n_files].size = 0;
     
     // Update index
-    std::string key(files[n_files].name);
+    // Use string_view to avoid allocation. Points to files[n_files].name.
     // If duplicate exists, map keeps pointing to the FIRST one (old index).
-    // This maintains linear search semantics but might be confusing if duplicates are allowed.
-    // However, existing code overwrites if we just append.
-    // Let's assume unique names. If not, map points to first.
-    if (index_map_.find(key) == index_map_.end()) {
-        index_map_[key] = n_files;
+    if (index_map_.find(files[n_files].name) == index_map_.end()) {
+        index_map_.emplace(files[n_files].name, n_files);
     }
     
     return &files[n_files++];
@@ -613,60 +599,72 @@ files_table::file *files_table::add(const char *name) {
 int files_table::remove(const char *name) {
     if (!name) return -1;
     
-    // Find index first
-    std::string key;
-    // Use portable_strnlen to avoid scanning unbounded memory if not null-terminated
-    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
-    if (len >= COMPIO_FNAME_MAX_SIZE) {
-        key.assign(name, COMPIO_FNAME_MAX_SIZE - 1);
-    } else {
-        key.assign(name, len);
-    }
-    
-    auto it = index_map_.find(key);
+    // Find index first using string_view lookup (implicit conversion)
+    auto it = index_map_.find(name);
     if (it == index_map_.end()) {
         return -1;
     }
     
     uint32_t i = it->second;
     
-    // Move memory: Swap with the last element to avoid O(N) shift
-    // This changes the order of files in the table, but that is permitted.
-    // The B-Tree index relies on name hashes, not file table position.
+    // ---------------------------------------------------------------------
+    // OPTIMIZED REMOVAL logic with string_view index map
+    // ---------------------------------------------------------------------
+    // The index map stores string_views pointing to files[i].name.
+    // When we swap files, we overwrite files[i].name.
+    // We MUST erase the map entry pointing to files[i].name BEFORE overwriting it.
     
+    // 1. Remove the entry for the file being deleted.
+    // 'it' points to the entry where key is string_view(files[i].name).
+    index_map_.erase(it);
+
     if (i != n_files - 1) {
         // We are removing an element from the middle.
         // Move the last element to this position.
         uint32_t last_idx = n_files - 1;
+        const char* last_name_ptr = files[last_idx].name;
         
-        // Ensure string copy happens before overwrite
-        std::string last_name(files[last_idx].name);
+        // 2. Check if the last file is indexed and needs update.
+        // It might be indexed (pointing to last_idx) or shadowed by a duplicate.
+        auto last_it = index_map_.find(last_name_ptr);
         
-        // Overwrite the removed element
+        // We need to update index if it points to last_idx.
+        // Note: If last_name == name (of deleted file), last_it would have been 'it'
+        // which is already erased. So last_it will be end().
+        // In that case (duplicate at end), we need to re-insert it pointing to 'i'.
+        
+        bool update_index = false;
+        if (last_it != index_map_.end()) {
+             if (last_it->second == last_idx) {
+                 // It points to the old location. We must move it.
+                 // Erase old entry because key points to old location.
+                 index_map_.erase(last_it);
+                 update_index = true;
+             }
+             // If it points to something else (e.g. earlier duplicate), leave it alone.
+        } else {
+             // Not found. This means the file we just deleted (at 'i') was likely 
+             // shadowing this one (same name). Or it wasn't indexed?
+             // Since we deleted 'i', and 'i' was previously indexed (we found 'it'),
+             // if last_name == name(i), then last_it was 'it' and is now invalid/end.
+             // So if not found, we assume we should index it at 'i'.
+             update_index = true;
+        }
+
+        // 3. Move the last element to position i
         files[i] = files[last_idx];
         
-        // Update index for the moved file ONLY if it currently points to the old position
-        // This preserves correctness if duplicates exist (though duplicates are generally discouraged)
-        auto last_it = index_map_.find(last_name);
-        if (last_it != index_map_.end() && last_it->second == last_idx) {
-            index_map_[last_name] = i;
+        // 4. Update index for the moved file
+        if (update_index) {
+            index_map_[files[i].name] = i;
         }
+    } else {
+        // Removing the last element. Just decrement count.
+        // index_map_ entry already erased.
     }
     
     // Decrease count
     --n_files;
-    
-    // Remove the deleted file from the index
-    // Only erase if the index actually points to the deleted slot
-    // AND we didn't just replace it with a file of the same name (e.g. swap with last)
-    auto key_it = index_map_.find(key);
-    if (key_it != index_map_.end() && key_it->second == i) {
-        // Check if the slot 'i' now holds a file with the same name (duplicate moved from end)
-        bool slot_has_same_name = (i < n_files && std::string(files[i].name) == key);
-        if (!slot_has_same_name) {
-            index_map_.erase(key_it);
-        }
-    }
     
     return 0;
 }
