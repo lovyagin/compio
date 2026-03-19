@@ -651,7 +651,7 @@ void files_table::rebuild_index() {
             len = COMPIO_FNAME_MAX_SIZE - 1;
         }
         std::string_view key(files[i].name, len);
-        if (index_map_.find(key) == index_map_.end()) {
+        if (!index_map_.find(key)) {
             index_map_.emplace(key, i);
         }
     }
@@ -670,9 +670,9 @@ const files_table::file *files_table::find(const char *name) const {
         key = std::string_view(name, len);
     }
     
-    auto it = index_map_.find(key);
-    if (it != index_map_.end()) {
-        return &files[it->second];
+    auto ptr = index_map_.find(key);
+    if (ptr) {
+        return &files[*ptr];
     }
     
     return nullptr;
@@ -701,9 +701,9 @@ files_table::file *files_table::add(const char *name) {
     
     // Check if it already exists using string_view lookup
     // If so, return existing entry to prevent duplicates.
-    auto it = index_map_.find(key);
-    if (it != index_map_.end()) {
-        return &files[it->second];
+    auto ptr = index_map_.find(key);
+    if (ptr) {
+        return &files[*ptr];
     }
         
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE - 1);
@@ -734,12 +734,12 @@ int files_table::remove(const char *name) {
         key = std::string_view(name, len);
     }
     
-    auto it = index_map_.find(key);
-    if (it == index_map_.end()) {
+    auto ptr = index_map_.find(key);
+    if (!ptr) {
         return -1;
     }
     
-    uint32_t i = it->second;
+    uint32_t i = *ptr;
     
     // OPTIMIZED REMOVAL logic with string_view index map
     // The index map stores string_views pointing to files[i].name.
@@ -747,7 +747,7 @@ int files_table::remove(const char *name) {
     // We MUST erase the map entry pointing to files[i].name BEFORE overwriting it.
     
     // 1. Remove the entry for the file being deleted.
-    index_map_.erase(it);
+    index_map_.erase(key);
 
     if (i != n_files - 1) {
         // We are removing an element from the middle.
@@ -761,19 +761,19 @@ int files_table::remove(const char *name) {
         size_t last_len = portable_strnlen(last_name_ptr, COMPIO_FNAME_MAX_SIZE);
         std::string_view last_key(last_name_ptr, last_len < COMPIO_FNAME_MAX_SIZE ? last_len : COMPIO_FNAME_MAX_SIZE - 1);
         
-        auto last_it = index_map_.find(last_key);
+        auto last_ptr = index_map_.find(last_key);
         
         // We need to update index if it points to last_idx.
-        // Note: If last_name == name (of deleted file), last_it would have been 'it'
-        // which is already erased. So last_it will be end().
+        // Note: If last_name == name (of deleted file), last_ptr would have been 'ptr'
+        // which is already erased. So last_ptr will be null.
         // In that case (duplicate at end), we need to re-insert it pointing to 'i'.
         
         bool update_index = false;
-        if (last_it != index_map_.end()) {
-             if (last_it->second == last_idx) {
+        if (last_ptr) {
+             if (*last_ptr == last_idx) {
                  // It points to the old location. We must move it.
                  // Erase old entry because key points to old location.
-                 index_map_.erase(last_it);
+                 index_map_.erase(last_key);
                  update_index = true;
              }
              // If it points to something else (e.g. earlier duplicate), leave it alone.
@@ -781,7 +781,7 @@ int files_table::remove(const char *name) {
              // Not found. This means the file we just deleted (at 'i') was likely 
              // shadowing this one (same name). Or it wasn't indexed?
              // Since we deleted 'i', and 'i' was previously indexed (we found 'it'),
-             // if last_name == name(i), then last_it was 'it' and is now invalid/end.
+             // if last_name == name(i), then last_ptr was 'ptr' and is now invalid/end.
              // So if not found, we assume we should index it at 'i'.
              update_index = true;
         }
@@ -794,7 +794,7 @@ int files_table::remove(const char *name) {
             // Reconstruct string_view pointing to the NEW location (files[i].name)
             // Length is known (last_key.length())
             std::string_view new_key(files[i].name, last_key.length());
-            index_map_[new_key] = i;
+            index_map_.insert_or_assign(new_key, i);
         }
     } else {
         // Removing the last element. Just decrement count.
