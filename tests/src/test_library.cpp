@@ -42,6 +42,7 @@ protected:
         }
 
         remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
     }
 
     void Reset() {
@@ -100,6 +101,7 @@ protected:
         }
 
         remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
     }
 };
 
@@ -239,6 +241,7 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     ASSERT_EQ(compio_close_archive(archive), 0);
 
     remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
 }
 
 INSTANTIATE_TEST_CASE_P(
@@ -376,6 +379,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
     }
 
     remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
 }
 
 INSTANTIATE_TEST_CASE_P(RandomUsageTests, RandomUsageTest,
@@ -457,6 +461,7 @@ TEST_P(CustomUsageTest, CustomUsage) {
     ASSERT_EQ(compio_close_archive(archive), 0);
 
     remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
 }
 
 INSTANTIATE_TEST_CASE_P(CustomUsageTests, CustomUsageTest,
@@ -522,6 +527,7 @@ TEST_P(ManySmallWritesOneBigReadTest, ManySmallWritesOneBigRead) {
     ASSERT_EQ(compio_close_archive(archive), 0);
 
     remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
 }
 
 INSTANTIATE_TEST_CASE_P(ManySmallWritesOneBigReadTests, ManySmallWritesOneBigReadTest,

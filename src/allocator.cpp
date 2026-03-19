@@ -1033,7 +1033,25 @@ void block_allocator::perform_defragmentation() {
         write_pos += block_size;
     }
 
-    fflush(archive_->file);
+    // Flush all updated index nodes to disk BEFORE truncating the file.
+    // If we crash after truncation but before index write, we lose data.
+    archive_->index->clear_cache();
+
+    if (fflush(archive_->file) != 0) {
+        WARNING_PRINT("warning: perform_defragmentation: fflush failed\n");
+        return;
+    }
+    #ifdef _WIN32
+    if (_commit(_fileno(archive_->file)) != 0) {
+        WARNING_PRINT("warning: perform_defragmentation: _commit failed\n");
+        return;
+    }
+    #else
+    if (fsync(fileno(archive_->file)) != 0) {
+        WARNING_PRINT("warning: perform_defragmentation: fsync failed\n");
+        return;
+    }
+    #endif
 
     // Compute safe truncation point: max of write_pos and end of last B-tree node.
     uint64_t truncate_pos = write_pos;

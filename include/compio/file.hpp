@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <memory>
 #include <vector>
+#include <unordered_map>
+#include <string>
 
 #include "compio/infile_object.hpp"
 #include "compio/tree_types.hpp"
@@ -31,14 +33,26 @@ struct files_table {
         uint64_t size;
     };
     std::vector<file> files;
+    
+    // Hash map for fast O(1) file lookups by name.
+    // Maps filename (std::string) to index in 'files' vector.
+    // Transient (not serialized to disk), rebuilt on load/add/remove.
+    std::unordered_map<std::string, uint32_t> index_map_;
 
     files_table();
     explicit files_table(uint32_t max_files);
+    files_table(const files_table& other); // Custom copy constructor to skip index map
+    files_table& operator=(const files_table& other); // Custom assignment operator
+    files_table(files_table&& other) noexcept; // Custom move constructor
+    files_table& operator=(files_table&& other) noexcept; // Custom move assignment operator
 
     const file *find(const char *name) const;
     file *find(const char *name);
     file *add(const char *name);
     int remove(const char *name);
+    
+    // Rebuild the index_map from the current files vector
+    void rebuild_index();
 };
 
 /**
