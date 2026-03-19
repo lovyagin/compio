@@ -70,8 +70,8 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     std::lock_guard<std::mutex> lock(mutex_);
     if (!wal_file_) return false;
 
-    // Checksum
-    uint32_t checksum = (size == 0 && type == WalRecordType::COMMIT) ? 0 : calculate_checksum(data, size);
+    // Checksum: always use the same convention as recovery/commit logic
+    uint32_t checksum = calculate_checksum(data, size);
 
     // Prepare Header
     // We serialize type as uint8_t
@@ -111,12 +111,15 @@ bool WalManager::log_write_vectored(WalRecordType type, uint64_t addr, const std
         total_size += buf.size;
     }
 
-    // Checksum
-    uint32_t checksum = 0;
-    if (!(total_size == 0 && type == WalRecordType::COMMIT)) {
-        checksum = 0x811c9dc5; // FNV-1a 32-bit offset basis
-        for (const auto& buf : buffers) {
-            checksum = fnv1a_32_continue(checksum, static_cast<const uint8_t*>(buf.data), buf.size);
+    // Checksum: initialize using the same zero-length convention as calculate_checksum(nullptr, 0)
+    uint32_t checksum = calculate_checksum(nullptr, 0);
+    for (const auto& buf : buffers) {
+        if (buf.size > 0) {
+            checksum = fnv1a_32_continue(
+                checksum,
+                static_cast<const uint8_t*>(buf.data),
+                buf.size
+            );
         }
     }
 
