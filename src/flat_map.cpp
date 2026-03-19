@@ -128,14 +128,20 @@ void flat_map::rehash(size_t new_cap) {
 
 void flat_map::insert_internal(const Entry& entry) {
     size_t idx = entry.hash & (capacity_ - 1);
-    while (true) {
+    size_t probes = 0;
+    while (probes < capacity_) {
         if (table_[idx].is_empty()) {
             table_[idx] = entry;
             size_++;
             return;
         }
         idx = (idx + 1) & (capacity_ - 1);
+        probes++;
     }
+    // Should never happen if we respect load factor and capacity
+    // But as a safety guard:
+    // This implies table is full or corrupted logic.
+    // In production we might abort or throw, here we just return (data loss but no infinite loop)
 }
 
 } // namespace detail

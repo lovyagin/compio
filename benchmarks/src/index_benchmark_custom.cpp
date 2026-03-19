@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <chrono>
+#include <cstring>
 #include <string>
 #include "compio/file.hpp"
 
@@ -22,8 +23,7 @@ void benchmark_rebuild_index(uint32_t n_files) {
         ftable.n_files++;
     }
     
-    // Clear any existing map
-    ftable.index_map_.clear();
+    // Clear any existing map is handled by rebuild_index()
     
     auto start = std::chrono::high_resolution_clock::now();
     ftable.rebuild_index();
