@@ -630,15 +630,43 @@ int files_table::remove(const char *name) {
     
     uint32_t i = it->second;
     
-    // Move memory
-    if (i < n_files - 1) {
-        memmove(&files[i], &files[i + 1], (--n_files - i) * sizeof(files_table::file));
-    } else {
-        --n_files;
+    // Move memory: Swap with the last element to avoid O(N) shift
+    // This changes the order of files in the table, but that is permitted.
+    // The B-Tree index relies on name hashes, not file table position.
+    
+    if (i != n_files - 1) {
+        // We are removing an element from the middle.
+        // Move the last element to this position.
+        uint32_t last_idx = n_files - 1;
+        
+        // Ensure string copy happens before overwrite
+        std::string last_name(files[last_idx].name);
+        
+        // Overwrite the removed element
+        files[i] = files[last_idx];
+        
+        // Update index for the moved file ONLY if it currently points to the old position
+        // This preserves correctness if duplicates exist (though duplicates are generally discouraged)
+        auto last_it = index_map_.find(last_name);
+        if (last_it != index_map_.end() && last_it->second == last_idx) {
+            index_map_[last_name] = i;
+        }
     }
     
-    // Rebuild index because indices shifted
-    rebuild_index();
+    // Decrease count
+    --n_files;
+    
+    // Remove the deleted file from the index
+    // Only erase if the index actually points to the deleted slot
+    // AND we didn't just replace it with a file of the same name (e.g. swap with last)
+    auto key_it = index_map_.find(key);
+    if (key_it != index_map_.end() && key_it->second == i) {
+        // Check if the slot 'i' now holds a file with the same name (duplicate moved from end)
+        bool slot_has_same_name = (i < n_files && std::string(files[i].name) == key);
+        if (!slot_has_same_name) {
+            index_map_.erase(key_it);
+        }
+    }
     
     return 0;
 }
