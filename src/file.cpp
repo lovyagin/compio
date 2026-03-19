@@ -607,7 +607,7 @@ files_table::file *files_table::add(const char *name) {
 int files_table::remove(const char *name) {
     if (!name) return -1;
     
-    // Construct lookup key with truncation logic (same as old behavior)
+    // Construct lookup key with truncation logic
     // Use string_view to avoid allocation.
     size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
     std::string_view key;
@@ -624,15 +624,12 @@ int files_table::remove(const char *name) {
     
     uint32_t i = it->second;
     
-    // ---------------------------------------------------------------------
     // OPTIMIZED REMOVAL logic with string_view index map
-    // ---------------------------------------------------------------------
     // The index map stores string_views pointing to files[i].name.
     // When we swap files, we overwrite files[i].name.
     // We MUST erase the map entry pointing to files[i].name BEFORE overwriting it.
     
     // 1. Remove the entry for the file being deleted.
-    // 'it' points to the entry where key is string_view(files[i].name).
     index_map_.erase(it);
 
     if (i != n_files - 1) {
