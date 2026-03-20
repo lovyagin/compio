@@ -432,7 +432,16 @@ bool WalManager::recover(FILE* archive_file) {
     // applied to the archive when a COMMIT record is encountered.
     std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pending_records;
 
-    while (static_cast<uint64_t>(ftell64(wal_in)) < valid_limit) {
+    while (true) {
+        int64_t pos = ftell64(wal_in);
+        if (pos < 0) {
+            fprintf(stderr, "[WAL] ftell64 failed during recovery.\n");
+            success = false;
+            break;
+        }
+        if (static_cast<uint64_t>(pos) >= valid_limit) {
+            break;
+        }
         uint8_t type_u8;
         if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) { success = false; break; }
         
