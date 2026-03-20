@@ -15,6 +15,7 @@ add_executable(compio_gtest
     src/test_defragmentation_advanced.cpp
     src/test_library.cpp
     src/test_file_removal.cpp
+    src/test_files_table_lifecycle.cpp
     src/test_flat_map.cpp
     src/test_btree.cpp
     src/test_btree_advanced.cpp
