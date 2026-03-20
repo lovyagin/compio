@@ -53,7 +53,10 @@ static bool read_files_batched(FILE* file, files_table& ftable) {
         size_t count = std::min(remaining, BATCH_SIZE);
         size_t bytes_to_read = count * ENTRY_SIZE;
         
-        size_t read_count = fread(buffer.data(), 1, bytes_to_read, file);
+        // Use lendian_fread with size=1 to read bytes directly into buffer
+        // (endian swapping is handled manually below). 
+        // Checks ferror and updates metrics.
+        size_t read_count = lendian_fread(buffer.data(), 1, bytes_to_read, file);
         if (read_count != bytes_to_read) {
             WARNING_PRINT("warning: short read in files table (expected %zu, got %zu)\n", 
                           bytes_to_read, read_count);
@@ -112,7 +115,9 @@ static bool write_files_batched(FILE* file, const files_table& ftable) {
         }
         
         size_t bytes_to_write = count * ENTRY_SIZE;
-        if (fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
+        // Use lendian_fwrite with size=1 to write bytes directly from buffer.
+        // Checks ferror and updates metrics.
+        if (lendian_fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
             WARNING_PRINT("warning: short write in files table\n");
             return false;
         }
@@ -643,9 +648,7 @@ void files_table::rebuild_index() {
     index_map_.clear();
     index_map_.reserve(n_files);
     for (uint32_t i = 0; i < n_files; ++i) {
-        // Only insert if not exists to mimic linear search finding the first one
-        // (though duplicates shouldn't exist)
-        // Construct a bounded string_view pointing to files[i].name
+        // Insert if not exists to preserve "first match" semantics for legacy archives
         size_t len = portable_strnlen(files[i].name, COMPIO_FNAME_MAX_SIZE);
         if (len >= COMPIO_FNAME_MAX_SIZE) {
             len = COMPIO_FNAME_MAX_SIZE - 1;
@@ -711,10 +714,6 @@ files_table::file *files_table::add(const char *name) {
     files[n_files].size = 0;
     
     // Update index
-    // Use string_view to avoid allocation. Points to files[n_files].name.
-    // Map points to this new entry.
-    // Explicitly construct bounded string_view to avoid scanning past safe bounds (though it is null-terminated)
-    // and match the logic used in find/remove.
     std::string_view stored_key(files[n_files].name, key.length());
     index_map_.emplace(stored_key, n_files);
     
@@ -724,8 +723,7 @@ files_table::file *files_table::add(const char *name) {
 int files_table::remove(const char *name) {
     if (!name) return -1;
     
-    // Construct lookup key with truncation logic
-    // Use string_view to avoid allocation.
+    // Construct lookup key
     size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
     std::string_view key;
     if (len >= COMPIO_FNAME_MAX_SIZE) {
@@ -776,6 +774,10 @@ int files_table::remove(const char *name) {
     
     // Decrease count
     --n_files;
+    
+    // Zero out the slot that is now unused to avoid leaking deleted data
+    // and ensure deterministic content for checksums (though existing archives may have garbage).
+    memset(&files[n_files], 0, sizeof(files_table::file));
     
     return 0;
 }
