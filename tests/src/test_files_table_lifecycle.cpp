@@ -25,8 +25,17 @@ TEST(FilesTableLifecycleTest, MoveConstructorPreservesIndex) {
     EXPECT_NE(ft2.find("file2"), nullptr);
     
     // Verify pointers in index map point to ft2's vector data
+    // The pointer returned by find() should be inside ft2.files
     auto* f1 = ft2.find("file1");
+    ASSERT_NE(f1, nullptr);
     EXPECT_STREQ(f1->name, "file1");
+    
+    // Explicit pointer check: f1 should be within ft2.files vector storage
+    // Assuming ft2.files is contiguous (std::vector)
+    const files_table::file* base = ft2.files.data();
+    const files_table::file* end = base + ft2.max_files;
+    EXPECT_GE(f1, base);
+    EXPECT_LT(f1, end);
 }
 
 TEST(FilesTableLifecycleTest, MoveAssignmentPreservesIndex) {
