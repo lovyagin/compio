@@ -23,16 +23,6 @@ static size_t portable_strnlen(const char *s, size_t maxlen) {
 static const uint8_t index_node_signature = 67;
 static const uint8_t storage_block_signature = 171;
 
-static inline bool is_big_endian() {
-    uint32_t num = 1;
-    return *(reinterpret_cast<unsigned char *>(&num)) == 0;
-}
-
-static void swap_uint64(uint64_t* val) {
-    uint8_t* p = (uint8_t*)val;
-    for(int i=0; i<4; ++i) std::swap(p[i], p[7-i]);
-}
-
 // Helper to batch read files table
 static bool read_files_batched(FILE* file, files_table& ftable) {
     const size_t BATCH_SIZE = 4096; // 4096 files * 40 bytes = ~160KB buffer

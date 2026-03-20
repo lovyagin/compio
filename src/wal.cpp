@@ -20,6 +20,29 @@
 
 namespace compio {
 
+// Helper for Little-Endian I/O
+static bool write_u64_le(FILE* f, uint64_t v) {
+    if (is_big_endian()) swap_uint64(&v);
+    return fwrite(&v, sizeof(v), 1, f) == 1;
+}
+
+static bool write_u32_le(FILE* f, uint32_t v) {
+    if (is_big_endian()) swap_uint32(&v);
+    return fwrite(&v, sizeof(v), 1, f) == 1;
+}
+
+static bool read_u64_le(FILE* f, uint64_t* v) {
+    if (fread(v, sizeof(*v), 1, f) != 1) return false;
+    if (is_big_endian()) swap_uint64(v);
+    return true;
+}
+
+static bool read_u32_le(FILE* f, uint32_t* v) {
+    if (fread(v, sizeof(*v), 1, f) != 1) return false;
+    if (is_big_endian()) swap_uint32(v);
+    return true;
+}
+
 WalManager::WalManager(const std::string& archive_path)
     : wal_path_(archive_path + ".wal"),
       wal_file_(nullptr),
@@ -82,9 +105,9 @@ bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, 
     // Transaction ID? Maybe skip for now, just simple log.
     
     if (fwrite(&type_u8, sizeof(uint8_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&addr, sizeof(uint64_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&size, sizeof(uint64_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false;
+    if (!write_u64_le(wal_file_, addr)) return false;
+    if (!write_u64_le(wal_file_, size)) return false;
+    if (!write_u32_le(wal_file_, checksum)) return false;
     
     // Write Data
     if (size > 0) {
@@ -127,9 +150,9 @@ bool WalManager::log_write_vectored(WalRecordType type, uint64_t addr, const std
     uint8_t type_u8 = static_cast<uint8_t>(type);
     
     if (fwrite(&type_u8, sizeof(uint8_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&addr, sizeof(uint64_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&total_size, sizeof(uint64_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false;
+    if (!write_u64_le(wal_file_, addr)) return false;
+    if (!write_u64_le(wal_file_, total_size)) return false;
+    if (!write_u32_le(wal_file_, checksum)) return false;
     
     // Write Data
     for (const auto& buf : buffers) {
@@ -183,9 +206,9 @@ bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
     uint32_t checksum = calculate_checksum(nullptr, 0);
     
     if (fwrite(&type, sizeof(uint8_t), 1, wal_file_) != 1) return false;
-    if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Addr
-    if (fwrite(&zero, sizeof(uint64_t), 1, wal_file_) != 1) return false; // Size
-    if (fwrite(&checksum, sizeof(uint32_t), 1, wal_file_) != 1) return false; // Checksum
+    if (!write_u64_le(wal_file_, zero)) return false; // Addr
+    if (!write_u64_le(wal_file_, zero)) return false; // Size
+    if (!write_u32_le(wal_file_, checksum)) return false; // Checksum
     
     // Update size for COMMIT record (1+8+8+4 = 21 bytes)
     current_wal_size_ += 21;
@@ -357,10 +380,10 @@ bool WalManager::recover(FILE* archive_file) {
         if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) break;
         
         uint64_t addr;
-        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) break;
+        if (!read_u64_le(wal_in, &addr)) break;
         
         uint64_t data_size;
-        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) break;
+        if (!read_u64_le(wal_in, &data_size)) break;
         
         // Sanity check for data size to prevent OOM on corrupt WAL
         // 1GB limit seems reasonable for a single record? Or even smaller.
@@ -376,7 +399,7 @@ bool WalManager::recover(FILE* archive_file) {
         }
 
         uint32_t expected_checksum;
-        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) break;
+        if (!read_u32_le(wal_in, &expected_checksum)) break;
         
         if (data_size > 0) {
             if (fseek64(wal_in, data_size, SEEK_CUR) != 0) break;
@@ -409,18 +432,18 @@ bool WalManager::recover(FILE* archive_file) {
     // applied to the archive when a COMMIT record is encountered.
     std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pending_records;
 
-    while (ftell64(wal_in) < valid_limit) {
+    while (static_cast<uint64_t>(ftell64(wal_in)) < valid_limit) {
         uint8_t type_u8;
         if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) { success = false; break; }
         
         uint64_t addr;
-        if (fread(&addr, sizeof(uint64_t), 1, wal_in) != 1) { success = false; break; }
+        if (!read_u64_le(wal_in, &addr)) { success = false; break; }
         
         uint64_t data_size;
-        if (fread(&data_size, sizeof(uint64_t), 1, wal_in) != 1) { success = false; break; }
+        if (!read_u64_le(wal_in, &data_size)) { success = false; break; }
         
         uint32_t expected_checksum;
-        if (fread(&expected_checksum, sizeof(uint32_t), 1, wal_in) != 1) { success = false; break; }
+        if (!read_u32_le(wal_in, &expected_checksum)) { success = false; break; }
         
         std::vector<uint8_t> buffer(data_size);
         if (data_size > 0) {

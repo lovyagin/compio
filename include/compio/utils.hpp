@@ -84,6 +84,43 @@ int64_t ftell64(FILE *file);
 bool is_file_empty(FILE *file);
 
 /**
+ * @brief Check if system is Big Endian
+ * @return true if Big Endian, false if Little Endian
+ */
+inline bool is_big_endian() {
+    uint32_t num = 1;
+    return *(reinterpret_cast<unsigned char *>(&num)) == 0;
+}
+
+/**
+ * @brief Swap 64-bit integer endianness
+ * @param val Pointer to value to swap
+ */
+inline void swap_uint64(uint64_t* val) {
+    uint8_t* p = (uint8_t*)val;
+    uint8_t temp;
+    for(int i=0; i<4; ++i) {
+        temp = p[i];
+        p[i] = p[7-i];
+        p[7-i] = temp;
+    }
+}
+
+/**
+ * @brief Swap 32-bit integer endianness
+ * @param val Pointer to value to swap
+ */
+inline void swap_uint32(uint32_t* val) {
+    uint8_t* p = (uint8_t*)val;
+    uint8_t temp;
+    for(int i=0; i<2; ++i) {
+        temp = p[i];
+        p[i] = p[3-i];
+        p[3-i] = temp;
+    }
+}
+
+/**
  * @brief Calculate checksum of data
  * @param data Pointer to the data
  * @param size Size of the data
