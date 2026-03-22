@@ -334,7 +334,9 @@ TEST_F(BTreeRangeAddTest, RangeAddPreservesTreeStructure) {
 
     tree->add_to_range(50, make_key(1, 100), make_key(1, 500));
 
-    auto range_result = tree->get_range(make_key(1, 0), make_key(1, 5000));
+    auto range_result_opt = tree->get_range(make_key(1, 0), make_key(1, 5000));
+    ASSERT_TRUE(range_result_opt.has_value());
+    auto range_result = range_result_opt.value();
     EXPECT_EQ(range_result.size(), original_data.size());
 
     for (const auto &[key, val] : range_result) {

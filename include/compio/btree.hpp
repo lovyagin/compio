@@ -159,10 +159,10 @@ struct btree {
      *
      * @param key_min Minimum key (inclusive)
      * @param key_max Maximum key (exclusive)
-     * @return std::vector<std::pair<tree_key, tree_val>> result Vector with resulting key-value
-     * pairs
+     * @return std::optional<std::vector<std::pair<tree_key, tree_val>>> result Vector with resulting key-value
+     * pairs, or nullopt on read failure
      */
-    std::vector<std::pair<tree_key, tree_val>> get_range(const tree_key &key_min,
+    std::optional<std::vector<std::pair<tree_key, tree_val>>> get_range(const tree_key &key_min,
                                                          const tree_key &key_max);
 
     /**
@@ -333,9 +333,9 @@ private:
      * and its associated value in the given subtree.
      *
      * @param node The root of the subtree to search
-     * @return std::pair<tree_key, tree_val> The maximum key-value pair
+     * @return std::optional<std::pair<tree_key, tree_val>> The maximum key-value pair
      */
-    std::pair<tree_key, tree_val> find_max_in_node(shared_node node);
+    std::optional<std::pair<tree_key, tree_val>> find_max_in_node(shared_node node);
 
     /**
      * @brief Find the minimum key-value pair in a subtree
@@ -344,9 +344,9 @@ private:
      * and its associated value in the given subtree.
      *
      * @param node The root of the subtree to search
-     * @return std::pair<tree_key, tree_val> The minimum key-value pair
+     * @return std::optional<std::pair<tree_key, tree_val>> The minimum key-value pair
      */
-    std::pair<tree_key, tree_val> find_min_in_node(shared_node node);
+    std::optional<std::pair<tree_key, tree_val>> find_min_in_node(shared_node node);
 
     /**
      * @brief Helper for removing a key, that exists in current node
@@ -380,8 +380,9 @@ private:
      * @param key_min Minimum key (inclusive)
      * @param key_max Maximum key (exclusive)
      * @param result Vector to store the resulting key-value pairs
+     * @return true on success, false on read failure
      */
-    void _get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
+    bool _get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
                     std::vector<std::pair<tree_key, tree_val>> &result);
 
     /**

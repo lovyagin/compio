@@ -26,7 +26,12 @@ shared_node node_reader::read_node(uint64_t addr) {
     auto node = cache.get(addr);
     if (!node.has_value()) {
         auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex, true, wal);
-        result.read();     // read from file (because constructor with obj& does not read)
+        if (!result.read()) {
+            WARNING_PRINT("error: failed to read index node at addr %" PRIu64 "\n", addr);
+            // Return an empty/null shared_node to indicate failure.
+            // smart_infile_object default constructor creates a null state.
+            return shared_node();
+        }
         result.unmodify(); // constructor with obj& sets modified=true
         cache.put(addr, result);
         return result;
@@ -82,11 +87,19 @@ void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_va
         node->validate();
     } else {
         auto child = read_child(node, idx);
+        if (!child) {
+            WARNING_PRINT("error: failed to read child node during insert\n");
+            return;
+        }
         if (RO(child)->num_keys == (2 * degree - 1)) {
             split_child(node, child, idx);
             if (key > node->keys[idx]) {
                 idx++;
                 child = read_child(node, idx);
+                if (!child) {
+                    WARNING_PRINT("error: failed to read child node after split during insert\n");
+                    return;
+                }
             }
         }
         insert_nonfull(child, key, value);
@@ -97,6 +110,10 @@ void btree::insert(const tree_key &key, const tree_val &value) {
     DEBUG_PRINT("[BTREE]: insert(key={...,%" PRIu64 "},value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, value.addr,
                 value.size);
     auto root = read_root();
+    if (!root) {
+        WARNING_PRINT("error: failed to read root node for insert\n");
+        return;
+    }
     if (RO(root)->num_keys == (2 * degree - 1)) {
         auto new_root = create_node();
         new_root->is_leaf = false;
@@ -122,12 +139,22 @@ void btree::_remove_in_node(shared_node &node, uint64_t idx) {
         auto child = read_child(node, idx);
         auto successor = read_child(node, idx + 1);
         if (RO(child)->num_keys >= degree) {
-            const auto [p_key, p_val] = find_max_in_node(child);
+            auto max_res = find_max_in_node(child);
+            if (!max_res) {
+                WARNING_PRINT("error: failed to find max in node during remove (corruption)\n");
+                return;
+            }
+            const auto [p_key, p_val] = *max_res;
             node->keys[idx] = p_key;
             node->values[idx] = p_val;
             _remove(child, p_key);
         } else if (RO(successor)->num_keys >= degree) {
-            const auto [s_key, s_val] = find_min_in_node(successor);
+            auto min_res = find_min_in_node(successor);
+            if (!min_res) {
+                WARNING_PRINT("error: failed to find min in node during remove (corruption)\n");
+                return;
+            }
+            const auto [s_key, s_val] = *min_res;
             node->keys[idx] = s_key;
             node->values[idx] = s_val;
             _remove(successor, s_key);
@@ -173,10 +200,10 @@ void btree::remove(const tree_key &key) {
     }
 }
 
-void btree::_get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
+bool btree::_get_range(shared_node &node, const tree_key &key_min, const tree_key &key_max,
                        std::vector<std::pair<tree_key, tree_val>> &result) {
     if (RO(node)->num_keys == 0)
-        return;
+        return true;
 
     tree_key start{0, 0};
     tree_key end = RO(node)->keys[0];
@@ -184,7 +211,8 @@ void btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
     for (std::size_t i = 0; i <= RO(node)->num_keys; ++i) {
         if (!RO(node)->is_leaf && (key_min < end) && (key_max > start)) {
             auto child = read_child(node, i);
-            _get_range(child, key_min, key_max, result);
+            if (!child) return false;
+            if (!_get_range(child, key_min, key_max, result)) return false;
         }
 
         if (i < RO(node)->num_keys) {
@@ -200,22 +228,27 @@ void btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
                                                : tree_key{UINT64_MAX, UINT64_MAX};
         }
     }
+    return true;
 }
 
-std::vector<std::pair<tree_key, tree_val>> btree::get_range(const tree_key &key_min,
+std::optional<std::vector<std::pair<tree_key, tree_val>>> btree::get_range(const tree_key &key_min,
                                                             const tree_key &key_max) {
     if (key_max <= key_min) {
         WARNING_PRINT("warning: btree::get_range received invalid range bounds (key_min={%" PRIu64 ",%" PRIu64 "} "
                       ">= {%" PRIu64 ",%" PRIu64 "}=key_max)\n",
                       key_min.hash, key_min.pos, key_max.hash, key_max.pos);
-        return {};
+        return std::vector<std::pair<tree_key, tree_val>>{};
     }
     std::vector<std::pair<tree_key, tree_val>> result;
     auto root = read_root();
-    _get_range(root, key_min, key_max, result);
+    if (!root) return std::nullopt;
+    
+    if (!_get_range(root, key_min, key_max, result)) return std::nullopt;
+
     DEBUG_PRINT("[BTREE]: get_range(key_min={...,%" PRIu64 "},key_max={...,%" PRIu64 "}) ->\n", key_min.pos,
                 key_max.pos);
     for (const auto &[key, val] : result) {
+        (void)key; (void)val;
         DEBUG_PRINT("\t{...,%" PRIu64 "} -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
     }
     return result;
@@ -231,6 +264,7 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
             }
             if (!RO(node)->is_leaf) {
                 auto child = read_child(node, i);
+                if (!child) return false;
                 return _update(child, key, new_value);
             } else {
                 return false;
@@ -241,6 +275,7 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
     }
     if (!RO(node)->is_leaf) {
         auto child = read_child(node, RO(node)->num_keys);
+        if (!child) return false;
         return _update(child, key, new_value);
     }
     return false;
@@ -250,6 +285,10 @@ void btree::update(const tree_key &key, const tree_val &new_value) {
     DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
     auto root = read_root();
+    if (!root) {
+        WARNING_PRINT("error: failed to read root node for update\n");
+        return;
+    }
     if (!_update(root, key, new_value)) {
         WARNING_PRINT("warning: trying to update non-existing key\n");
     }
@@ -257,6 +296,7 @@ void btree::update(const tree_key &key, const tree_val &new_value) {
 
 std::optional<tree_val> btree::get(const tree_key &key) {
     auto current = read_root();
+    if (!current) return std::nullopt;
 
     while (true) {
         std::size_t idx =
@@ -265,19 +305,23 @@ std::optional<tree_val> btree::get(const tree_key &key) {
 
         if (idx < RO(current)->num_keys && RO(current)->keys[idx] == key) {
             const auto val = RO(current)->values[idx];
-            DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
+            // DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
             return val;
         } else if (!RO(current)->is_leaf) {
             current = read_child(current, idx);
+            if (!current) return std::nullopt;
         } else {
-            DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
+            // DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
             return std::nullopt;
         }
     }
 }
 
 std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &key) {
-    auto range = get_range(key, key + 1);
+    auto range_opt = get_range(key, key + 1);
+    if (!range_opt) return std::nullopt;
+    const auto& range = *range_opt;
+
     assert(key.pos < UINT64_MAX);
     assert(range.size() < 2);
     if (!range.empty()) {
@@ -306,7 +350,7 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
     if (!RO(node)->is_leaf) {
         // this child is in range
         auto child = read_child(node, idx);
-        _add_to_range(child, addition, key_min, key_max);
+        if (child) _add_to_range(child, addition, key_min, key_max);
     }
 
     // iterate through keys, that are in range
@@ -320,7 +364,7 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
             } else {
                 // otherwise, child #idx+1 is partially in range
                 auto child = read_child(node, idx + 1);
-                _add_to_range(child, addition, key_min, key_max);
+                if (child) _add_to_range(child, addition, key_min, key_max);
                 break;
             }
         }
@@ -341,10 +385,11 @@ void btree::add_to_range(int64_t addition, const tree_key &key_min, const tree_k
     }
 
     auto root = read_root();
-    _add_to_range(root, addition, key_min, key_max);
+    if (root) _add_to_range(root, addition, key_min, key_max);
 }
 
 void btree::_print(shared_node node, uint64_t depth) {
+    if (!node) return;
     for (std::size_t i = 0; i <= node->num_keys; ++i) {
         if (!node->is_leaf) {
             _print(read_child(node, i), depth + 1);
@@ -526,7 +571,7 @@ shared_node btree::populate_child(shared_node &node, uint64_t idx) {
 
     if (idx > 0) {
         auto predecessor = read_child(node, idx - 1);
-        if (RO(predecessor)->num_keys >= degree) {
+        if (predecessor && RO(predecessor)->num_keys >= degree) {
             borrow_from_prev(node, idx);
             return read_child(node, idx);
         }
@@ -534,7 +579,7 @@ shared_node btree::populate_child(shared_node &node, uint64_t idx) {
 
     if (idx < RO(node)->num_keys) {
         auto successor = read_child(node, idx + 1);
-        if (RO(successor)->num_keys >= degree) {
+        if (successor && RO(successor)->num_keys >= degree) {
             borrow_from_next(node, idx);
             return read_child(node, idx);
         }
@@ -549,18 +594,24 @@ shared_node btree::populate_child(shared_node &node, uint64_t idx) {
     }
 }
 
-std::pair<tree_key, tree_val> btree::find_max_in_node(shared_node node) {
+std::optional<std::pair<tree_key, tree_val>> btree::find_max_in_node(shared_node node) {
+    if (!node) return std::nullopt;
     while (!RO(node)->is_leaf) {
-        node = read_child(node, RO(node)->num_keys);
+        auto next = read_child(node, RO(node)->num_keys);
+        if (!next) return std::nullopt;
+        node = next;
     }
-    return {RO(node)->keys.back(), RO(node)->values.back()};
+    return std::pair{RO(node)->keys.back(), RO(node)->values.back()};
 }
 
-std::pair<tree_key, tree_val> btree::find_min_in_node(shared_node node) {
+std::optional<std::pair<tree_key, tree_val>> btree::find_min_in_node(shared_node node) {
+    if (!node) return std::nullopt;
     while (!RO(node)->is_leaf) {
-        node = read_child(node, 0);
+        auto next = read_child(node, 0);
+        if (!next) return std::nullopt;
+        node = next;
     }
-    return {RO(node)->keys[0], RO(node)->values[0]};
+    return std::pair{RO(node)->keys[0], RO(node)->values[0]};
 }
 
 uint64_t btree::allocate_node() { return allocator->allocate(INDEX_NODE_SIZE(degree)); }
@@ -575,6 +626,9 @@ shared_node btree::create_node() { return reader.create_node(allocate_node()); }
 shared_node btree::read_node(uint64_t addr) {
     DEBUG_PRINT("[BTREE][read_node]: addr=%" PRIu64 "\n", addr);
     auto node = reader.read_node(addr);
+    if (!node) {
+        return node;
+    }
     RO(node)->validate();
     return node;
 }
@@ -583,6 +637,9 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
     assert(RO(node)->is_leaf == false);
     assert(idx <= RO(node)->num_keys);
     auto child = read_node(RO(node)->children[idx]);
+    if (!child) {
+        return child;
+    }
     const int64_t addition = RO(node)->key_additions[idx];
     if (addition != 0) {
         if (RO(child)->num_keys > 0) {

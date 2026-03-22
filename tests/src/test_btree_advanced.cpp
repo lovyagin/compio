@@ -151,8 +151,9 @@ TEST_F(BTreeAdvancedTest, DeleteAllKeys) {
         current_pos += block_size;
     }
 
-    auto result = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
-    EXPECT_TRUE(result.empty());
+    auto result_opt = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
+    ASSERT_TRUE(result_opt.has_value());
+    EXPECT_TRUE(result_opt.value().empty());
 }
 
 TEST_F(BTreeAdvancedTest, CacheEviction) {
@@ -204,7 +205,9 @@ TEST_F(BTreeAdvancedTest, ComplexRangeQueries) {
     tree_key min_key = make_key(1, 200);
     tree_key max_key = make_key(3, 200);
 
-    auto result = tree->get_range(min_key, max_key);
+    auto result_opt = tree->get_range(min_key, max_key);
+    ASSERT_TRUE(result_opt.has_value());
+    auto result = result_opt.value();
 
     EXPECT_EQ(result.size(), 5);
 
@@ -244,7 +247,9 @@ TEST_F(BTreeAdvancedTest, RangeQueryWithGaps) {
     tree_key min_key = make_key(1, 100);
     tree_key max_key = make_key(1, 550);
 
-    auto result = tree->get_range(min_key, max_key);
+    auto result_opt = tree->get_range(min_key, max_key);
+    ASSERT_TRUE(result_opt.has_value());
+    auto result = result_opt.value();
 
     EXPECT_EQ(result.size(), 5);
 }
@@ -280,8 +285,9 @@ TEST_F(BTreeAdvancedTest, MixedOperationsStress) {
         case 1: {
             tree_key min_key = make_key(1, 0);
             tree_key max_key = make_key(5, 10000);
-            auto result = tree->get_range(min_key, max_key);
-            EXPECT_GT(result.size(), 0);
+            auto result_opt = tree->get_range(min_key, max_key);
+            ASSERT_TRUE(result_opt.has_value());
+            EXPECT_GT(result_opt.value().size(), 0);
         } break;
         case 2:
             tree->remove(key);
@@ -303,8 +309,9 @@ TEST_F(BTreeAdvancedTest, BoundaryValues) {
     tree->insert(min_key, make_val(1000, 100));
     tree->insert(max_key, make_val(2000, 200));
 
-    auto result = tree->get_range(min_key, make_key(UINT64_MAX, UINT64_MAX));
-    EXPECT_EQ(result.size(), 2);
+    auto result_opt = tree->get_range(min_key, make_key(UINT64_MAX, UINT64_MAX));
+    ASSERT_TRUE(result_opt.has_value());
+    EXPECT_EQ(result_opt.value().size(), 2);
 }
 
 TEST_F(BTreeAdvancedTest, ZeroSizeValues) {

@@ -85,8 +85,9 @@ public:
      *
      * @param file File stream to read from
      * @param addr File address (offset) where the object data is stored
+     * @return true if read was successful and data is valid, false otherwise
      */
-    virtual void read_from(FILE *file, uint64_t addr) = 0;
+    virtual bool read_from(FILE *file, uint64_t addr) = 0;
 
     /**
      * @brief Write object data to file at specified address
@@ -209,7 +210,20 @@ private:
          */
         storage(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr) 
             : storage(file, addr, new T(), io_mutex, true, wal) { // Re-use main constructor
-            read(); // Then read
+            if (!read()) {
+                // Mark this storage as logically removed and not modified so that
+                // the destructor will not attempt to write back potentially
+                // corrupted or uninitialized data.
+                removed = true;
+                modified = false;
+
+                // Log the failure; callers that can should still perform their own
+                // validity checks, but this at least records the corruption event.
+                std::fprintf(stderr,
+                             "smart_infile_object::storage: failed to read object at address %llu from FILE %p\n",
+                             static_cast<unsigned long long>(addr),
+                             static_cast<void*>(file));
+            }
         }
 
         /**
@@ -229,13 +243,14 @@ private:
          * @brief Read object data from file
          *
          * Calls the object's read_from method to load data from file.
+         * @return true if successful, false otherwise
          */
-        void read() {
+        bool read() {
             if (io_mutex) {
                 std::lock_guard<std::mutex> lock(*io_mutex);
-                data->read_from(file, addr);
+                return data->read_from(file, addr);
             } else {
-                data->read_from(file, addr);
+                return data->read_from(file, addr);
             }
         }
 
@@ -482,8 +497,9 @@ public:
      * @brief Read object data from file
      *
      * Reloads the object data from file, discarding any unsaved modifications.
+     * @return true if successful, false otherwise
      */
-    void read() { S->read(); }
+    bool read() { return S->read(); }
 
     /**
      * @brief Write object data to file

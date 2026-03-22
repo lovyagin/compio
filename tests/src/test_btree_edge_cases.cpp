@@ -77,7 +77,10 @@ TEST_F(BTreeEdgeCasesTest, InsertDuplicateKey) {
     tree->insert(key, val1);
     tree->insert(key, val2);
 
-    auto result = tree->get_range(key, key + 1);
+    auto result_opt = tree->get_range(key, key + 1);
+    ASSERT_TRUE(result_opt.has_value());
+    auto result = result_opt.value();
+
     EXPECT_EQ(result.size(), 1);
     EXPECT_EQ(result[0].second, val1);
 }
@@ -169,9 +172,9 @@ TEST_F(BTreeEdgeCasesTest, RangeQueryExactMatch) {
 
     tree->insert(key, val);
 
-    auto result = tree->get_range(key, key);
-
-    EXPECT_TRUE(result.empty());
+    auto result_opt = tree->get_range(key, key);
+    ASSERT_TRUE(result_opt.has_value());
+    EXPECT_TRUE(result_opt.value().empty());
 }
 
 TEST_F(BTreeEdgeCasesTest, RangeQuerySingleUnitRange) {
@@ -180,7 +183,9 @@ TEST_F(BTreeEdgeCasesTest, RangeQuerySingleUnitRange) {
 
     tree->insert(key, val);
 
-    auto result = tree->get_range(key, key + 1);
+    auto result_opt = tree->get_range(key, key + 1);
+    ASSERT_TRUE(result_opt.has_value());
+    auto result = result_opt.value();
 
     EXPECT_EQ(result.size(), 1);
     EXPECT_EQ(result[0].first, key);
@@ -194,9 +199,9 @@ TEST_F(BTreeEdgeCasesTest, RangeQueryMaximumRange) {
     tree_key min_key = {0, 0};
     tree_key max_key = {UINT64_MAX, UINT64_MAX};
 
-    auto result = tree->get_range(min_key, max_key);
-
-    EXPECT_EQ(result.size(), 2);
+    auto result_opt = tree->get_range(min_key, max_key);
+    ASSERT_TRUE(result_opt.has_value());
+    EXPECT_EQ(result_opt.value().size(), 2);
 }
 
 TEST_F(BTreeEdgeCasesTest, RangeQueryEdge) {
@@ -213,7 +218,9 @@ TEST_F(BTreeEdgeCasesTest, RangeQueryEdge) {
     tree_key min_key = k1;
     tree_key max_key = k3;
 
-    auto result = tree->get_range(min_key, max_key);
+    auto result_opt = tree->get_range(min_key, max_key);
+    ASSERT_TRUE(result_opt.has_value());
+    auto result = result_opt.value();
 
     ASSERT_EQ(result.size(), 2);
     EXPECT_EQ(result[0], (std::pair<tree_key, tree_val>{k1, v1}));
@@ -292,9 +299,9 @@ TEST_F(BTreeEdgeCasesTest, RapidInsertDelete) {
         }
     }
 
-    auto result = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
-
-    EXPECT_EQ(result.size(), 50);
+    auto result_opt = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
+    ASSERT_TRUE(result_opt.has_value());
+    EXPECT_EQ(result_opt.value().size(), 50);
 }
 
 TEST_F(BTreeEdgeCasesTest, OperationsAfterFailedUpdate) {
@@ -322,8 +329,9 @@ TEST_F(BTreeEdgeCasesTest, RemoveFromEmptyTree) {
         tree->remove(make_key(1, i * 100));
     }
 
-    auto result = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
-    EXPECT_TRUE(result.empty());
+    auto result_opt = tree->get_range(make_key(0, 0), make_key(UINT64_MAX, UINT64_MAX));
+    ASSERT_TRUE(result_opt.has_value());
+    EXPECT_TRUE(result_opt.value().empty());
 
     tree_key insert_key = make_key(1, 100);
     tree_val insert_val = make_val(1000, 100);

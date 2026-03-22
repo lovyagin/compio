@@ -36,7 +36,11 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
         std::unique_lock<std::mutex> lock;
         if (context.io_mutex)
             lock = std::unique_lock<std::mutex>(*context.io_mutex);
-        b.read_from(context.file, addr);
+        if (!b.read_from(context.file, addr)) {
+            WARNING_PRINT("warning: failed to read storage block at addr %" PRIu64 "\n", addr);
+            _is_valid = false;
+            return;
+        }
     }
 
     _c_size = b.size;

@@ -242,12 +242,8 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     return true;
 }
 
-void header::read_from(FILE *file, uint64_t addr) {
-    if (!load_and_validate(file, addr)) {
-        // Assert on failure as per original contract, but now we have validated it explicitly.
-        // In recovery paths, we will use load_and_validate directly.
-        assert(false);
-    }
+bool header::read_from(FILE *file, uint64_t addr) {
+    return load_and_validate(file, addr);
 }
 
 void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
@@ -331,18 +327,28 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
     }
 }
 
-void index_node::read_from(FILE *file, uint64_t addr) {
+bool index_node::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][index_node]addr=%" PRIu64 "\n", addr);
-    if (fseek64(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET)) {
         DEBUG_PRINT("warning: fseek failed\n");
+        return false;
+    }
     uint8_t signature;
-    lendian_fread(&signature, sizeof(signature), 1, file);
+    if (lendian_fread(&signature, sizeof(signature), 1, file) != 1) return false;
     if (signature != index_node_signature) {
         WARNING_PRINT("warning: index_node signature does not match\n");
-        assert(false);
+        return false;
     }
-    lendian_fread_member(is_leaf, file);
-    lendian_fread_member(num_keys, file);
+    if (lendian_fread_member(is_leaf, file) != 1) return false;
+    if (lendian_fread_member(num_keys, file) != 1) return false;
+    
+    // Sanity check num_keys
+    if (num_keys > 2 * (uint32_t)tree_degree - 1) {
+        WARNING_PRINT("error: index_node num_keys %u exceeds max %u (degree=%d)\n", 
+                      num_keys, 2 * tree_degree - 1, tree_degree);
+        return false;
+    }
+
     keys.resize(num_keys);
     values.resize(num_keys);
     if (!is_leaf) {
@@ -351,18 +357,19 @@ void index_node::read_from(FILE *file, uint64_t addr) {
     }
 
     for (auto &key : keys) {
-        lendian_fread_member(key.hash, file);
-        lendian_fread_member(key.pos, file);
+        if (lendian_fread_member(key.hash, file) != 1) return false;
+        if (lendian_fread_member(key.pos, file) != 1) return false;
     }
     for (auto &value : values) {
-        lendian_fread_member(value.addr, file);
-        lendian_fread_member(value.size, file);
+        if (lendian_fread_member(value.addr, file) != 1) return false;
+        if (lendian_fread_member(value.size, file) != 1) return false;
     }
     if (!is_leaf) {
-        lendian_fread(children.data(), sizeof(uint64_t), children.size(), file);
-        lendian_fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file);
+        if (lendian_fread(children.data(), sizeof(uint64_t), children.size(), file) != children.size()) return false;
+        if (lendian_fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file) != key_additions.size()) return false;
     }
     validate();
+    return true;
 }
 
 void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
@@ -470,20 +477,31 @@ void index_node::validate() const {
 #endif
 }
 
-void storage_block::read_from(FILE *file, uint64_t addr) {
+bool storage_block::read_from(FILE *file, uint64_t addr) {
     DEBUG_PRINT("[R][storage_block]addr=%" PRIu64 "\n", addr);
     assert(addr != 0);
-    if (fseek64(file, addr, SEEK_SET))
+    if (fseek64(file, addr, SEEK_SET)) {
         DEBUG_PRINT("warning: fseek failed\n");
+        return false;
+    }
     uint8_t signature;
-    lendian_fread(&signature, sizeof(signature), 1, file);
+    if (lendian_fread(&signature, sizeof(signature), 1, file) != 1) {
+        return false;
+    }
     if (signature != storage_block_signature) {
         WARNING_PRINT("warning: storage_block signature does not match\n");
-        assert(false);
+        return false;
     }
-    lendian_fread_member(is_compressed, file);
-    lendian_fread_member(size, file);
-    assert(size != 0);
+    if (lendian_fread_member(is_compressed, file) != 1) return false;
+    if (is_compressed > 1) {
+        WARNING_PRINT("error: storage_block is_compressed invalid (%u) at addr=%" PRIu64 "\n", is_compressed, addr);
+        return false;
+    }
+    if (lendian_fread_member(size, file) != 1) return false;
+    if (size == 0) {
+        WARNING_PRINT("error: storage_block size is 0 at addr=%" PRIu64 "\n", addr);
+        return false;
+    }
 
     // Cap block size to prevent OOM on corrupted files
     static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB
@@ -491,18 +509,22 @@ void storage_block::read_from(FILE *file, uint64_t addr) {
         WARNING_PRINT("warning: storage_block size %llu exceeds limit at addr=%llu\n", 
                       (unsigned long long)size, (unsigned long long)addr);
         size = 0;
-        return;
+        return false;
     }
 
-    lendian_fread_member(original_size, file);
-    lendian_fread_member(checksum, file);
+    if (lendian_fread_member(original_size, file) != 1) return false;
+    if (lendian_fread_member(checksum, file) != 1) return false;
 
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
-    lendian_fread(data.get(), 1, size, file);
+    if (lendian_fread(data.get(), 1, size, file) != size) {
+        return false;
+    }
 
     if (!verify_checksum()) {
         WARNING_PRINT("warning: storage_block checksum verification failed at addr=%llu\n", (unsigned long long)addr);
+        return false;
     }
+    return true;
 }
 
 void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
