@@ -184,7 +184,21 @@ void WalManager::begin_transaction() {
     transaction_depth_++;
 }
 
-bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size, compio_wal_sync_mode sync_mode) {
+void WalManager::set_sync_mode(compio_wal_sync_mode mode) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    sync_mode_ = mode;
+}
+
+bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
+    compio_wal_sync_mode mode;
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        mode = sync_mode_;
+    }
+    return commit_transaction_explicit(mode, archive_file, max_wal_size);
+}
+
+bool WalManager::commit_transaction_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size) {
     std::unique_lock<std::mutex> lock(mutex_);
     
     if (transaction_depth_ > 0) {

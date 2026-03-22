@@ -37,6 +37,7 @@ class WalManager {
     uint64_t current_transaction_id_;
     int transaction_depth_ = 0;
     uint64_t current_wal_size_ = 0;
+    compio_wal_sync_mode sync_mode_ = COMPIO_WAL_SYNC_ALWAYS;
 
 public:
     explicit WalManager(const std::string& archive_path);
@@ -44,6 +45,9 @@ public:
 
     // Open or create the WAL file
     bool open();
+
+    // Set WAL sync mode
+    void set_sync_mode(compio_wal_sync_mode mode);
 
     // Close the WAL file
     void close();
@@ -63,8 +67,11 @@ public:
 
     // Commit the current transaction
     // Optional: provide archive_file and max_wal_size to trigger auto-checkpoint
-    // Optional: provide sync_mode (default ALWAYS)
-    bool commit_transaction(FILE* archive_file = nullptr, uint64_t max_wal_size = 0, compio_wal_sync_mode sync_mode = COMPIO_WAL_SYNC_ALWAYS);
+    // Uses the configured sync_mode
+    bool commit_transaction(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
+
+    // Commit the current transaction with explicit sync mode
+    bool commit_transaction_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
 
     // Rollback transaction (decrements depth without writing COMMIT record)
     void rollback_transaction();
@@ -115,16 +122,22 @@ public:
     TransactionGuard(const TransactionGuard&) = delete;
     TransactionGuard& operator=(const TransactionGuard&) = delete;
 
-    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0, compio_wal_sync_mode sync_mode = COMPIO_WAL_SYNC_ALWAYS) {
+    // Commit using configured sync mode
+    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
         if (!wal_) return false;
-        if (committed_) return true; // Already committed/attempted
+        if (committed_) return true;
         
-        // Mark as committed before calling, or assume commit_transaction 
-        // handles its own state. 
-        // Current implementation of commit_transaction decrements depth unconditionally.
-        // So we must mark as committed regardless of result to avoid double decrement 
-        // (one in commit_transaction, one in ~TransactionGuard via rollback).
-        bool result = wal_->commit_transaction(archive_file, max_wal_size, sync_mode);
+        bool result = wal_->commit_transaction(archive_file, max_wal_size);
+        committed_ = true;
+        return result;
+    }
+
+    // Commit with explicit sync mode
+    bool commit_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
+        if (!wal_) return false;
+        if (committed_) return true;
+        
+        bool result = wal_->commit_transaction_explicit(sync_mode, archive_file, max_wal_size);
         committed_ = true;
         return result;
     }

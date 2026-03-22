@@ -244,6 +244,9 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     // Initialize WAL Manager
     auto wal = std::make_unique<compio::WalManager>(fp);
+    if (c) {
+        wal->set_sync_mode(c->wal_sync_mode);
+    }
     
     // Check for recovery (only if we are not creating a new file from scratch with "w")
     if (!(mode_b & mode_bit::w)) {
@@ -977,7 +980,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes, archive->config.wal_sync_mode)) {
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -1187,7 +1190,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes, archive->config.wal_sync_mode)) {
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
         errno = EIO;
         return 0;
     }
@@ -1334,7 +1337,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file, true);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes, archive->config.wal_sync_mode)) {
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
         errno = EIO;
         return 0;
     }

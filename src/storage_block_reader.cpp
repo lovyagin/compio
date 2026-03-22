@@ -287,10 +287,6 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 void storage_block_reader::clear_cache() {
     DEBUG_PRINT("[SBR][clear_cache]\n");
     
-    if (context.wal) {
-        context.wal->begin_transaction();
-    }
-    
     auto blocks = cache.extract_all();
     
     // Sort blocks by address to optimize reallocation during flush.
@@ -315,10 +311,6 @@ void storage_block_reader::clear_cache() {
         b.reset();
     }
     blocks.clear();
-    
-    if (context.wal) {
-        context.wal->commit_transaction();
-    }
 }
 
 void storage_block_reader::set_maintenance_mode(bool enabled) {

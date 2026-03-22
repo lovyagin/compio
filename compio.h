@@ -151,20 +151,12 @@ typedef enum {
 } compio_allocation_strategy;
 
 /**
- * @brief Configuration structure for archive creation
- *
- * Contains all settings for archive behavior including compression,
- * indexing, caching, and memory allocation strategies.
- */
-
-
-/**
  * @brief WAL synchronization mode
  */
 typedef enum {
     COMPIO_WAL_SYNC_ALWAYS = 0,    /**< fsync after every transaction (default, strict durability) */
     COMPIO_WAL_SYNC_NORMAL = 1,    /**< write to OS buffer, fsync only on checkpoint/close/flush */
-    COMPIO_WAL_SYNC_OFF = 2        /**< do not fsync WAL (dangerous, for testing/temp files) */
+    COMPIO_WAL_SYNC_OFF = 2        /**< do not fsync WAL on commit; checkpoint/close/flush may still fsync (dangerous, for testing/temp files) */
 } compio_wal_sync_mode;
 
 /**
