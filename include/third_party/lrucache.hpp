@@ -68,7 +68,6 @@ public:
         _cache_items_map[key] = _cache_items_list.begin();
 
         if (_cache_items_map.size() > _max_size) {
-            fprintf(stderr, "LRU eviction! size=%zu, max=%zu\n", _cache_items_map.size(), _max_size);
             auto last = _cache_items_list.end();
             last--;
             _cache_items_map.erase(last->first);
