@@ -7,9 +7,9 @@
 static std::vector<uint8_t> generate_data(size_t size) {
     std::vector<uint8_t> data(size);
     std::mt19937 rng(42); // Fixed seed for reproducibility
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
     for (size_t i = 0; i < size; ++i) {
-        data[i] = dist(rng);
+        data[i] = static_cast<uint8_t>(dist(rng));
     }
     return data;
 }
