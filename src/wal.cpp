@@ -184,7 +184,7 @@ void WalManager::begin_transaction() {
     transaction_depth_++;
 }
 
-bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
+bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size, compio_wal_sync_mode sync_mode) {
     std::unique_lock<std::mutex> lock(mutex_);
     
     if (transaction_depth_ > 0) {
@@ -213,16 +213,21 @@ bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
     // Update size for COMMIT record (1+8+8+4 = 21 bytes)
     current_wal_size_ += 21;
 
-    if (fflush(wal_file_) != 0) return false;
+    // Based on sync_mode, decide whether to fsync, fflush, or nothing
+    if (sync_mode != COMPIO_WAL_SYNC_OFF) {
+        if (fflush(wal_file_) != 0) return false;
+    }
 
-    // Force sync for durability
+    if (sync_mode == COMPIO_WAL_SYNC_ALWAYS) {
+        // Force sync for durability
 #ifdef _WIN32
-    int fd = _fileno(wal_file_);
-    if (_commit(fd) != 0) return false;
+        int fd = _fileno(wal_file_);
+        if (_commit(fd) != 0) return false;
 #else
-    int fd = fileno(wal_file_);
-    if (fsync(fd) != 0) return false;
+        int fd = fileno(wal_file_);
+        if (fsync(fd) != 0) return false;
 #endif
+    }
 
     // Auto-Checkpoint if size exceeds limit and archive_file is provided
     if (archive_file && max_wal_size > 0 && current_wal_size_ >= max_wal_size) {
@@ -249,10 +254,12 @@ bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
         if (fflush(wal_file_) != 0) return false;
 
 #ifdef _WIN32
+        int fd = _fileno(wal_file_);
         if (_chsize_s(fd, 0) != 0) return false;
         if (_lseek(fd, 0, SEEK_SET) == -1) return false;
         if (_commit(fd) != 0) return false;
 #else
+        int fd = fileno(wal_file_);
         if (ftruncate(fd, 0) != 0) return false;
         if (lseek(fd, 0, SEEK_SET) < 0) return false;
         if (fsync(fd) != 0) return false;

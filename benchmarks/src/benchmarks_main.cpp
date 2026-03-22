@@ -20,6 +20,10 @@ std::string get_config_fn(int argc, char **argv) {
 
 void build_config(int argc, char **argv) {
     compio_build_default_config(&config);
+    // Use relaxed durability for benchmarks to match stdio buffering behavior
+    // (stdio buffers in memory and doesn't fsync on every write)
+    config.wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
+    
     std::string config_fn = get_config_fn(argc, argv);
     if (config_fn.size() > 0) {
         auto bc = build_config_from_file(config_fn, &config);

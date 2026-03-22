@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <mutex>
 #include <cstdio>
+#include "compio.h"
 
 namespace compio {
 
@@ -62,7 +63,8 @@ public:
 
     // Commit the current transaction
     // Optional: provide archive_file and max_wal_size to trigger auto-checkpoint
-    bool commit_transaction(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
+    // Optional: provide sync_mode (default ALWAYS)
+    bool commit_transaction(FILE* archive_file = nullptr, uint64_t max_wal_size = 0, compio_wal_sync_mode sync_mode = COMPIO_WAL_SYNC_ALWAYS);
 
     // Rollback transaction (decrements depth without writing COMMIT record)
     void rollback_transaction();
@@ -113,7 +115,7 @@ public:
     TransactionGuard(const TransactionGuard&) = delete;
     TransactionGuard& operator=(const TransactionGuard&) = delete;
 
-    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
+    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0, compio_wal_sync_mode sync_mode = COMPIO_WAL_SYNC_ALWAYS) {
         if (!wal_) return false;
         if (committed_) return true; // Already committed/attempted
         
@@ -122,7 +124,7 @@ public:
         // Current implementation of commit_transaction decrements depth unconditionally.
         // So we must mark as committed regardless of result to avoid double decrement 
         // (one in commit_transaction, one in ~TransactionGuard via rollback).
-        bool result = wal_->commit_transaction(archive_file, max_wal_size);
+        bool result = wal_->commit_transaction(archive_file, max_wal_size, sync_mode);
         committed_ = true;
         return result;
     }

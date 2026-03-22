@@ -156,6 +156,23 @@ typedef enum {
  * Contains all settings for archive behavior including compression,
  * indexing, caching, and memory allocation strategies.
  */
+
+
+/**
+ * @brief WAL synchronization mode
+ */
+typedef enum {
+    COMPIO_WAL_SYNC_ALWAYS = 0,    /**< fsync after every transaction (default, strict durability) */
+    COMPIO_WAL_SYNC_NORMAL = 1,    /**< write to OS buffer, fsync only on checkpoint/close/flush */
+    COMPIO_WAL_SYNC_OFF = 2        /**< do not fsync WAL (dangerous, for testing/temp files) */
+} compio_wal_sync_mode;
+
+/**
+ * @brief Configuration structure for archive creation
+ *
+ * Contains all settings for archive behavior including compression,
+ * indexing, caching, and memory allocation strategies.
+ */
 typedef struct {
     compio_compressor compressor; /**< Compressor for data blocks */
 
@@ -176,6 +193,7 @@ typedef struct {
 361.                         or to read the limit from the archive header when opening an existing one. */
     uint64_t wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
     compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
+    compio_wal_sync_mode wal_sync_mode; /**< WAL synchronization mode */
 } compio_config;
 
 /**

@@ -47,6 +47,7 @@ void compio_build_default_config(compio_config *result) {
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
+    result->wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -976,7 +977,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes, archive->config.wal_sync_mode)) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -1186,7 +1187,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes, archive->config.wal_sync_mode)) {
         errno = EIO;
         return 0;
     }
@@ -1333,7 +1334,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file, true);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes, archive->config.wal_sync_mode)) {
         errno = EIO;
         return 0;
     }
