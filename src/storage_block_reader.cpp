@@ -6,6 +6,8 @@
 #include <cassert>
 #include <mutex>
 #include <cinttypes>
+#include <algorithm>
+#include <vector>
 
 #include "compio/debug_print.hpp"
 
@@ -114,7 +116,7 @@ block::~block() {
             // }
 
             // though it would be better to pass this logic to allocator, and allocate memory again
-            context.allocator->deallocate(_addr, _c_size);
+            context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE);
         }
 
         uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
@@ -284,7 +286,37 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 
 void storage_block_reader::clear_cache() {
     DEBUG_PRINT("[SBR][clear_cache]\n");
-    cache.clear();
+    auto blocks = cache.extract_all();
+
+    // Sort blocks by address to optimize reallocation during flush.
+    // When we destroy blocks (triggering write-back), they free their old space
+    // and allocate new space. By destroying them in address order, we maximize
+    // the chance that adjacent freed blocks merge, creating larger holes for reuse.
+    // This is critical for sequential update workloads to prevent fragmentation drift.
+    std::sort(blocks.begin(), blocks.end(), [](const std::shared_ptr<block> &a, const std::shared_ptr<block> &b) {
+        // If one block is new (addr=0), it should be processed after existing blocks?
+        // No, new blocks just allocate, they don't free.
+        // Existing blocks free then allocate.
+        // We want to free as much as possible first?
+        // If we process addr=0 first, they take space.
+        // If we process addr!=0 first, they free space.
+        // So we prefer processing blocks that free space first.
+        // addr=0 blocks sort to the beginning (0 < non-zero).
+        // So they are processed first. This consumes space before freeing old blocks.
+        // This is slightly suboptimal for overall usage, but consistent.
+        // Wait, if we have addr=0, we can't sort by old address effectively.
+        // But for "drift" scenario, all blocks have addresses.
+        return a->addr() < b->addr();
+    });
+
+    // Explicitly release blocks in sorted order.
+    // std::vector::clear() typically destroys elements in reverse order (back to front),
+    // which would defeat our sorting. By manually resetting shared_ptrs, we ensure
+    // destructors run in the exact order we want (ascending address).
+    for (auto& b : blocks) {
+        b.reset();
+    }
+    blocks.clear();
 }
 
 void storage_block_reader::set_maintenance_mode(bool enabled) {
@@ -364,7 +396,7 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
         }
     }
     context.index->remove(key);
-    context.allocator->deallocate(b->addr(), b->c_size());
+    context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
     --bm_n_blocks;
 #endif

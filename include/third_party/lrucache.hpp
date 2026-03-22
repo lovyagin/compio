@@ -114,6 +114,18 @@ public:
         return _cache_items_map.size() >= _max_size; 
     }
 
+    std::vector<value_t> extract_all() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        std::vector<value_t> result;
+        result.reserve(_cache_items_list.size());
+        for (const auto& item : _cache_items_list) {
+            result.push_back(item.second);
+        }
+        _cache_items_map.clear();
+        _cache_items_list.clear();
+        return result;
+    }
+
     value_t pop_back() {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_cache_items_map.size() == 0) {
