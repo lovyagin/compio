@@ -110,3 +110,41 @@ TEST_F(AllocatorDriftTest, MergeThreeBlocks) {
     uint64_t addrBig = allocator->allocate(size * 3);
     EXPECT_EQ(addrBig, addrA) << "Should have merged A, B, C into one contiguous block";
 }
+
+TEST_F(AllocatorDriftTest, DriftReproduction) {
+    // Reproduce the "drift" where file grows despite freeing space.
+    // Scenario:
+    // Loop:
+    //   Alloc A (size 1000)
+    //   Alloc B (size 1000) - barrier
+    //   Free A
+    //   Alloc C (size 1000) -> Should reuse A
+    //   Alloc D (size 1010) -> Should NOT reuse A (too small), appends.
+    
+    const size_t size = 1000;
+    uint64_t addrA = allocator->allocate(size);
+    uint64_t addrB = allocator->allocate(size); // Barrier
+    
+    allocator->deallocate(addrA, size);
+    
+    // 1. Exact fit reuse
+    uint64_t addrC = allocator->allocate(size);
+    EXPECT_EQ(addrC, addrA) << "Should reuse exact fit block";
+    
+    allocator->deallocate(addrC, size);
+    
+    // 2. Smaller fit reuse
+    uint64_t addrD = allocator->allocate(size - 100);
+    EXPECT_EQ(addrD, addrA) << "Should reuse larger block for smaller allocation";
+    
+    // Free D. Now we have [900 free] [100 free] [B]
+    allocator->deallocate(addrD, size - 100);
+    
+    // We need to ensure the allocator merged the split block back if they are adjacent.
+    // The allocator's deallocate() calls blocks_manager_.add_free_block() which calls merge_blocks().
+    // So [900] and [100] should merge back to [1000].
+    
+    uint64_t addrE = allocator->allocate(size);
+    EXPECT_EQ(addrE, addrA) << "Should reuse merged block";
+}
+

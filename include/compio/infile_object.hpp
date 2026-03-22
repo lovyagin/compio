@@ -246,6 +246,7 @@ private:
          * @return true if successful, false otherwise
          */
         bool read() {
+            std::fprintf(stderr, "DEBUG: smart_infile_object::read() called for addr %llu\n", (unsigned long long)addr);
             if (io_mutex) {
                 std::lock_guard<std::mutex> lock(*io_mutex);
                 return data->read_from(file, addr);

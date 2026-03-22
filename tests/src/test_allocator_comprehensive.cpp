@@ -24,7 +24,10 @@ protected:
 
         compio_build_default_config(&config);
         config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
-        config.fragmentation_threshold = 30;
+        // Disable auto-defragmentation (threshold > 100%) because these tests
+        // manage raw allocations without updating the B-tree index, which
+        // auto-defragmentation relies on to identify valid data blocks.
+        config.fragmentation_threshold = 101;
         config.fill_holes_with_zeros = false;
 
         archive = compio_open_archive(fn, "w+", &config);

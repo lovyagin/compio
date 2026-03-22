@@ -402,8 +402,6 @@ bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
         return false;
     if (size > UINT64_MAX - offset)
         return false;
-    if (file_size_ && offset >= *file_size_)
-        return true;
 
     for (free_block *current = head_; current; current = current->next) {
         if (current->offset <= offset && offset + size <= current->offset + current->size) {
@@ -761,11 +759,12 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
     }
 
     std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
+    /*
     if (size > UINT64_MAX - offset ||
         offset + size > readonly(archive_->header, header)->file_size) {
         return;
     }
-
+    */
     if (blocks_manager_.is_region_free(offset, size)) {
         return;
     }
@@ -794,6 +793,9 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 
         fflush(archive_->file);
     }
+    
+    // Check if defragmentation is needed
+    maintenance();
 }
 
 void block_allocator::force_defragmentation() {
@@ -812,7 +814,12 @@ void block_allocator::maintenance() {
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
     if (current_fragmentation > threshold) {
-        auto index_lock = archive_->index->get_lock();
+        auto index_lock = archive_->index->try_get_lock();
+        if (!index_lock.owns_lock()) {
+             // If we can't lock the index, we skip defragmentation for now.
+             // This avoids deadlocks when called from within a B-tree operation (which holds the lock).
+             return;
+        }
         std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
 
         if (blocks_manager_.get_cached_fragmentation() > threshold) {
