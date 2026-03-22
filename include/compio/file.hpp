@@ -87,7 +87,7 @@ struct header : public infile_object {
     header();
     explicit header(uint32_t max_files);
 
-    void read_from(FILE *file, uint64_t addr) override;
+    bool read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
     /** @brief On-disk size of this header (depends on ftable.max_files) */
@@ -149,7 +149,7 @@ struct index_node : public infile_object {
      */
     index_node(int tree_degree);
 
-    void read_from(FILE *file, uint64_t addr) override;
+    bool read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
     void validate() const;
 };
@@ -190,7 +190,11 @@ struct storage_block : public infile_object {
      */
     storage_block(uint64_t size);
 
-    void read_from(FILE *file, uint64_t addr) override;
+    /** 
+     * @brief Read block from file and validate content
+     * @return true if valid, false if corrupted
+     */
+    bool read_from(FILE *file, uint64_t addr);
     void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
     /**

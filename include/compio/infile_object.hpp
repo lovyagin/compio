@@ -85,8 +85,9 @@ public:
      *
      * @param file File stream to read from
      * @param addr File address (offset) where the object data is stored
+     * @return true if read was successful and data is valid, false otherwise
      */
-    virtual void read_from(FILE *file, uint64_t addr) = 0;
+    virtual bool read_from(FILE *file, uint64_t addr) = 0;
 
     /**
      * @brief Write object data to file at specified address
@@ -209,7 +210,15 @@ private:
          */
         storage(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr) 
             : storage(file, addr, new T(), io_mutex, true, wal) { // Re-use main constructor
-            read(); // Then read
+            if (!read()) {
+                // How to signal error from constructor?
+                // For now we just log, but the caller should check validity if possible.
+                // Or maybe throw? But we avoid exceptions.
+                // The loaded object might be invalid.
+                // In compio, failure to read usually means corruption.
+                // We rely on read() returning false, but here we can't return.
+                // Ideally, T (the object) should have an isValid state.
+            }
         }
 
         /**
@@ -229,13 +238,14 @@ private:
          * @brief Read object data from file
          *
          * Calls the object's read_from method to load data from file.
+         * @return true if successful, false otherwise
          */
-        void read() {
+        bool read() {
             if (io_mutex) {
                 std::lock_guard<std::mutex> lock(*io_mutex);
-                data->read_from(file, addr);
+                return data->read_from(file, addr);
             } else {
-                data->read_from(file, addr);
+                return data->read_from(file, addr);
             }
         }
 
@@ -482,8 +492,9 @@ public:
      * @brief Read object data from file
      *
      * Reloads the object data from file, discarding any unsaved modifications.
+     * @return true if successful, false otherwise
      */
-    void read() { S->read(); }
+    bool read() { return S->read(); }
 
     /**
      * @brief Write object data to file

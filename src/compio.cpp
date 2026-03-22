@@ -1003,8 +1003,8 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                     val.size);
         const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
         if (!b) {
-            // failed to decompress
-            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+            // failed to decompress OR checksum mismatch
+            WARNING_PRINT("warning: failed to read block (corruption or decompression error)\n");
             errno = EIO;
             block_reader->disable_temporary_index();
             return ptr_bytes_read;

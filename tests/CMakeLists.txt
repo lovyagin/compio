@@ -33,6 +33,7 @@ add_executable(compio_gtest
     src/test_wal_recovery.cpp
     src/test_wal_format.cpp
     src/test_auto_checkpoint.cpp
+    src/test_data_integrity_strict.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
