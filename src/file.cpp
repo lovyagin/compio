@@ -21,7 +21,6 @@ static size_t portable_strnlen(const char *s, size_t maxlen) {
 }
 
 static const uint8_t index_node_signature = 67;
-static const uint8_t storage_block_signature = 171;
 
 // Helper to batch read files table
 static bool read_files_batched(FILE* file, files_table& ftable) {
@@ -488,8 +487,12 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
     if (lendian_fread(&signature, sizeof(signature), 1, file) != 1) {
         return false;
     }
-    if (signature != storage_block_signature) {
-        WARNING_PRINT("warning: storage_block signature does not match\n");
+    if (signature == storage_block::signature) {
+        checksum_type = COMPIO_CHECKSUM_FNV1A;
+    } else if (signature == storage_block::signature_crc32c) {
+        checksum_type = COMPIO_CHECKSUM_CRC32C;
+    } else {
+        WARNING_PRINT("warning: storage_block signature does not match (got %d)\n", signature);
         return false;
     }
     if (lendian_fread_member(is_compressed, file) != 1) return false;
@@ -549,7 +552,8 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
         for(int i=0; i<8; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8)); 
     };
 
-    push_u8(storage_block_signature);
+    uint8_t sig = (checksum_type == COMPIO_CHECKSUM_CRC32C) ? storage_block::signature_crc32c : storage_block::signature;
+    push_u8(sig);
     push_u8(is_compressed);
     push_u64(size);
     push_u64(original_size);
@@ -601,16 +605,19 @@ index_node::index_node(int tree_degree)
     key_additions.clear();
 }
 
-storage_block::storage_block() : data(nullptr) {}
+storage_block::storage_block() : data(nullptr), checksum_type(COMPIO_CHECKSUM_FNV1A) {}
 
 storage_block::storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size)
     : is_compressed(0),
       size(size),
       original_size(0),
-      data(std::move(data)) {}
+      data(std::move(data)),
+      checksum_type(COMPIO_CHECKSUM_FNV1A) {}
 
 storage_block::storage_block(uint64_t size)
-    : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
+    : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {
+        checksum_type = COMPIO_CHECKSUM_FNV1A;
+    }
 
 files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), files(COMPIO_MAX_FILES) {
 }
@@ -800,7 +807,11 @@ void storage_block::calculate_checksum() {
         return;
     }
 
-    checksum = fnv1a_32(data.get(), size);
+    if (checksum_type == COMPIO_CHECKSUM_CRC32C) {
+        checksum = crc32c(data.get(), size);
+    } else {
+        checksum = fnv1a_32(data.get(), size);
+    }
 }
 
 bool storage_block::verify_checksum() const {
@@ -808,6 +819,11 @@ bool storage_block::verify_checksum() const {
         return checksum == 0;
     }
 
-    uint32_t computed = fnv1a_32(data.get(), size);
+    uint32_t computed;
+    if (checksum_type == COMPIO_CHECKSUM_CRC32C) {
+        computed = crc32c(data.get(), size);
+    } else {
+        computed = fnv1a_32(data.get(), size);
+    }
     return checksum == computed;
 }

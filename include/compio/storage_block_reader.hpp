@@ -29,6 +29,7 @@ struct context_t {
     const compio_compressor *compressor;
     std::mutex *io_mutex;
     WalManager *wal;
+    compio_checksum_type checksum_type;
     /**
      * @brief Temporary in-memory substitution for BTree, to avoid excess BTree operations
      *
@@ -78,13 +79,15 @@ struct context_t {
     context_t& operator=(const context_t&) = delete;
 
     context_t(FILE *file, block_allocator *allocator, btree *index,
-              const compio_compressor *compressor, std::mutex *io_mutex, compio::WalManager *wal)
+              const compio_compressor *compressor, std::mutex *io_mutex, compio::WalManager *wal,
+              compio_checksum_type checksum_type)
         : file(file),
           allocator(allocator),
           index(index),
           compressor(compressor),
           io_mutex(io_mutex),
-          wal(wal) {}
+          wal(wal),
+          checksum_type(checksum_type) {}
 };
 
 /**
@@ -289,7 +292,8 @@ public:
      * @param max_size Maximum number of blocks to keep in the LRU cache
      */
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
-                         const compio_compressor *compressor, int max_size, std::mutex *io_mutex, compio::WalManager *wal);
+                         const compio_compressor *compressor, int max_size, std::mutex *io_mutex, compio::WalManager *wal,
+                         compio_checksum_type checksum_type);
 
     storage_block_reader(const storage_block_reader &) = delete;
     storage_block_reader &operator=(const storage_block_reader &) = delete;
@@ -331,6 +335,13 @@ public:
      * all changes are persisted or when you need to free memory.
      */
     void clear_cache();
+
+    /**
+     * @brief Set maintenance mode (unlocked updates)
+     * 
+     * @param enabled True to enable maintenance mode, false to disable
+     */
+    void set_maintenance_mode(bool enabled);
 
     /**
      * @brief Get cache hit probability

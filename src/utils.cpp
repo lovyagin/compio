@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 
 #ifdef _WIN32
 #include <io.h>
@@ -64,10 +65,42 @@ uint32_t fnv1a_32(const uint8_t *data, size_t size) {
 }
 
 uint32_t fnv1a_32_continue(uint32_t hash, const uint8_t *data, size_t size) {
+    uint32_t h = hash;
     for (size_t i = 0; i < size; ++i) {
-        hash = (hash ^ data[i]) * 0x01000193;
+        h = (h ^ data[i]) * 0x01000193;
     }
-    return hash;
+    return h;
+}
+
+static uint32_t crc32c_table[256];
+static std::once_flag crc32c_flag;
+
+static void init_crc32c_table() {
+    uint32_t poly = 0x82F63B78;
+    for (int i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (int j = 0; j < 8; j++) {
+            if (crc & 1)
+                crc = (crc >> 1) ^ poly;
+            else
+                crc >>= 1;
+        }
+        crc32c_table[i] = crc;
+    }
+}
+
+uint32_t crc32c_continue(uint32_t crc, const uint8_t *data, size_t size) {
+    std::call_once(crc32c_flag, init_crc32c_table);
+    
+    uint32_t c = ~crc;
+    for (size_t i = 0; i < size; i++) {
+        c = (c >> 8) ^ crc32c_table[(c ^ data[i]) & 0xFF];
+    }
+    return ~c;
+}
+
+uint32_t crc32c(const uint8_t *data, size_t size) {
+    return crc32c_continue(0, data, size);
 }
 
 bool is_file_empty(FILE *file) {

@@ -690,13 +690,13 @@ block_allocator::block_allocator(compio_archive *archive, WalManager *wal)
 
 uint8_t block_allocator::get_fragmentation() const {
     if (!archive_) return 0;
-    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
+    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
     return blocks_manager_.get_cached_fragmentation();
 }
 
 free_blocks_manager::fragmentation_stats block_allocator::get_fragmentation_stats() const {
     if (!archive_) return {};
-    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
+    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
     return blocks_manager_.get_fragmentation_stats();
 }
 
@@ -705,7 +705,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
         return UINT64_MAX;
     }
 
-    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
+    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
 
     try {
         // Convert allocation strategy from config to internal enum
@@ -760,7 +760,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
+    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
     if (size > UINT64_MAX - offset ||
         offset + size > readonly(archive_->header, header)->file_size) {
         return;
@@ -797,6 +797,9 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 }
 
 void block_allocator::force_defragmentation() {
+    auto index_lock = archive_->index->get_lock();
+    std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
+
     blocks_manager_.defragment();
     if (archive_->file && archive_->index) {
         perform_defragmentation();
@@ -809,23 +812,30 @@ void block_allocator::maintenance() {
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
     if (current_fragmentation > threshold) {
-        blocks_manager_.defragment();
+        auto index_lock = archive_->index->get_lock();
+        std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
 
         if (blocks_manager_.get_cached_fragmentation() > threshold) {
-            if (archive_->file && archive_->index) {
-                perform_defragmentation();
+            blocks_manager_.defragment();
+
+            if (blocks_manager_.get_cached_fragmentation() > threshold) {
+                if (archive_->file && archive_->index) {
+                    perform_defragmentation();
+                }
             }
         }
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+    } else {
+        std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
     }
-
-    last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
 }
 
 bool block_allocator::save_state(compio_archive *archive) {
     if (!archive) {
         return false;
     }
-    std::lock_guard<std::mutex> alloc_lock(archive->allocator_mutex);
+    std::lock_guard<std::recursive_mutex> alloc_lock(archive->allocator_mutex);
     std::lock_guard<std::mutex> head_lock(archive->header_mutex);
     std::lock_guard<std::mutex> io_lock(archive->io_mutex);
     
@@ -858,7 +868,7 @@ bool block_allocator::load_state(compio_archive *archive) {
     if (!archive) {
         return false;
     }
-    std::lock_guard<std::mutex> alloc_lock(archive->allocator_mutex);
+    std::lock_guard<std::recursive_mutex> alloc_lock(archive->allocator_mutex);
     std::lock_guard<std::mutex> head_lock(archive->header_mutex);
     std::lock_guard<std::mutex> io_lock(archive->io_mutex);
     return blocks_manager_.load_from_file(archive);
@@ -873,13 +883,14 @@ bool block_allocator::needs_defragmentation() const {
 void block_allocator::perform_defragmentation() {
     // Flush all cached/dirty blocks to disk first so that every index entry
     // has a real physical address before we start moving data.
+    archive_->block_reader->set_maintenance_mode(true);
     archive_->block_reader->clear_cache();
-    archive_->index->clear_cache();
+    archive_->index->_clear_cache();
 
     // Collect B-tree node addresses so we don't overwrite them during compaction.
     // B-tree nodes and storage blocks share the same file address space.
     uint64_t btree_node_size = 0;
-    auto node_addrs = archive_->index->collect_node_addresses(btree_node_size);
+    auto node_addrs = archive_->index->_collect_node_addresses(btree_node_size);
 
     // Build a set for O(log n) lookup of reserved ranges.
     // Each node occupies [addr, addr + btree_node_size).
@@ -904,7 +915,7 @@ void block_allocator::perform_defragmentation() {
     key_max.hash = UINT64_MAX;
     key_max.pos  = UINT64_MAX;
 
-    auto used_blocks_opt = archive_->index->get_range(key_min, key_max);
+    auto used_blocks_opt = archive_->index->_get_range_impl(key_min, key_max);
     if (!used_blocks_opt) {
         WARNING_PRINT("defragmentation aborted: index read failed\n");
         return;
@@ -1032,7 +1043,7 @@ void block_allocator::perform_defragmentation() {
         }
 
         val.addr = write_pos;
-        archive_->index->update(key, val);
+        archive_->index->_update_impl(key, val);
 
         placed_blocks.push_back({write_pos, block_size});
         write_pos += block_size;
@@ -1040,7 +1051,7 @@ void block_allocator::perform_defragmentation() {
 
     // Flush all updated index nodes to disk BEFORE truncating the file.
     // If we crash after truncation but before index write, we lose data.
-    archive_->index->clear_cache();
+    archive_->index->_clear_cache();
 
     if (fflush(archive_->file) != 0) {
         WARNING_PRINT("warning: perform_defragmentation: fflush failed\n");
@@ -1115,6 +1126,7 @@ void block_allocator::perform_defragmentation() {
     // addresses; any stale temporary_index entries would cause reads to use
     // wrong offsets.
     archive_->block_reader->invalidate_temporary_index();
+    archive_->block_reader->set_maintenance_mode(false);
 
     DEBUG_PRINT("[AL] perform_defragmentation complete. New file size: %" PRIu64 "\n", write_pos);
 }

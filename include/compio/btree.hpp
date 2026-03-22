@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <shared_mutex>
 #include <mutex>
 #include <optional>
 
@@ -111,6 +112,9 @@ private:
  * insertion, deletion, range queries, and key updates.
  */
 struct btree {
+    friend struct block_allocator;
+    friend class block;
+
     /**
      * @brief Construct a new btree object
      *
@@ -238,6 +242,13 @@ struct btree {
     std::vector<uint64_t> collect_node_addresses(uint64_t &node_size);
 
     /**
+     * @brief Get a lock object for the B-Tree mutex
+     * 
+     * @return std::unique_lock<std::shared_mutex> Lock object
+     */
+    std::unique_lock<std::shared_mutex> get_lock() const { return std::unique_lock<std::shared_mutex>(mutex); }
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability
@@ -245,6 +256,7 @@ struct btree {
     double get_cache_hit_probability() const;
 
 private:
+    mutable std::shared_mutex mutex;
     /** @brief The degree of the B-Tree (branching factor) */
     uint64_t degree;
     /** @brief Is compio_archive opened with readonly (should we propagate key_additions and save
@@ -422,6 +434,12 @@ private:
      * @param depth The current depth in the tree (for indentation)
      */
     void _print(shared_node node, uint64_t depth);
+
+    // Internal unlocked implementations for friend classes (block_allocator)
+    void _clear_cache();
+    std::vector<uint64_t> _collect_node_addresses(uint64_t &node_size);
+    std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
+    void _update_impl(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Allocate space for a new node in the archive
