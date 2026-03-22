@@ -125,7 +125,9 @@ static uint32_t crc32c_sw(uint32_t crc, const uint8_t *data, size_t size) {
         
         // Process 64-bit chunks
         while (size >= 8) {
-            c = _mm_crc32_u64(c, *(const uint64_t*)p);
+            uint64_t chunk;
+            std::memcpy(&chunk, p, sizeof(chunk));
+            c = _mm_crc32_u64(c, chunk);
             p += 8;
             size -= 8;
         }
