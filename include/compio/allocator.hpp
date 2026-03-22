@@ -442,6 +442,7 @@ private:
     WalManager *wal_;                    /**< WAL manager for ensuring durability */
     free_blocks_manager blocks_manager_; /**< Free blocks manager */
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
+    uint64_t deallocate_count_ = 0;      /**< Counter to throttle maintenance checks */
 
     /**
      * @brief Check if defragmentation is needed

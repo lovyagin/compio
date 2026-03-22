@@ -249,6 +249,13 @@ struct btree {
     std::unique_lock<std::shared_mutex> get_lock() const { return std::unique_lock<std::shared_mutex>(mutex); }
 
     /**
+     * @brief Try to get a lock object for the B-Tree mutex
+     * 
+     * @return std::unique_lock<std::shared_mutex> Lock object (may not own lock)
+     */
+    std::unique_lock<std::shared_mutex> try_get_lock() const { return std::unique_lock<std::shared_mutex>(mutex, std::try_to_lock); }
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability
