@@ -96,7 +96,7 @@ TEST_F(RepairTest, RecoversWithCorruptedHeader) {
         FILE* f = fopen(archive_path.c_str(), "rb+");
 #endif
         ASSERT_NE(f, nullptr);
-        std::unique_ptr<FILE, decltype(&fclose)> f_guard(f, fclose);
+        std::unique_ptr<FILE, int(*)(FILE*)> f_guard(f, fclose);
         std::vector<uint8_t> zeros(512, 0);
         fwrite(zeros.data(), 1, 512, f);
     }
@@ -121,11 +121,9 @@ TEST_F(RepairTest, RecoversWithCorruptedHeader) {
     
     std::string expected_name = "file_" + std::to_string(hash);
     
-    bool found = false;
     for (const auto& entry : fs::directory_iterator(recover_dir)) {
         if (entry.path().filename().string().find("file_") == 0 || 
             entry.path().filename().string().find("orphan_") == 0) {
-            found = true;
             // Content check
             std::ifstream ifs(entry.path(), std::ios::binary);
             std::vector<uint8_t> content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());

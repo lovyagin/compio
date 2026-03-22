@@ -124,7 +124,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
 
     UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, gamma_shape, gamma_scale,
                            region_size, n_switch);
-    std::unique_ptr<char> buffer(new char[file_size]);
+    std::unique_ptr<char[]> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
 
     for (auto _ : state) {
@@ -230,7 +230,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 
     UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, gamma_shape, gamma_scale,
                            region_size, n_switch);
-    std::unique_ptr<char> buffer(new char[file_size]);
+    std::unique_ptr<char[]> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
     double total_node_cache_hit_probability = 0.;
     double total_block_cache_hit_probability = 0.;

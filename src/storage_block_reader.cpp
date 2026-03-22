@@ -6,6 +6,8 @@
 #include <cassert>
 #include <mutex>
 #include <cinttypes>
+#include <algorithm>
+#include <vector>
 
 #include "compio/debug_print.hpp"
 
@@ -114,7 +116,7 @@ block::~block() {
             // }
 
             // though it would be better to pass this logic to allocator, and allocate memory again
-            context.allocator->deallocate(_addr, _c_size);
+            context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE);
         }
 
         uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
@@ -284,7 +286,30 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 
 void storage_block_reader::clear_cache() {
     DEBUG_PRINT("[SBR][clear_cache]\n");
-    cache.clear();
+    auto blocks = cache.extract_all();
+
+    // Sort blocks by address to optimize reallocation during flush.
+    // We prioritize existing blocks (addr != 0) over new blocks (addr == 0).
+    // Existing blocks free their old space first, creating holes.
+    // New blocks then allocate, potentially filling those holes.
+    // Within existing blocks, we sort by address to maximize merging of adjacent freed blocks.
+    std::sort(blocks.begin(), blocks.end(), [](const std::shared_ptr<block> &a, const std::shared_ptr<block> &b) {
+        bool a_exists = a->addr() != 0;
+        bool b_exists = b->addr() != 0;
+        if (a_exists != b_exists) {
+            return a_exists; // exists (true) comes before new (false)
+        }
+        return a->addr() < b->addr();
+    });
+
+    // The C++ standard does not guarantee any particular destruction order for
+    // std::vector::clear() / erase(). By manually resetting shared_ptrs in this loop,
+    // we ensure destructors run in the exact order we want (ascending address / existing first),
+    // independent of the container's internal destruction order.
+    for (auto& b : blocks) {
+        b.reset();
+    }
+    blocks.clear();
 }
 
 void storage_block_reader::set_maintenance_mode(bool enabled) {
@@ -364,7 +389,9 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
         }
     }
     context.index->remove(key);
-    context.allocator->deallocate(b->addr(), b->c_size());
+    if (b->addr() != 0) {
+        context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
+    }
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
     --bm_n_blocks;
 #endif

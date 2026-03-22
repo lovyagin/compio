@@ -101,6 +101,7 @@ static void BM_DefragThroughput(benchmark::State& state) {
 
         compio_close_archive(ar);
         remove(path.c_str());
+        remove((path + ".wal").c_str());
         ++iterations;
     }
 
@@ -152,6 +153,7 @@ static void BM_DefragSpaceRecovery(benchmark::State& state) {
 
         compio_close_archive(ar);
         remove(path.c_str());
+        remove((path + ".wal").c_str());
     }
 
     state.SetBytesProcessed(
@@ -185,6 +187,7 @@ static void BM_FragmentationMetric(benchmark::State& state) {
     state.counters["fragmentation"] = ar->allocator->get_fragmentation();
     compio_close_archive(ar);
     remove(path.c_str());
+    remove((path + ".wal").c_str());
 }
 
 // ----------------------------------------------------------------------------
@@ -254,6 +257,7 @@ static void BM_DefragCycle(benchmark::State& state) {
 
         compio_close_archive(ar);
         remove(path.c_str());
+        remove((path + ".wal").c_str());
     }
 
     state.SetBytesProcessed(state.iterations() * total_data);
