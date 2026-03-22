@@ -74,10 +74,10 @@ TEST_F(MaxFilesTest, MaxFilesPersistsAcrossReopen) {
     }
 }
 
-TEST_F(MaxFilesTest, CreateWithZeroDefaultsToMaxFiles) {
+TEST_F(MaxFilesTest, CreateWithZeroUsesDefaultLimit) {
     compio_config cfg;
     compio_build_default_config(&cfg);
-    cfg.max_files = 0; // Set to 0 to test default-behavior
+    cfg.max_files = 0; // Set to 0 to instruct library to use default limit
 
     compio_archive *ar = compio_open_archive(fn, "w+", &cfg);
     ASSERT_NE(ar, nullptr) << "Should succeed with max_files=0 (default)";
