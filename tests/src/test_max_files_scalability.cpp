@@ -56,6 +56,14 @@ TEST_F(ScalabilityTest, HandleLargeFileCount) {
     ASSERT_NE(archive, nullptr) << "Failed to reopen archive with Smart Open";
     
     // Verify auto-detected value
+    // Since we created it with max_files=0, it should be auto-set to COMPIO_MAX_FILES (4096)
+    // NOT NUM_FILES + 10.
+    // The previous test logic expected smart open to detect the *actual* max_files on disk.
+    // But since we created with explicit max_files in the first part, let's see.
+    // Ah, wait. The first part created with config.max_files = NUM_FILES + 10.
+    // So on disk it IS NUM_FILES + 10.
+    // So smart open (max_files=0) should detect NUM_FILES + 10.
+    // This is correct behavior for smart open.
     EXPECT_EQ(archive->config.max_files, NUM_FILES + 10);
 
     // Verify content of a few files to be sure
