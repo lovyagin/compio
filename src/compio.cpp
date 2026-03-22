@@ -1422,14 +1422,31 @@ void compio_flush(compio_archive *archive) {
 }
 
 int compio_repair(const char *path, const char *output_dir) {
-    if (!fs::exists(path)) {
+    std::error_code ec;
+    if (!path) {
+        WARNING_PRINT("error: path is null\n");
+        return COMPIO_ERROR;
+    }
+    if (!output_dir) {
+        WARNING_PRINT("error: output_dir is null\n");
+        return COMPIO_ERROR;
+    }
+
+    if (!fs::exists(path, ec)) {
         WARNING_PRINT("error: file not found: %s\n", path);
         return COMPIO_ERROR;
     }
 
     fs::path out_dir(output_dir);
-    if (!fs::exists(out_dir)) {
-        fs::create_directories(out_dir);
+    // Create output directory if it doesn't exist
+    if (!fs::exists(out_dir, ec)) {
+        if (!fs::create_directories(out_dir, ec)) {
+             WARNING_PRINT("error: failed to create output directory: %s\n", output_dir);
+             return COMPIO_ERROR;
+        }
+    } else if (!fs::is_directory(out_dir, ec)) {
+        WARNING_PRINT("error: output path exists but is not a directory: %s\n", output_dir);
+        return COMPIO_ERROR;
     }
 
     FILE *f = fopen(path, "rb");
@@ -1442,32 +1459,48 @@ int compio_repair(const char *path, const char *output_dir) {
     uint64_t file_size = ftell64(f);
     fseek64(f, 0, SEEK_SET);
 
+    if (file_size < sizeof(header)) {
+        WARNING_PRINT("error: file too small to contain header\n");
+        fclose(f);
+        return COMPIO_ERROR;
+    }
+
     header h;
     bool valid_header = h.load_and_validate(f, 0);
     if (!valid_header) {
-        WARNING_PRINT("warning: header corrupted, trying to salvage data with default settings...\n");
+        WARNING_PRINT("warning: header corrupted, using default settings for salvage (degree=16, zlib)\n");
         h.b_tree_degree = 16;
         h.compression_type = COMPIO_COMPRESS_ZLIB;
+        h.block_size = 4096;
     } else {
-        WARNING_PRINT("info: header valid, using degree %u\n", h.b_tree_degree);
+        WARNING_PRINT("info: header valid, degree=%u, compression=%u\n", h.b_tree_degree, h.compression_type);
     }
 
     std::map<uint64_t, std::string> hash_to_name;
-    for (const auto &file : h.ftable.files) {
-        if (file.name[0] != '\0') {
-             uint64_t hash = fnv1a(file.name);
-             hash_to_name[hash] = std::string(file.name);
+    if (valid_header) {
+        for (const auto &file : h.ftable.files) {
+            if (file.name[0] != '\0') {
+                uint64_t hash = fnv1a(file.name);
+                hash_to_name[hash] = std::string(file.name);
+            }
         }
     }
 
-    struct block_info {
+    struct block_meta {
+        uint64_t addr;
+        uint64_t size;
+        uint64_t original_size;
+        bool is_compressed;
+    };
+
+    std::map<uint64_t, block_meta> discovered_blocks;
+    
+    struct file_part {
         uint64_t pos;
         uint64_t addr;
         uint64_t size;
-        bool operator<(const block_info& other) const { return pos < other.pos; }
-        bool operator==(const block_info& other) const { return pos == other.pos && addr == other.addr && size == other.size; }
     };
-    std::map<uint64_t, std::vector<block_info>> file_blocks;
+    std::map<uint64_t, std::vector<file_part>> index_files;
 
     constexpr size_t BUFFER_SIZE = 1024 * 1024;
     std::vector<uint8_t> buffer(BUFFER_SIZE);
@@ -1481,40 +1514,77 @@ int compio_repair(const char *path, const char *output_dir) {
         for (size_t i = 0; i < bytes_read; ++i) {
             uint64_t current_addr = offset + i;
             uint8_t sig = buffer[i];
-            
+
             if (sig == index_node::signature) {
                 uint64_t saved_pos = ftell64(f);
-                
                 index_node node(h.b_tree_degree);
                 if (node.read_from(f, current_addr)) {
                      for (size_t k = 0; k < node.keys.size(); ++k) {
                         if (k < node.values.size()) {
-                            uint64_t hash = node.keys[k].hash;
-                            uint64_t pos = node.keys[k].pos;
-                            uint64_t addr = node.values[k].addr;
-                            uint64_t size = node.values[k].size;
-                            file_blocks[hash].push_back({pos, addr, size});
+                            index_files[node.keys[k].hash].push_back({
+                                node.keys[k].pos, 
+                                node.values[k].addr, 
+                                node.values[k].size
+                            });
                         }
                     }
                 }
                 fseek64(f, saved_pos, SEEK_SET);
             }
+            
+            if (sig == storage_block::signature || sig == storage_block::signature_crc32c) {
+                uint64_t saved_pos = ftell64(f);
+                storage_block sb;
+                if (sb.read_from(f, current_addr)) {
+                    discovered_blocks[current_addr] = {
+                        current_addr, 
+                        sb.size, 
+                        sb.original_size, 
+                        (bool)sb.is_compressed
+                    };
+                }
+                fseek64(f, saved_pos, SEEK_SET);
+            }
         }
-        
         offset += bytes_read;
-        if (bytes_read == BUFFER_SIZE) {
-             if (offset > 1024) offset -= 1024;
-        }
     }
 
     compio_compressor compressor;
     compio_build_compressor_by_type(&compressor, (compio_compression_type)h.compression_type);
 
     int recovered_count = 0;
-    for (auto &[hash, blocks] : file_blocks) {
-        std::sort(blocks.begin(), blocks.end());
-        auto last = std::unique(blocks.begin(), blocks.end());
-        blocks.erase(last, blocks.end());
+    std::set<uint64_t> claimed_addrs;
+
+    auto dump_block = [&](FILE* out_f, uint64_t addr, uint64_t size, uint64_t original_size, bool is_compressed, uint64_t file_pos) {
+        // Read block again to get data
+        // We use 'size' and 'original_size' from metadata if available, but read_from re-reads header anyway.
+        // But read_from is safer.
+        storage_block sb;
+        if (sb.read_from(f, addr)) {
+             if (sb.is_compressed) {
+                uint64_t decomp_size = sb.original_size;
+                if (decomp_size > 1024 * 1024 * 1024) {
+                     WARNING_PRINT("warning: skipping huge block decompression %" PRIu64 "\n", addr);
+                     return;
+                }
+                std::vector<uint8_t> decomp_buf(decomp_size);
+                if (compressor.decompress(decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0) {
+                    fseek64(out_f, file_pos, SEEK_SET);
+                    fwrite(decomp_buf.data(), 1, decomp_size, out_f);
+                } else {
+                     WARNING_PRINT("warning: decompression failed for block at %" PRIu64 "\n", addr);
+                }
+            } else {
+                fseek64(out_f, file_pos, SEEK_SET);
+                fwrite(sb.data.get(), 1, sb.size, out_f);
+            }
+        }
+    };
+
+    for (auto& [hash, parts] : index_files) {
+        std::sort(parts.begin(), parts.end(), [](const auto& a, const auto& b) {
+            return a.pos < b.pos;
+        });
 
         std::string filename;
         if (hash_to_name.count(hash)) {
@@ -1523,39 +1593,49 @@ int compio_repair(const char *path, const char *output_dir) {
             filename = "file_" + std::to_string(hash);
         }
 
-        fs::path out_path = out_dir / filename;
+        fs::path p(filename);
+        std::string safe_name = p.filename().string();
+        if (safe_name.empty() || safe_name == "." || safe_name == "..") {
+            safe_name = "file_" + std::to_string(hash);
+        }
+        
+        fs::path out_path = out_dir / safe_name;
+        
         FILE *out_f = fopen(out_path.string().c_str(), "wb");
         if (!out_f) {
             WARNING_PRINT("error: failed to create output file: %s\n", out_path.string().c_str());
             continue;
         }
 
-        for (const auto &b : blocks) {
-            storage_block sb;
-            if (sb.read_from(f, b.addr)) {
-                if (sb.is_compressed) {
-                    uint64_t decomp_size = sb.original_size;
-                    if (decomp_size > 100 * 1024 * 1024) {
-                         WARNING_PRINT("warning: skipping huge block %" PRIu64 "\n", b.addr);
-                         continue;
-                    }
-                    std::vector<uint8_t> decomp_buf(decomp_size);
-                    if (compressor.decompress(decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0) {
-                        fseek64(out_f, b.pos, SEEK_SET);
-                        fwrite(decomp_buf.data(), 1, decomp_size, out_f);
-                    } else {
-                        WARNING_PRINT("warning: decompression failed for block at %" PRIu64 "\n", b.addr);
-                    }
-                } else {
-                    fseek64(out_f, b.pos, SEEK_SET);
-                    fwrite(sb.data.get(), 1, sb.size, out_f);
-                }
+        for (const auto& part : parts) {
+            if (discovered_blocks.count(part.addr)) {
+                claimed_addrs.insert(part.addr);
+                const auto& meta = discovered_blocks[part.addr];
+                dump_block(out_f, meta.addr, meta.size, meta.original_size, meta.is_compressed, part.pos);
             } else {
-                WARNING_PRINT("warning: failed to read storage block at %" PRIu64 "\n", b.addr);
+                storage_block sb;
+                if (sb.read_from(f, part.addr)) {
+                    claimed_addrs.insert(part.addr);
+                    dump_block(out_f, part.addr, sb.size, sb.original_size, (bool)sb.is_compressed, part.pos);
+                }
             }
         }
         fclose(out_f);
         recovered_count++;
+    }
+
+    for (const auto& [addr, meta] : discovered_blocks) {
+        if (claimed_addrs.find(addr) == claimed_addrs.end()) {
+             std::string safe_name = "orphan_" + std::to_string(addr) + ".bin";
+             fs::path out_path = out_dir / safe_name;
+             
+             FILE *out_f = fopen(out_path.string().c_str(), "wb");
+             if (out_f) {
+                 dump_block(out_f, meta.addr, meta.size, meta.original_size, meta.is_compressed, 0);
+                 fclose(out_f);
+                 recovered_count++;
+             }
+        }
     }
 
     fclose(f);

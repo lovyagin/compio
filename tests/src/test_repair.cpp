@@ -15,11 +15,23 @@ namespace fs = std::filesystem;
 class RepairTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        tmp_dir = "repair_test_dir";
+        char buffer[1024];
+        generate_tmp_fn(buffer, 1024);
+        std::string unique_base = buffer;
+        
+        // generate_tmp_fn creates the file, remove it so we can use the name (or derived name)
+        if (fs::exists(unique_base)) {
+            fs::remove(unique_base);
+        }
+        
+        fs::path p(unique_base);
+        tmp_dir = p.string() + "_dir";
+        
         if (fs::exists(tmp_dir)) fs::remove_all(tmp_dir);
         fs::create_directories(tmp_dir);
-        archive_path = tmp_dir + "/archive.compio";
-        recover_dir = tmp_dir + "/recovered";
+        
+        archive_path = (fs::path(tmp_dir) / "archive.compio").string();
+        recover_dir = (fs::path(tmp_dir) / "recovered").string();
     }
 
     void TearDown() override {
@@ -47,7 +59,7 @@ TEST_F(RepairTest, RecoversFromValidArchive) {
     }
 
     int count = compio_repair(archive_path.c_str(), recover_dir.c_str());
-    // Should recover at least 1 file (test.txt)
+    // Should recover at least 1 file
     ASSERT_GE(count, 1);
     
     fs::path recovered_file = fs::path(recover_dir) / "test.txt";
@@ -67,29 +79,26 @@ TEST_F(RepairTest, RecoversWithCorruptedHeader) {
         
         compio_file* f = compio_open_file("data.bin", archive);
         ASSERT_NE(f, nullptr);
-        // hash = f->hash; // Or use fnv1a("data.bin") manually if f is opaque
+        
         std::vector<uint8_t> data(1000, 0xAB);
         compio_write(data.data(), data.size(), f);
         compio_close_file(f);
         compio_close_archive(archive);
     }
 
-    // Corrupt header (first 512 bytes)
+    // Corrupt header (overwrite first 512 bytes with zeros)
     {
         FILE* f = fopen(archive_path.c_str(), "rb+");
-        if (f) {
-            std::vector<uint8_t> zeros(512, 0);
-            fwrite(zeros.data(), 1, 512, f);
-            fclose(f);
-        }
+        ASSERT_NE(f, nullptr);
+        std::vector<uint8_t> zeros(512, 0);
+        fwrite(zeros.data(), 1, 512, f);
+        fclose(f);
     }
 
     int count = compio_repair(archive_path.c_str(), recover_dir.c_str());
     ASSERT_GE(count, 1);
     
-    // Check for file_<hash>
-    // Since header is lost, we don't know name "data.bin".
-    // We expect "file_" + hash.
+    // Check for file_<hash> (since header with names is gone)
     std::string expected_name = "file_" + std::to_string(hash);
     fs::path recovered_path = fs::path(recover_dir) / expected_name;
     ASSERT_TRUE(fs::exists(recovered_path)) << "Expected file: " << expected_name;

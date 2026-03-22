@@ -73,14 +73,10 @@ uint32_t fnv1a_32_continue(uint32_t hash, const uint8_t *data, size_t size) {
 }
 
 static uint32_t crc32c_table[256];
-static bool crc32c_table_initialized = false;
-static std::mutex crc32c_mutex;
+static std::once_flag crc32c_flag;
 
 static void init_crc32c_table() {
-    std::lock_guard<std::mutex> lock(crc32c_mutex);
-    if (crc32c_table_initialized) return;
-    
-    uint32_t poly = 0x82F63B78; // CRC32C polynomial (0x1EDC6F41) reversed
+    uint32_t poly = 0x82F63B78;
     for (int i = 0; i < 256; i++) {
         uint32_t crc = i;
         for (int j = 0; j < 8; j++) {
@@ -91,11 +87,10 @@ static void init_crc32c_table() {
         }
         crc32c_table[i] = crc;
     }
-    crc32c_table_initialized = true;
 }
 
 uint32_t crc32c_continue(uint32_t crc, const uint8_t *data, size_t size) {
-    if (!crc32c_table_initialized) init_crc32c_table();
+    std::call_once(crc32c_flag, init_crc32c_table);
     
     uint32_t c = ~crc;
     for (size_t i = 0; i < size; i++) {
