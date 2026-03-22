@@ -28,6 +28,10 @@ protected:
         compio_build_default_config(&cfg);
         cfg.max_files = 10;
         cfg.block_size = 4096;
+        
+        // Use dummy compression to ensure data is plaintext on disk
+        // This makes corruption deterministic (we can find the content string)
+        compio_build_dummy_compressor(&cfg.compressor);
 
         compio_archive* ar = compio_open_archive(fn, "w+", &cfg);
         ASSERT_NE(ar, nullptr);
@@ -51,18 +55,6 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
     FILE* f = fopen(fn, "r+b");
     ASSERT_NE(f, nullptr);
 
-    // Find the data block. 
-    // Header is at 0. 
-    // We need to parse header to find index root, then parse index to find data block?
-    // Or just scan for the storage block signature (0xAB = 171).
-    // Let's scan for signature.
-    
-    // Header size for max_files=10 is small.
-    // 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 + 10*(32+8) = ~500 bytes.
-    // Double buffered -> ~1000 bytes reserved.
-    
-    // We can search for the content string to be sure where the data is.
-    
     std::vector<uint8_t> file_content;
     fseek(f, 0, SEEK_END);
     long fsize = ftell(f);
@@ -72,7 +64,7 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
 
     // Find content
     size_t found_pos = std::string(file_content.begin(), file_content.end()).find(content);
-    ASSERT_NE(found_pos, std::string::npos) << "Could not find content in archive file";
+    ASSERT_NE(found_pos, std::string::npos) << "Could not find content in archive file (compression might be interfering)";
 
     // Corrupt one byte of the content
     fseek(f, found_pos, SEEK_SET);
@@ -88,6 +80,9 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
     compio_build_default_config(&cfg);
     cfg.max_files = 10; // Match creation config
     
+    // Use dummy compressor for reading too
+    compio_build_dummy_compressor(&cfg.compressor);
+    
     compio_archive* ar = compio_open_archive(fn, "r", &cfg);
     ASSERT_NE(ar, nullptr);
 
@@ -96,15 +91,11 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
 
     char buffer[1024];
     // This should fail now!
-    // Before changes: it would warn and return corrupted data.
-    // After changes: it should return 0 or partial read (if multiple blocks), and set errno.
     
     // Reset errno
     errno = 0;
     uint64_t bytes_read = compio_read(buffer, sizeof(buffer), cf);
     
-    // If our logic works, bytes_read should be 0 because the only block is corrupted.
-    // And errno should be EIO.
     EXPECT_EQ(bytes_read, 0) << "Should not read corrupted data";
     EXPECT_EQ(errno, EIO) << "Errno should be set to EIO";
 

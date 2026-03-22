@@ -194,7 +194,7 @@ struct storage_block : public infile_object {
      * @brief Read block from file and validate content
      * @return true if valid, false if corrupted
      */
-    bool read_from(FILE *file, uint64_t addr);
+    bool read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
     /**

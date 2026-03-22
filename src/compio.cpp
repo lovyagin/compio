@@ -504,7 +504,12 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     if (file_size > 0) {
         tree_key key_min = {hash, 0};
         tree_key key_max = {hash, UINT64_MAX}; // Get all blocks for this file
-        auto all_blocks = archive->index->get_range(key_min, key_max);
+        auto all_blocks_opt = archive->index->get_range(key_min, key_max);
+        if (!all_blocks_opt) {
+            errno = EIO;
+            return -1;
+        }
+        const auto& all_blocks = *all_blocks_opt;
 
         // Save current file position
         int64_t saved_pos = ftell64(archive->file);
@@ -518,7 +523,12 @@ int compio_remove_file(compio_archive *archive, const char *name) {
                     // Deallocate: metadata + compressed data size
                     archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size);
                 } else {
-                    WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal (space leaked)\n", val.addr);
+                    WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
+                    if (saved_pos >= 0) {
+                        fseek64(archive->file, saved_pos, SEEK_SET);
+                    }
+                    errno = EIO;
+                    return -1;
                 }
             }
 
@@ -758,7 +768,10 @@ static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
 #ifndef NDEBUG
     DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%" PRIu64 ":\n", file->hash);
-    auto file_range = index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
+    auto file_range_opt = index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
+    if (!file_range_opt) return; // ignore validation on failure
+    const auto& file_range = *file_range_opt;
+
     if (!allow_empty) {
         assert(!file_range.empty());
     }
@@ -831,7 +844,13 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         // get blocks range from b-tree
         const tree_key key_min = {file->hash, write_start};
         const tree_key key_max = {file->hash, write_end};
-        auto range = archive->index->get_range(key_min, key_max);
+        auto range_opt = archive->index->get_range(key_min, key_max);
+        if (!range_opt) {
+            WARNING_PRINT("error: failed to read index range during write\n");
+            errno = EIO;
+            return 0;
+        }
+        const auto& range = *range_opt;
         assert(!range.empty());
         assert(range.front().first.pos <= write_start);
         assert(range.back().first.pos + range.back().second.size >= write_start);
@@ -986,7 +1005,13 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     const tree_key key_min = {file->hash, read_start};
     const tree_key key_max = {file->hash, read_end};
-    auto range = archive->index->get_range(key_min, key_max);
+    auto range_opt = archive->index->get_range(key_min, key_max);
+    if (!range_opt) {
+        WARNING_PRINT("error: failed to read index range during read\n");
+        errno = EIO;
+        return 0;
+    }
+    const auto& range = *range_opt;
     assert(!range.empty());
 
     for (std::size_t i = 1; i < range.size(); ++i) {
@@ -1204,7 +1229,13 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     const tree_key key_min = {file->hash, erase_start};
     const tree_key key_max = {file->hash, erase_end};
-    auto range = archive->index->get_range(key_min, key_max);
+    auto range_opt = archive->index->get_range(key_min, key_max);
+    if (!range_opt) {
+        WARNING_PRINT("error: failed to read index range during insert/erase\n");
+        errno = EIO;
+        return 0;
+    }
+    const auto& range = *range_opt;
     assert(!range.empty());
     assert(range.front().first.pos <= erase_start);
     assert(range.back().first.pos + range.back().second.size >= erase_end);

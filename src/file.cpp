@@ -243,13 +243,7 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
 }
 
 bool header::read_from(FILE *file, uint64_t addr) {
-    if (!load_and_validate(file, addr)) {
-        // Assert on failure as per original contract, but now we have validated it explicitly.
-        // In recovery paths, we will use load_and_validate directly.
-        // assert(false);
-        return false;
-    }
-    return true;
+    return load_and_validate(file, addr);
 }
 
 void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
@@ -347,6 +341,14 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
     }
     if (lendian_fread_member(is_leaf, file) != 1) return false;
     if (lendian_fread_member(num_keys, file) != 1) return false;
+    
+    // Sanity check num_keys
+    if (num_keys > 2 * (uint32_t)tree_degree - 1) {
+        WARNING_PRINT("error: index_node num_keys %u exceeds max %u (degree=%d)\n", 
+                      num_keys, 2 * tree_degree - 1, tree_degree);
+        return false;
+    }
+
     keys.resize(num_keys);
     values.resize(num_keys);
     if (!is_leaf) {
@@ -491,8 +493,15 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         return false;
     }
     if (lendian_fread_member(is_compressed, file) != 1) return false;
+    if (is_compressed > 1) {
+        WARNING_PRINT("error: storage_block is_compressed invalid (%u) at addr=%" PRIu64 "\n", is_compressed, addr);
+        return false;
+    }
     if (lendian_fread_member(size, file) != 1) return false;
-    assert(size != 0);
+    if (size == 0) {
+        WARNING_PRINT("error: storage_block size is 0 at addr=%" PRIu64 "\n", addr);
+        return false;
+    }
 
     // Cap block size to prevent OOM on corrupted files
     static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB

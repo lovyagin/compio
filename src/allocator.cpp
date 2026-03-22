@@ -904,7 +904,12 @@ void block_allocator::perform_defragmentation() {
     key_max.hash = UINT64_MAX;
     key_max.pos  = UINT64_MAX;
 
-    auto used_blocks = archive_->index->get_range(key_min, key_max);
+    auto used_blocks_opt = archive_->index->get_range(key_min, key_max);
+    if (!used_blocks_opt) {
+        WARNING_PRINT("defragmentation aborted: index read failed\n");
+        return;
+    }
+    auto &used_blocks = *used_blocks_opt;
 
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
