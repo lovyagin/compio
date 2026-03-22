@@ -40,8 +40,8 @@ void compio_build_default_config(compio_config *result) {
     result->block_size = 1 << 12;
     result->block_size__minimum = 1 << 9;
     result->block_size__maximum = 1 << 14;
-    result->cache_size__nodes = 128;
-    result->cache_size__blocks = 16;
+    result->cache_size__nodes = 1024;
+    result->cache_size__blocks = 8192;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
