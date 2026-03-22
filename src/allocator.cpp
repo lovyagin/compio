@@ -759,12 +759,17 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
     }
 
     std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
-    /*
-    if (size > UINT64_MAX - offset ||
-        offset + size > readonly(archive_->header, header)->file_size) {
-        return;
+    
+    // Validate bounds using the cached file size pointer to avoid locking header_mutex
+    // (which could cause deadlocks if held by caller).
+    const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
+    if (file_size_ptr) {
+        if (size > UINT64_MAX - offset ||
+            offset + size > *file_size_ptr) {
+            return;
+        }
     }
-    */
+
     if (blocks_manager_.is_region_free(offset, size)) {
         return;
     }
@@ -794,8 +799,10 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
         fflush(archive_->file);
     }
     
-    // Check if defragmentation is needed
-    maintenance();
+    // Check if defragmentation is needed (throttled to avoid O(N) cost on every dealloc)
+    if (++deallocate_count_ % 64 == 0) {
+        maintenance();
+    }
 }
 
 void block_allocator::force_defragmentation() {

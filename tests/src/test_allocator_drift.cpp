@@ -127,6 +127,7 @@ TEST_F(AllocatorDriftTest, DriftReproduction) {
     const size_t size = 1000;
     uint64_t addrA = allocator->allocate(size);
     uint64_t addrB = allocator->allocate(size); // Barrier
+    EXPECT_NE(addrB, 0u) << "Barrier allocation B should succeed";
     
     allocator->deallocate(addrA, size);
     
