@@ -371,7 +371,7 @@ int compio_defragment(compio_archive *archive);
  *
  * @param path Path to the corrupted archive
  * @param output_dir Directory to dump recovered files
- * @return 0 on success, negative on error
+ * @return Number of recovered files (>= 0) on success, COMPIO_ERROR on failure
  */
 int compio_repair(const char *path, const char *output_dir);
 
