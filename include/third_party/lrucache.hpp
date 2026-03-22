@@ -43,6 +43,7 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <vector>
 #include <optional>
 #include <stdexcept>
 
