@@ -11,6 +11,8 @@
 
 namespace compio {
 
+static thread_local bool tl_maintenance_mode = false;
+
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
 long long bm_n_blocks = 0;
 #endif
@@ -130,7 +132,11 @@ block::~block() {
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
-        context.index->update(_key, {new_addr, _size});
+        if (tl_maintenance_mode) {
+             context.index->_update_impl(_key, {new_addr, _size});
+        } else {
+             context.index->update(_key, {new_addr, _size});
+        }
 
         {
             std::lock_guard<std::mutex> lock(context.temp_index_mutex);
@@ -279,6 +285,10 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 void storage_block_reader::clear_cache() {
     DEBUG_PRINT("[SBR][clear_cache]\n");
     cache.clear();
+}
+
+void storage_block_reader::set_maintenance_mode(bool enabled) {
+    tl_maintenance_mode = enabled;
 }
 
 double storage_block_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }

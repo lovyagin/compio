@@ -107,7 +107,7 @@ void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_va
 }
 
 void btree::insert(const tree_key &key, const tree_val &value) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::unique_lock<std::shared_mutex> lock(mutex);
     DEBUG_PRINT("[BTREE]: insert(key={...,%" PRIu64 "},value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, value.addr,
                 value.size);
     auto root = read_root();
@@ -192,6 +192,7 @@ void btree::_remove(shared_node &node, const tree_key &key) {
 }
 
 void btree::remove(const tree_key &key) {
+    std::unique_lock<std::shared_mutex> lock(mutex);
     DEBUG_PRINT("[BTREE]: remove(key={...,%" PRIu64 "})\n", key.pos);
     auto root = read_root();
     _remove(root, key);
@@ -234,7 +235,12 @@ bool btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
 
 std::optional<std::vector<std::pair<tree_key, tree_val>>> btree::get_range(const tree_key &key_min,
                                                             const tree_key &key_max) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::shared_lock<std::shared_mutex> lock(mutex);
+    return _get_range_impl(key_min, key_max);
+}
+
+std::optional<std::vector<std::pair<tree_key, tree_val>>> btree::_get_range_impl(const tree_key &key_min,
+                                                                                 const tree_key &key_max) {
     if (key_max <= key_min) {
         WARNING_PRINT("warning: btree::get_range received invalid range bounds (key_min={%" PRIu64 ",%" PRIu64 "} "
                       ">= {%" PRIu64 ",%" PRIu64 "}=key_max)\n",
@@ -284,7 +290,11 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
 }
 
 void btree::update(const tree_key &key, const tree_val &new_value) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::unique_lock<std::shared_mutex> lock(mutex);
+    _update_impl(key, new_value);
+}
+
+void btree::_update_impl(const tree_key &key, const tree_val &new_value) {
     DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
     auto root = read_root();
@@ -298,7 +308,7 @@ void btree::update(const tree_key &key, const tree_val &new_value) {
 }
 
 std::optional<tree_val> btree::get(const tree_key &key) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::shared_lock<std::shared_mutex> lock(mutex);
     auto current = read_root();
     if (!current) return std::nullopt;
 
@@ -322,6 +332,7 @@ std::optional<tree_val> btree::get(const tree_key &key) {
 }
 
 std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &key) {
+    // get_range acquires shared_lock internally.
     auto range_opt = get_range(key, key + 1);
     if (!range_opt) return std::nullopt;
     const auto& range = *range_opt;
@@ -379,7 +390,7 @@ void btree::_add_to_range(shared_node &node, int64_t addition, const tree_key &k
 }
 
 void btree::add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::unique_lock<std::shared_mutex> lock(mutex);
     DEBUG_PRINT("[BTREE]: add_to_range(addition=%" PRId64 ",key_min={...,%" PRIu64 "},key_max={...,%" PRIu64 "})\n",
                 addition, key_min.pos, key_max.pos);
     if (key_min > key_max) {
@@ -412,22 +423,30 @@ void btree::_print(shared_node node, uint64_t depth) {
 }
 
 void btree::print() {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::shared_lock<std::shared_mutex> lock(mutex);
     _print(read_root(), 0);
 }
 
 void btree::clear_cache() {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::unique_lock<std::shared_mutex> lock(mutex);
+    _clear_cache();
+}
+
+void btree::_clear_cache() {
     reader.clear_cache();
 }
 
 double btree::get_cache_hit_probability() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::shared_lock<std::shared_mutex> lock(mutex);
     return reader.get_cache_hit_probability();
 }
 
 std::vector<uint64_t> btree::collect_node_addresses(uint64_t &node_size) {
-    std::lock_guard<std::recursive_mutex> lock(mutex);
+    std::shared_lock<std::shared_mutex> lock(mutex);
+    return _collect_node_addresses(node_size);
+}
+
+std::vector<uint64_t> btree::_collect_node_addresses(uint64_t &node_size) {
     node_size = INDEX_NODE_SIZE(degree);
     std::vector<uint64_t> addrs;
 

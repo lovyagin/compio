@@ -20,7 +20,7 @@ struct compio_archive {
     std::shared_mutex mutex;
     std::mutex io_mutex;
     std::mutex header_mutex;
-    std::mutex allocator_mutex;
+    std::recursive_mutex allocator_mutex;
 
     int current_header_slot; // 0 for A (offset 0), 1 for B (offset disk_size)
     FILE *file;

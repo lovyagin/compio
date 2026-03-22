@@ -337,6 +337,13 @@ public:
     void clear_cache();
 
     /**
+     * @brief Set maintenance mode (unlocked updates)
+     * 
+     * @param enabled True to enable maintenance mode, false to disable
+     */
+    void set_maintenance_mode(bool enabled);
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability

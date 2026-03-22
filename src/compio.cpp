@@ -1619,14 +1619,16 @@ int compio_repair(const char *path, const char *output_dir) {
             // it should be safe unless out_dir_path itself is malicious (which is user input).
             
 #ifdef _WIN32
-            FILE *out_f = _wfopen(out_path.c_str(), L"wb");
+            FILE *out_f_raw = _wfopen(out_path.c_str(), L"wb");
 #else
-            FILE *out_f = fopen(out_path.c_str(), "wb");
+            FILE *out_f_raw = fopen(out_path.c_str(), "wb");
 #endif
-            if (!out_f) {
+            if (!out_f_raw) {
                 WARNING_PRINT("error: failed to create output file: %s (errno=%d)\n", out_path.string().c_str(), errno);
                 continue;
             }
+            std::unique_ptr<FILE, decltype(&fclose)> out_f_guard(out_f_raw, fclose);
+            FILE* out_f = out_f_raw;
 
             for (const auto& part : parts) {
                 if (discovered_blocks.count(part.addr)) {
@@ -1641,7 +1643,7 @@ int compio_repair(const char *path, const char *output_dir) {
                     }
                 }
             }
-            fclose(out_f);
+            // fclose(out_f) handled by guard
             recovered_count++;
         }
 
@@ -1651,13 +1653,15 @@ int compio_repair(const char *path, const char *output_dir) {
                  fs::path out_path = out_dir_path / safe_name;
                  
 #ifdef _WIN32
-                 FILE *out_f = _wfopen(out_path.c_str(), L"wb");
+                 FILE *out_f_raw = _wfopen(out_path.c_str(), L"wb");
 #else
-                 FILE *out_f = fopen(out_path.c_str(), "wb");
+                 FILE *out_f_raw = fopen(out_path.c_str(), "wb");
 #endif
-                 if (out_f) {
+                 if (out_f_raw) {
+                     std::unique_ptr<FILE, decltype(&fclose)> out_f_guard(out_f_raw, fclose);
+                     FILE* out_f = out_f_raw;
                      dump_block(out_f, meta.addr, meta.size, meta.original_size, meta.is_compressed, 0);
-                     fclose(out_f);
+                     // fclose(out_f) handled by guard
                      recovered_count++;
                  } else {
                      WARNING_PRINT("warning: failed to create orphan file: %s (errno=%d)\n", out_path.string().c_str(), errno);
