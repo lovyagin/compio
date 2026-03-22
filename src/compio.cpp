@@ -514,10 +514,12 @@ int compio_remove_file(compio_archive *archive, const char *name) {
             if (val.addr != 0) {
                 // Read storage_block metadata to get compressed size
                 storage_block sb;
-                sb.read_from(archive->file, val.addr);
-
-                // Deallocate: metadata + compressed data size
-                archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size);
+                if (sb.read_from(archive->file, val.addr)) {
+                    // Deallocate: metadata + compressed data size
+                    archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size);
+                } else {
+                    WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal (space leaked)\n", val.addr);
+                }
             }
 
             // Remove block from B-tree index
