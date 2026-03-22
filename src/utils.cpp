@@ -6,6 +6,11 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <intrin.h>
+#endif
+
+#if defined(__SSE4_2__)
+#include <nmmintrin.h>
 #endif
 
 #include "compio/allocator.hpp"
@@ -89,7 +94,7 @@ static void init_crc32c_table() {
     }
 }
 
-uint32_t crc32c_continue(uint32_t crc, const uint8_t *data, size_t size) {
+static uint32_t crc32c_sw(uint32_t crc, const uint8_t *data, size_t size) {
     std::call_once(crc32c_flag, init_crc32c_table);
     
     uint32_t c = ~crc;
@@ -97,6 +102,52 @@ uint32_t crc32c_continue(uint32_t crc, const uint8_t *data, size_t size) {
         c = (c >> 8) ^ crc32c_table[(c ^ data[i]) & 0xFF];
     }
     return ~c;
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+    #pragma GCC push_options
+    #pragma GCC target("sse4.2")
+    #include <nmmintrin.h>
+    #pragma GCC pop_options
+    
+    #define COMPIO_HAVE_SSE42 1
+    
+    __attribute__((target("sse4.2")))
+    static uint32_t crc32c_hw(uint32_t crc, const uint8_t *data, size_t size) {
+        uint64_t c = ~crc;
+        const uint8_t *p = data;
+        
+        // Align to 8 bytes (optional optimization, but good for u64)
+        while (size > 0 && ((uintptr_t)p & 7) != 0) {
+            c = _mm_crc32_u8((uint32_t)c, *p++);
+            size--;
+        }
+        
+        // Process 64-bit chunks
+        while (size >= 8) {
+            c = _mm_crc32_u64(c, *(const uint64_t*)p);
+            p += 8;
+            size -= 8;
+        }
+        
+        // Process remaining bytes
+        while (size > 0) {
+            c = _mm_crc32_u8((uint32_t)c, *p++);
+            size--;
+        }
+        
+        return ~(uint32_t)c;
+    }
+#endif
+
+uint32_t crc32c_continue(uint32_t crc, const uint8_t *data, size_t size) {
+#if defined(COMPIO_HAVE_SSE42)
+    // Runtime check for SSE4.2 support
+    if (__builtin_cpu_supports("sse4.2")) {
+        return crc32c_hw(crc, data, size);
+    }
+#endif
+    return crc32c_sw(crc, data, size);
 }
 
 uint32_t crc32c(const uint8_t *data, size_t size) {
