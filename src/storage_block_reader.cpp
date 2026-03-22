@@ -396,7 +396,9 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
         }
     }
     context.index->remove(key);
-    context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
+    if (b->addr() != 0) {
+        context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
+    }
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
     --bm_n_blocks;
 #endif
