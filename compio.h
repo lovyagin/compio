@@ -33,6 +33,14 @@ extern "C" {
 #define COMPIO_MAGIC_NUMBER 27110661 /**< Bumped in format v4 (double-buffered header with strict reservation) */
 
 /**
+ * @brief Checksum algorithm types
+ */
+typedef enum {
+    COMPIO_CHECKSUM_FNV1A = 0, /**< FNV-1a 32-bit (legacy default) */
+    COMPIO_CHECKSUM_CRC32C = 1 /**< CRC32C (hardware accelerated where available) */
+} compio_checksum_type;
+
+/**
  * @brief Compression algorithm types
  */
 typedef enum {
@@ -167,6 +175,7 @@ typedef struct {
 360.                         Set to 0 to use the default limit (COMPIO_MAX_FILES) when creating a new archive,
 361.                         or to read the limit from the archive header when opening an existing one. */
     uint64_t wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
+    compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
 } compio_config;
 
 /**
@@ -352,6 +361,19 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
  * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
  */
 int compio_defragment(compio_archive *archive);
+
+/**
+ * @brief Repair/Recover data from a corrupted archive
+ *
+ * Scans the archive file for valid storage blocks and attempts to reconstruct
+ * files. If header is available, uses it to restore filenames.
+ * If index is available, uses it to order blocks.
+ *
+ * @param path Path to the corrupted archive
+ * @param output_dir Directory to dump recovered files
+ * @return 0 on success, negative on error
+ */
+int compio_repair(const char *path, const char *output_dir);
 
 #ifdef __cplusplus
 }

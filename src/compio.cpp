@@ -8,6 +8,10 @@
 #include <memory>
 #include <utility>
 #include <cerrno>
+#include <filesystem>
+#include <map>
+#include <vector>
+#include <set>
 
 #ifdef _WIN32
 #include <io.h>
@@ -20,8 +24,10 @@
 #include "compio/debug_print.hpp"
 #include "compio/file.hpp"
 #include "compio/utils.hpp"
+#include "compio/btree.hpp"
 
 using namespace compio;
+namespace fs = std::filesystem;
 
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
@@ -40,6 +46,7 @@ void compio_build_default_config(compio_config *result) {
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
+    result->checksum_type = COMPIO_CHECKSUM_CRC32C;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -137,7 +144,10 @@ compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *fi
     // index = new btree(this);
 }
 
-bool compio_archive::is_readonly() const { return mode_b & mode_bit::r; }
+bool compio_archive::is_readonly() const {
+    if (mode_b & mode_bit::plus) return false;
+    return mode_b & mode_bit::r;
+}
 
 static bool validate_config(const compio_config *c, bool allow_zeros = false) {
     if (c->block_size <= 0 && !allow_zeros) {
@@ -400,7 +410,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     archive->block_reader = new compio::storage_block_reader(
         file, archive->allocator, archive->index,
-        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get());
+        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get(),
+        archive->config.checksum_type);
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
@@ -443,7 +454,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
 
     auto file_table_item = readonly(archive->header, header)->ftable.find(name);
     if (file_table_item == nullptr) {
-        if (!(archive->mode_b & mode_bit::r)) {
+        if (!archive->is_readonly()) {
             file_table_item = archive->header->ftable.add(name);
             if (file_table_item == NULL) {
                 errno = ENFILE;
@@ -516,6 +527,12 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 
         // Deallocate all blocks and remove them from index
         for (const auto &[key, val] : all_blocks) {
+            if (archive->block_reader && archive->block_reader->cache_contains(key)) {
+                 auto b = archive->block_reader->read_block(val.addr, key);
+                 archive->block_reader->remove_block(b);
+                 continue;
+            }
+
             if (val.addr != 0) {
                 // Read storage_block metadata to get compressed size
                 storage_block sb;
@@ -800,7 +817,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
 
-    if (archive->mode_b & mode_bit::r) {
+    if ((archive->mode_b & mode_bit::r) && !(archive->mode_b & mode_bit::plus)) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
         errno = EROFS;
         return 0;
@@ -1082,7 +1099,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     auto *archive = file->archive;
     const auto block_reader = archive->block_reader;
 
-    if (archive->mode_b & mode_bit::r) {
+    if ((archive->mode_b & mode_bit::r) && !(archive->mode_b & mode_bit::plus)) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
         errno = EROFS;
         return 0;
@@ -1193,7 +1210,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     auto *archive = file->archive;
     const auto block_reader = archive->block_reader;
 
-    if (archive->mode_b & mode_bit::r) {
+    if ((archive->mode_b & mode_bit::r) && !(archive->mode_b & mode_bit::plus)) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
         errno = EROFS;
         return 0;
@@ -1402,4 +1419,145 @@ void compio_flush(compio_archive *archive) {
         // do not truncate the WAL so that recovery remains possible.
         WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
     }
+}
+
+int compio_repair(const char *path, const char *output_dir) {
+    if (!fs::exists(path)) {
+        WARNING_PRINT("error: file not found: %s\n", path);
+        return COMPIO_ERROR;
+    }
+
+    fs::path out_dir(output_dir);
+    if (!fs::exists(out_dir)) {
+        fs::create_directories(out_dir);
+    }
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        WARNING_PRINT("error: failed to open file: %s\n", path);
+        return COMPIO_ERROR;
+    }
+
+    fseek64(f, 0, SEEK_END);
+    uint64_t file_size = ftell64(f);
+    fseek64(f, 0, SEEK_SET);
+
+    header h;
+    bool valid_header = h.load_and_validate(f, 0);
+    if (!valid_header) {
+        WARNING_PRINT("warning: header corrupted, trying to salvage data with default settings...\n");
+        h.b_tree_degree = 16;
+        h.compression_type = COMPIO_COMPRESS_ZLIB;
+    } else {
+        WARNING_PRINT("info: header valid, using degree %u\n", h.b_tree_degree);
+    }
+
+    std::map<uint64_t, std::string> hash_to_name;
+    for (const auto &file : h.ftable.files) {
+        if (file.name[0] != '\0') {
+             uint64_t hash = fnv1a(file.name);
+             hash_to_name[hash] = std::string(file.name);
+        }
+    }
+
+    struct block_info {
+        uint64_t pos;
+        uint64_t addr;
+        uint64_t size;
+        bool operator<(const block_info& other) const { return pos < other.pos; }
+        bool operator==(const block_info& other) const { return pos == other.pos && addr == other.addr && size == other.size; }
+    };
+    std::map<uint64_t, std::vector<block_info>> file_blocks;
+
+    constexpr size_t BUFFER_SIZE = 1024 * 1024;
+    std::vector<uint8_t> buffer(BUFFER_SIZE);
+    
+    uint64_t offset = 0;
+    while (offset < file_size) {
+        if (fseek64(f, offset, SEEK_SET) != 0) break;
+        size_t bytes_read = fread(buffer.data(), 1, BUFFER_SIZE, f);
+        if (bytes_read == 0) break;
+
+        for (size_t i = 0; i < bytes_read; ++i) {
+            uint64_t current_addr = offset + i;
+            uint8_t sig = buffer[i];
+            
+            if (sig == index_node::signature) {
+                uint64_t saved_pos = ftell64(f);
+                
+                index_node node(h.b_tree_degree);
+                if (node.read_from(f, current_addr)) {
+                     for (size_t k = 0; k < node.keys.size(); ++k) {
+                        if (k < node.values.size()) {
+                            uint64_t hash = node.keys[k].hash;
+                            uint64_t pos = node.keys[k].pos;
+                            uint64_t addr = node.values[k].addr;
+                            uint64_t size = node.values[k].size;
+                            file_blocks[hash].push_back({pos, addr, size});
+                        }
+                    }
+                }
+                fseek64(f, saved_pos, SEEK_SET);
+            }
+        }
+        
+        offset += bytes_read;
+        if (bytes_read == BUFFER_SIZE) {
+             if (offset > 1024) offset -= 1024;
+        }
+    }
+
+    compio_compressor compressor;
+    compio_build_compressor_by_type(&compressor, (compio_compression_type)h.compression_type);
+
+    int recovered_count = 0;
+    for (auto &[hash, blocks] : file_blocks) {
+        std::sort(blocks.begin(), blocks.end());
+        auto last = std::unique(blocks.begin(), blocks.end());
+        blocks.erase(last, blocks.end());
+
+        std::string filename;
+        if (hash_to_name.count(hash)) {
+            filename = hash_to_name[hash];
+        } else {
+            filename = "file_" + std::to_string(hash);
+        }
+
+        fs::path out_path = out_dir / filename;
+        FILE *out_f = fopen(out_path.string().c_str(), "wb");
+        if (!out_f) {
+            WARNING_PRINT("error: failed to create output file: %s\n", out_path.string().c_str());
+            continue;
+        }
+
+        for (const auto &b : blocks) {
+            storage_block sb;
+            if (sb.read_from(f, b.addr)) {
+                if (sb.is_compressed) {
+                    uint64_t decomp_size = sb.original_size;
+                    if (decomp_size > 100 * 1024 * 1024) {
+                         WARNING_PRINT("warning: skipping huge block %" PRIu64 "\n", b.addr);
+                         continue;
+                    }
+                    std::vector<uint8_t> decomp_buf(decomp_size);
+                    if (compressor.decompress(decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0) {
+                        fseek64(out_f, b.pos, SEEK_SET);
+                        fwrite(decomp_buf.data(), 1, decomp_size, out_f);
+                    } else {
+                        WARNING_PRINT("warning: decompression failed for block at %" PRIu64 "\n", b.addr);
+                    }
+                } else {
+                    fseek64(out_f, b.pos, SEEK_SET);
+                    fwrite(sb.data.get(), 1, sb.size, out_f);
+                }
+            } else {
+                WARNING_PRINT("warning: failed to read storage block at %" PRIu64 "\n", b.addr);
+            }
+        }
+        fclose(out_f);
+        recovered_count++;
+    }
+
+    fclose(f);
+    return recovered_count;
 }

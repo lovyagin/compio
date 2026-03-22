@@ -797,6 +797,9 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 }
 
 void block_allocator::force_defragmentation() {
+    auto index_lock = archive_->index->get_lock();
+    std::lock_guard<std::mutex> alloc_lock(archive_->allocator_mutex);
+
     blocks_manager_.defragment();
     if (archive_->file && archive_->index) {
         perform_defragmentation();
@@ -809,16 +812,23 @@ void block_allocator::maintenance() {
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
     if (current_fragmentation > threshold) {
-        blocks_manager_.defragment();
+        auto index_lock = archive_->index->get_lock();
+        std::lock_guard<std::mutex> alloc_lock(archive_->allocator_mutex);
 
         if (blocks_manager_.get_cached_fragmentation() > threshold) {
-            if (archive_->file && archive_->index) {
-                perform_defragmentation();
+            blocks_manager_.defragment();
+
+            if (blocks_manager_.get_cached_fragmentation() > threshold) {
+                if (archive_->file && archive_->index) {
+                    perform_defragmentation();
+                }
             }
         }
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+    } else {
+        std::lock_guard<std::mutex> lock(archive_->allocator_mutex);
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
     }
-
-    last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
 }
 
 bool block_allocator::save_state(compio_archive *archive) {

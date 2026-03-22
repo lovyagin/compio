@@ -57,6 +57,23 @@ uint32_t fnv1a_32(const uint8_t *data, size_t size);
 uint32_t fnv1a_32_continue(uint32_t hash, const uint8_t *data, size_t size);
 
 /**
+ * @brief Calculates CRC32C checksum (Castagnoli)
+ * @param data Pointer to data
+ * @param size Size of data
+ * @return 32-bit CRC32C checksum
+ */
+uint32_t crc32c(const uint8_t *data, size_t size);
+
+/**
+ * @brief Continues calculating CRC32C checksum
+ * @param crc Initial CRC value
+ * @param data Pointer to data
+ * @param size Size of data
+ * @return Updated CRC32C checksum
+ */
+uint32_t crc32c_continue(uint32_t crc, const uint8_t *data, size_t size);
+
+/**
  * @brief Portable 64-bit file seek
  *
  * Uses _fseeki64 on Windows (where long is 32-bit) and fseeko on POSIX

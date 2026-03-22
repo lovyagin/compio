@@ -238,6 +238,13 @@ struct btree {
     std::vector<uint64_t> collect_node_addresses(uint64_t &node_size);
 
     /**
+     * @brief Get a lock object for the B-Tree mutex
+     * 
+     * @return std::unique_lock<std::mutex> Lock object
+     */
+    std::unique_lock<std::mutex> get_lock() const { return std::unique_lock<std::mutex>(mutex); }
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability
@@ -245,6 +252,7 @@ struct btree {
     double get_cache_hit_probability() const;
 
 private:
+    mutable std::mutex mutex;
     /** @brief The degree of the B-Tree (branching factor) */
     uint64_t degree;
     /** @brief Is compio_archive opened with readonly (should we propagate key_additions and save

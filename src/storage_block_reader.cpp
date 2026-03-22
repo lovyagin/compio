@@ -86,6 +86,7 @@ block::~block() {
     if (_is_modified && !_is_removed) {
         storage_block b(context.compressor->get_bufsize(_size));
         b.original_size = _size;
+        b.checksum_type = context.checksum_type;
 
         int ret = context.compressor->compress(b.data.get(), &b.size, _data.get(), _size);
         if (ret != 0 || b.size > _size) {
@@ -203,9 +204,10 @@ uint64_t block::c_size() const { return _c_size; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size,
-                                           std::mutex *io_mutex, compio::WalManager *wal)
+                                           std::mutex *io_mutex, compio::WalManager *wal,
+                                           compio_checksum_type checksum_type)
     : cache(max_size),
-      context{file, allocator, index, compressor, io_mutex, wal} {}
+      context{file, allocator, index, compressor, io_mutex, wal, checksum_type} {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,

@@ -172,12 +172,16 @@ struct index_node : public infile_object {
  *
  */
 struct storage_block : public infile_object {
-    static constexpr uint8_t signature = 171;
+    static constexpr uint8_t signature = 171; // FNV-1a
+    static constexpr uint8_t signature_crc32c = 172; // CRC32C
+
     uint8_t is_compressed;           /**< Is this block compressed */
     uint64_t size;                   /**< Size of data array */
     uint64_t original_size;          /**< Original size (size of uncompressed data) */
     std::unique_ptr<uint8_t[]> data; /**< Data block */
-    uint32_t checksum;               /**< FNV-1a 32-bit checksum (4 bytes) */
+    uint32_t checksum;               /**< Checksum (4 bytes) */
+    
+    compio_checksum_type checksum_type; /**< Algorithm used for checksum */
 
     storage_block();
 
