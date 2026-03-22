@@ -112,14 +112,17 @@ TEST_F(AllocatorDriftTest, MergeThreeBlocks) {
 }
 
 TEST_F(AllocatorDriftTest, DriftReproduction) {
-    // Reproduce the "drift" where file grows despite freeing space.
+    // Reproduce allocator behavior where blocks are reused, split, and then merged,
+    // ensuring no unintended "drift" in file size when space is freed.
     // Scenario:
-    // Loop:
     //   Alloc A (size 1000)
     //   Alloc B (size 1000) - barrier
     //   Free A
-    //   Alloc C (size 1000) -> Should reuse A
-    //   Alloc D (size 1010) -> Should NOT reuse A (too small), appends.
+    //   Alloc C (size 1000) -> Should reuse A (exact fit)
+    //   Free C
+    //   Alloc D (size 900)  -> Should reuse A, splitting it into [900][100]
+    //   Free D              -> Now we have [900 free][100 free][B]
+    //   Alloc E (size 1000) -> Should reuse merged [1000] block at A
     
     const size_t size = 1000;
     uint64_t addrA = allocator->allocate(size);
