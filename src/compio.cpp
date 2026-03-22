@@ -40,13 +40,14 @@ void compio_build_default_config(compio_config *result) {
     result->block_size = 1 << 12;
     result->block_size__minimum = 1 << 9;
     result->block_size__maximum = 1 << 14;
-    result->cache_size__nodes = 128;
-    result->cache_size__blocks = 16;
+    result->cache_size__nodes = 1024;
+    result->cache_size__blocks = 8192;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
+    result->wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -243,6 +244,9 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     // Initialize WAL Manager
     auto wal = std::make_unique<compio::WalManager>(fp);
+    if (c) {
+        wal->set_sync_mode(c->wal_sync_mode);
+    }
     
     // Check for recovery (only if we are not creating a new file from scratch with "w")
     if (!(mode_b & mode_bit::w)) {

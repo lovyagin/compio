@@ -38,6 +38,7 @@ add_executable(compio_gtest
     src/test_concurrency_stress.cpp
     src/test_checksums.cpp
     src/test_repair.cpp
+    src/test_wal_sync_mode.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "compio.h"
 
@@ -37,7 +38,7 @@ int main() {
 
         if (compressors[i].compress(compressed, &compressed_size, test_data, data_size) == 0) {
             printf("%s compressor:\n", names[i]);
-            printf("  Compressed size: %lu bytes\n", compressed_size);
+            printf("  Compressed size: %" PRIu64 " bytes\n", compressed_size);
             printf("  Compression ratio: %.2f%%\n",
                    (1.0 - (double)compressed_size / data_size) * 100);
 

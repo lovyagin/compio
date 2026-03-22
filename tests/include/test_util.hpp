@@ -9,7 +9,12 @@
 
 inline void generate_tmp_fn(char *fn, std::size_t max_size) {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path();
+    fs::path dir;
+    try {
+        dir = fs::temp_directory_path();
+    } catch(const fs::filesystem_error& e) {
+        dir = fs::current_path();
+    }
 
     // generate random filename
     const auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();

@@ -155,6 +155,7 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
     auto test_start = std::chrono::high_resolution_clock::now();
 
     remove(filename.c_str());
+    remove((filename + ".wal").c_str());
 
     compio_config config = {};
     compio_build_default_config(&config);
@@ -408,6 +409,7 @@ FragmentationResult run_fragmentation_test(const FragmentationParams& params, co
 
     compio_close_archive(archive);
     remove(filename.c_str());
+    remove((filename + ".wal").c_str());
 
     return result;
 }
