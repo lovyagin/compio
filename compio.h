@@ -19,7 +19,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define COMPIO_MAX_FILES 64        /**< Default maximum number of files in archive */
+#define COMPIO_MAX_FILES 4096        /**< Default maximum number of files in archive */
 #define COMPIO_MAX_FILES_LIMIT 10000000 /**< Hard upper bound accepted when reading an archive header (10M) */
 #define COMPIO_FNAME_MAX_SIZE 32   /**< File name maximum length */
 
