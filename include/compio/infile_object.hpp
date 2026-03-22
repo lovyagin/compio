@@ -211,13 +211,18 @@ private:
         storage(FILE *file, uint64_t addr, std::mutex *io_mutex = nullptr, compio::WalManager *wal = nullptr) 
             : storage(file, addr, new T(), io_mutex, true, wal) { // Re-use main constructor
             if (!read()) {
-                // How to signal error from constructor?
-                // For now we just log, but the caller should check validity if possible.
-                // Or maybe throw? But we avoid exceptions.
-                // The loaded object might be invalid.
-                // In compio, failure to read usually means corruption.
-                // We rely on read() returning false, but here we can't return.
-                // Ideally, T (the object) should have an isValid state.
+                // Mark this storage as logically removed and not modified so that
+                // the destructor will not attempt to write back potentially
+                // corrupted or uninitialized data.
+                removed = true;
+                modified = false;
+
+                // Log the failure; callers that can should still perform their own
+                // validity checks, but this at least records the corruption event.
+                std::fprintf(stderr,
+                             "smart_infile_object::storage: failed to read object at address %llu from FILE %p\n",
+                             static_cast<unsigned long long>(addr),
+                             static_cast<void*>(file));
             }
         }
 
