@@ -280,9 +280,17 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
     }
 
+    compio_config local_config = *c;
+    bool is_new_file = is_file_empty(file);
+    if (is_new_file) {
+        if (local_config.max_files == 0) {
+            local_config.max_files = COMPIO_MAX_FILES;
+        }
+    }
+
     compio_archive *archive = nullptr;
     try {
-        archive = new compio_archive(std::move(wal), file, mode_b, c);
+        archive = new compio_archive(std::move(wal), file, mode_b, &local_config);
     } catch (const std::exception& e) {
         WARNING_PRINT("warning: failed to initialize compio_archive: %s\n", e.what());
         fclose(file);
@@ -295,12 +303,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_archive;
     }
 
-    bool is_new_file;
-    is_new_file = is_file_empty(file);
+    // is_new_file already computed above
 
     if (is_new_file) {
         // For new files, we must have valid configuration (no zeros allowed)
-        if (!validate_config(c, false)) {
+        if (!validate_config(&local_config, false)) {
             errno = EINVAL;
             WARNING_PRINT("warning: cannot create new archive with zero parameters (auto-detect requires existing file)\n");
             goto no_allocator;
@@ -319,9 +326,9 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
     }
     if (is_new_file) {
-        archive->header->compression_type = c->compressor.compression_type;
-        archive->header->block_size = c->block_size;
-        archive->header->b_tree_degree = c->b_tree_degree;
+        archive->header->compression_type = local_config.compressor.compression_type;
+        archive->header->block_size = local_config.block_size;
+        archive->header->b_tree_degree = local_config.b_tree_degree;
     } else {
         // "Smart Open" logic:
         // If config specifies 0 for a parameter, we use the value from the file.

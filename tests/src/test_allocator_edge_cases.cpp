@@ -426,7 +426,9 @@ TEST_F(EfficiencyTest, SpaceUtilizationEfficiency) {
     }
 
     uint64_t actual_file_size = archive->header->file_size;
-    uint64_t expected_min_size = archive->header->disk_size() + target_data;
+    // Account for double-buffered header and initial index node
+    uint64_t fixed_metadata_size = archive->header->reserved_size() + INDEX_NODE_SIZE(config.b_tree_degree);
+    uint64_t expected_min_size = fixed_metadata_size + target_data;
 
     // Calculate overhead percentage
     double overhead_ratio = double(actual_file_size - expected_min_size) / target_data;
