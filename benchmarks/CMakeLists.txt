@@ -39,6 +39,6 @@ target_include_directories(compression_drift_benchmark PRIVATE ${CMAKE_CURRENT_S
 add_executable(index_benchmark_custom src/index_benchmark_custom.cpp)
 target_link_libraries(index_benchmark_custom PRIVATE compio)
 
-add_executable(segregated_free_list_analysis custom/segregated_free_list_analysis.cpp)
-target_link_libraries(segregated_free_list_analysis PRIVATE compio)
+add_executable(io_overhead custom/io_overhead.cpp)
+target_link_libraries(io_overhead PRIVATE compio)
 
