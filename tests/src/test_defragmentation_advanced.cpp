@@ -160,13 +160,10 @@ TEST_F(StatsAfterDefragTest, TotalFreeMatchesEraseBeforeDefrag) {
         EXPECT_EQ(after.total_free_bytes, 0u)
             << "Defrag should reclaim all free bytes";
     } else {
-        // v5 may have fragmentation due to files_table.
-        // But defrag should consolidate blocks.
-        // We can just check that it's reasonable.
-        // Or simply allow non-zero.
-        if (after.total_free_bytes > 0) {
-            std::cout << "[INFO] v5 archive has " << after.total_free_bytes << " free bytes after defrag (expected)" << std::endl;
-        }
+        // v5 may have residual fragmentation due to files_table metadata,
+        // but defragmentation must not make fragmentation worse.
+        EXPECT_LE(after.total_free_bytes, before.total_free_bytes)
+            << "Defrag should not increase total_free_bytes for v5 archives";
     }
 }
 
