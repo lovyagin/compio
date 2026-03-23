@@ -753,7 +753,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
     }
 }
 
-void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_maintenance) {
     if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
         return;
     }
@@ -800,7 +800,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
     }
     
     // Check if defragmentation is needed (throttled to avoid O(N) cost on every dealloc)
-    if (++deallocate_count_ % 64 == 0) {
+    if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
         maintenance();
     }
 }
@@ -817,6 +817,10 @@ void block_allocator::force_defragmentation() {
 }
 
 void block_allocator::maintenance() {
+    if (maintenance_suspended_ > 0) {
+        return;
+    }
+
     uint8_t current_fragmentation = get_fragmentation();
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
