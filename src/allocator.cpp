@@ -989,6 +989,22 @@ void block_allocator::perform_defragmentation() {
 
     uint64_t write_pos = readonly(archive_->header, header)->reserved_size();
 
+    // v5 specific: The files table is stored as a reserved block in the archive.
+    // We must treat it as an obstacle during defragmentation to avoid overwriting it.
+    uint64_t ft_addr = 0;
+    uint64_t ft_size = 0;
+    {
+        const auto &hdr = readonly(archive_->header, header);
+        if (hdr->magic_number == COMPIO_MAGIC_NUMBER) {
+             ft_addr = hdr->files_table_addr;
+             // Capacity is header->files_table_capacity. Entry size is COMPIO_FNAME_MAX_SIZE + 8.
+             // We use a safe estimate or exact size.
+             // sync_files_table uses: capacity * (COMPIO_FNAME_MAX_SIZE + 8)
+             // We must match that size exactly or conservatively larger.
+             ft_size = (uint64_t)hdr->files_table_capacity * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
+        }
+    }
+
     // Collect final positions of placed storage blocks for gap computation.
     std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
 
@@ -1012,20 +1028,37 @@ void block_allocator::perform_defragmentation() {
         }
         const uint64_t block_size = STORAGE_BLOCK_METASIZE + compressed_size;
 
-        while (overlaps_btree_node(write_pos, block_size)) {
-            auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
-            if (it != node_addrs.begin()) {
-                auto prev = std::prev(it);
-                if (*prev + btree_node_size > write_pos) {
-                    write_pos = *prev + btree_node_size;
-                    continue;
+        // Ensure write_pos doesn't overlap with ANY reserved region (Files Table or B-tree nodes)
+        while (true) {
+            bool collision = false;
+            
+            // 1. Check files table (v5)
+            if (ft_addr != 0) {
+                 // Check intersection [write_pos, write_pos + block_size) AND [ft_addr, ft_addr + ft_size)
+                 if (write_pos < ft_addr + ft_size && write_pos + block_size > ft_addr) {
+                     // Collision! Skip past the files table.
+                     write_pos = ft_addr + ft_size;
+                     collision = true;
+                 }
+            }
+            
+            // 2. Check B-tree nodes
+            if (!collision && overlaps_btree_node(write_pos, block_size)) {
+                auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
+                if (it != node_addrs.begin()) {
+                    auto prev = std::prev(it);
+                    if (*prev + btree_node_size > write_pos) {
+                        write_pos = *prev + btree_node_size;
+                        collision = true;
+                    }
+                }
+                if (!collision && it != node_addrs.end() && *it < write_pos + block_size) {
+                    write_pos = *it + btree_node_size;
+                    collision = true;
                 }
             }
-            if (it != node_addrs.end() && *it < write_pos + block_size) {
-                write_pos = *it + btree_node_size;
-                continue;
-            }
-            break;
+            
+            if (!collision) break;
         }
 
         if (src == write_pos) {
@@ -1139,6 +1172,11 @@ void block_allocator::perform_defragmentation() {
             truncate_pos = last_node_end;
         }
     }
+    
+    // v5: Ensure we don't truncate the files table if it's located after data/nodes.
+    if (ft_addr != 0 && ft_addr + ft_size > truncate_pos) {
+        truncate_pos = ft_addr + ft_size;
+    }
 
     // Physically truncate the file to the new (smaller) size so that the
     // freed tail space is actually returned to the OS.
@@ -1159,7 +1197,7 @@ void block_allocator::perform_defragmentation() {
 
     // Rebuild free blocks from gaps between all occupied regions (storage blocks + B-tree nodes).
     std::vector<std::pair<uint64_t, uint64_t>> occupied;
-    occupied.reserve(placed_blocks.size() + node_addrs.size());
+    occupied.reserve(placed_blocks.size() + node_addrs.size() + 1);
     for (auto &pb : placed_blocks) {
         occupied.push_back(pb);
     }
@@ -1167,6 +1205,12 @@ void block_allocator::perform_defragmentation() {
         if (na >= truncate_pos) break;
         occupied.push_back({na, btree_node_size});
     }
+    
+    // v5: Mark files_table as occupied so allocator doesn't hand it out as free space.
+    if (ft_addr != 0) {
+        occupied.push_back({ft_addr, ft_size});
+    }
+
     std::sort(occupied.begin(), occupied.end());
 
     uint64_t scan = readonly(archive_->header, header)->disk_size() * 2;

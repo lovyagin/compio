@@ -39,6 +39,7 @@ add_executable(compio_gtest
     src/test_checksums.cpp
     src/test_repair.cpp
     src/test_wal_sync_mode.cpp
+    src/test_dynamic_files_table.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)

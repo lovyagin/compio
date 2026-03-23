@@ -36,9 +36,18 @@ TEST_F(HeaderValidationTest, ValidateMaxFilesMismatch) {
     config.max_files = 64;
     archive = compio_open_archive(filename.c_str(), "r", &config);
     
-    // Expect failure due to mismatch
-    EXPECT_EQ(archive, nullptr);
-    if (archive) compio_close_archive(archive);
+    // v5: max_files mismatch is allowed (dynamic capacity).
+    // So we expect SUCCESS.
+    if (archive != nullptr) {
+        // Verify that we are indeed v5
+        EXPECT_EQ(archive->header->magic_number, COMPIO_MAGIC_NUMBER);
+        compio_close_archive(archive);
+    } else {
+        // If v4, failure is expected.
+        // But since we write default (v5), this branch shouldn't be taken unless we reverted to v4.
+        // So we fail if we expected success.
+        FAIL() << "v5 archive should open even with max_files mismatch";
+    }
 }
 
 TEST_F(HeaderValidationTest, ValidateBlockSizeMismatch) {
@@ -102,6 +111,8 @@ TEST_F(HeaderValidationTest, SmartOpenAutoDetect) {
     ASSERT_NE(archive, nullptr) << "Smart Open failed to auto-detect parameters";
     
     // Verify that the archive adopted the file's parameters
+    // For v5, max_files is dynamic and adopts the capacity from the file header,
+    // which starts at the initial max_files (10).
     EXPECT_EQ(archive->config.max_files, 10);
     EXPECT_EQ(archive->config.block_size, 4096);
     EXPECT_EQ(archive->config.b_tree_degree, 8);
