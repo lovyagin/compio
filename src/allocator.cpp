@@ -818,6 +818,15 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
 
 void block_allocator::force_defragmentation() {
     auto index_lock = archive_->index->get_lock();
+
+    // Flush caches before locking allocator to avoid deadlock.
+    // block::~block() calls allocate/deallocate which lock allocator_mutex.
+    if (archive_->file) {
+        archive_->block_reader->set_maintenance_mode(true);
+        archive_->block_reader->clear_cache();
+        archive_->index->_clear_cache();
+    }
+
     std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
 
     blocks_manager_.defragment();
@@ -825,6 +834,10 @@ void block_allocator::force_defragmentation() {
         perform_defragmentation();
     }
     last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+
+    if (archive_->file) {
+        archive_->block_reader->set_maintenance_mode(false);
+    }
 }
 
 void block_allocator::maintenance() {
@@ -842,9 +855,21 @@ void block_allocator::maintenance() {
              // This avoids deadlocks when called from within a B-tree operation (which holds the lock).
              return;
         }
+
+        // Flush caches before locking allocator to avoid deadlock.
+        // block::~block() calls allocate/deallocate which lock allocator_mutex.
+        if (archive_->file) {
+            archive_->block_reader->set_maintenance_mode(true);
+            archive_->block_reader->clear_cache();
+            archive_->index->_clear_cache();
+        }
+
         std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
 
         if (maintenance_suspended_ > 0) {
+            if (archive_->file) {
+                archive_->block_reader->set_maintenance_mode(false);
+            }
             return;
         }
 
@@ -858,6 +883,10 @@ void block_allocator::maintenance() {
             }
         }
         last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+
+        if (archive_->file) {
+            archive_->block_reader->set_maintenance_mode(false);
+        }
     } else {
         std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
         last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
@@ -916,9 +945,9 @@ bool block_allocator::needs_defragmentation() const {
 void block_allocator::perform_defragmentation() {
     // Flush all cached/dirty blocks to disk first so that every index entry
     // has a real physical address before we start moving data.
-    archive_->block_reader->set_maintenance_mode(true);
-    archive_->block_reader->clear_cache();
-    archive_->index->_clear_cache();
+    // NOTE: This must be done by the caller (maintenance/force_defragmentation)
+    // BEFORE holding allocator_mutex to avoid deadlocks, as clear_cache() triggers
+    // block destructors which call allocate/deallocate.
 
     // Collect B-tree node addresses so we don't overwrite them during compaction.
     // B-tree nodes and storage blocks share the same file address space.
@@ -1159,8 +1188,7 @@ void block_allocator::perform_defragmentation() {
     // addresses; any stale temporary_index entries would cause reads to use
     // wrong offsets.
     archive_->block_reader->invalidate_temporary_index();
-    archive_->block_reader->set_maintenance_mode(false);
-
+    
     DEBUG_PRINT("[AL] perform_defragmentation complete. New file size: %" PRIu64 "\n", write_pos);
 }
 
