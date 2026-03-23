@@ -99,7 +99,7 @@ private:
     std::mutex *io_mutex;
     compio::WalManager *wal;
     /** @brief LRU cache for storing frequently accessed nodes */
-    cache::lru_cache<uint64_t, shared_node> cache;
+    cache::sharded_lru_cache<uint64_t, shared_node> cache;
 };
 
 /**
