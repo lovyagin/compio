@@ -94,13 +94,12 @@ config.max_files = 4096;                            // Initial file table capaci
 
 ### Thread Safety
 
-The library is thread-safe for concurrent operations on the same archive:
-- **Concurrent Reads**: Multiple threads can read from different files (or same file) concurrently.
-- **Concurrent Writes**: Multiple threads can write to different files concurrently.
-- **Concurrent Read/Write**: Readers and writers can operate concurrently.
-- **Defragmentation**: Can run concurrently with other operations (locks only necessary regions).
+The library is thread-safe for multi-threaded use on the same archive, with the following guarantees:
+- **Concurrent Reads**: Multiple threads can read from different files (or the same file) in the same archive concurrently.
+- **Writes Are Exclusive**: Write operations (`compio_write` and related APIs) take an exclusive lock on the archive. While a write is in progress, other reads and writes on that archive are blocked.
+- **Defragmentation Is Exclusive**: `compio_defragment` also takes an exclusive lock on the archive. It cannot run concurrently with reads or writes on that archive.
 
-Note: `compio_config` setup is not thread-safe; initialize it before opening archive.
+Note: `compio_config` setup is not thread-safe; initialize it before opening an archive.
 
 ### Tools
 
