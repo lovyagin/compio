@@ -388,13 +388,20 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
 
         // 4. Max Files
+        bool is_v5 = (hdr.magic_number == 27110662);
         if (c->max_files == 0) {
              const_cast<compio_config&>(archive->config).max_files = hdr.ftable.max_files;
         } else if (hdr.ftable.max_files != static_cast<uint32_t>(c->max_files)) {
-            errno = EINVAL;
-            WARNING_PRINT("warning: max_files mismatch while opening archive (file=%u, config=%d)\n",
-                          hdr.ftable.max_files, c->max_files);
-            goto no_allocator;
+            if (!is_v5) {
+                errno = EINVAL;
+                WARNING_PRINT("warning: max_files mismatch while opening archive (file=%u, config=%d)\n",
+                              hdr.ftable.max_files, c->max_files);
+                goto no_allocator;
+            } else {
+                // For v5, max_files in config is just a hint or minimum.
+                // We adopt the actual capacity from the file.
+                const_cast<compio_config&>(archive->config).max_files = hdr.ftable.max_files;
+            }
         }
     }
 
@@ -459,7 +466,8 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     auto file_table_item = readonly(archive->header, header)->ftable.find(name);
     if (file_table_item == nullptr) {
         if (!archive->is_readonly()) {
-            file_table_item = archive->header->ftable.add(name);
+            bool allow_resize = (archive->header->magic_number == 27110662);
+            file_table_item = archive->header->ftable.add(name, allow_resize);
             if (file_table_item == NULL) {
                 errno = ENFILE;
                 return NULL;
@@ -1360,6 +1368,69 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     return bytes_erased;
 }
 
+static void sync_files_table(compio_archive *archive) {
+    if (!archive || !archive->header) return;
+
+    // Only applies to v5 format
+    if (archive->header->magic_number != 27110662) return;
+
+    // We need to check if we need to (re)allocate storage for the files table.
+    // Conditions:
+    // 1. files_table_addr is 0 (new archive)
+    // 2. files_table_capacity is less than current max_files (we grew in memory)
+    
+    uint32_t current_capacity = archive->header->ftable.max_files;
+    
+    if (archive->header->files_table_addr == 0 || 
+        archive->header->files_table_capacity < current_capacity) {
+        
+        // Calculate needed size
+        // Each entry is COMPIO_FNAME_MAX_SIZE (256) + sizeof(uint64_t) (8) = 264 bytes.
+        // We allocate for full capacity.
+        uint64_t needed_size = static_cast<uint64_t>(current_capacity) * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
+        
+        // Allocate space using allocator if available
+        uint64_t new_addr = 0;
+        if (archive->allocator) {
+             // We allocate raw space. This is not a "block" with compression.
+             // It is metadata.
+             // Using allocator->allocate(size) gives us a region.
+             new_addr = archive->allocator->allocate(needed_size);
+        } else {
+             // Fallback if no allocator (should not happen in write mode usually)
+             // Append to end of file
+             if (fseek64(archive->file, 0, SEEK_END) == 0) {
+                  new_addr = ftell64(archive->file);
+                  // Update header file_size if we append blindly?
+                  // Allocate usually handles file_size update if appending.
+                  // Here we do it manually.
+                  archive->header->file_size = std::max(archive->header->file_size, new_addr + needed_size);
+             }
+        }
+        
+        if (new_addr != 0 && new_addr != UINT64_MAX) {
+            // If we had an old address, should we free it?
+            if (archive->header->files_table_addr != 0) {
+                 // Free old table
+                 uint64_t old_size = static_cast<uint64_t>(archive->header->files_table_capacity) * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
+                 if (archive->allocator) {
+                     archive->allocator->deallocate(archive->header->files_table_addr, old_size);
+                 }
+            }
+            
+            archive->header->files_table_addr = new_addr;
+            archive->header->files_table_capacity = current_capacity;
+        } else {
+             WARNING_PRINT("warning: failed to allocate space for files table\n");
+        }
+    }
+    
+    // Always write the table content if we have an address
+    if (archive->header->files_table_addr != 0) {
+        archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
+    }
+}
+
 void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
@@ -1383,6 +1454,11 @@ void compio_flush(compio_archive *archive) {
     if (archive->block_reader) archive->block_reader->clear_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index) archive->index->clear_cache();
+
+    // Sync files table (allocate if needed, write to disk)
+    if (can_write) {
+        sync_files_table(archive);
+    }
 
     // Save allocator state (updates header fields)
     if (archive->allocator && can_write) {

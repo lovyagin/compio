@@ -44,11 +44,19 @@ struct files_table {
 
     const file *find(const char *name) const;
     file *find(const char *name);
-    file *add(const char *name);
+    file *add(const char *name, bool allow_resize = true);
     int remove(const char *name);
     
     // Rebuild the index_map from the current files vector
     void rebuild_index();
+
+    // Read from disk (external storage)
+    // capacity: number of slots allocated on disk
+    // n_files: number of used slots
+    bool read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64_t n_files);
+
+    // Write to disk (external storage)
+    void write_to(FILE *file, uint64_t addr) const;
 
 private:
     // Hash map for fast O(1) file lookups by name.
@@ -78,6 +86,8 @@ struct header : public infile_object {
     uint32_t block_size;       /**< Size of data blocks */
     uint32_t b_tree_degree;    /**< Degree of B-Tree index */
     uint64_t sequence_id;      /**< Monotonic counter for double-buffering updates */
+    uint64_t files_table_addr;     /**< Address of dynamic files table (v5+) */
+    uint32_t files_table_capacity; /**< Capacity of dynamic files table (v5+) */
     uint8_t checksum[32];      /**< SHA-256 checksum of the header (excluding this field) */
 
     /**
@@ -90,7 +100,7 @@ struct header : public infile_object {
     bool read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
-    /** @brief On-disk size of this header (depends on ftable.max_files) */
+    /** @brief On-disk size of this header */
     uint64_t disk_size() const;
 
     /** @brief Size reserved for headers (double buffering implies 2x disk_size) */

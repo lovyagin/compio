@@ -18,31 +18,26 @@
 namespace compio {
 
 uint8_t parse_mode(const char *mode) {
+    if (!mode || mode[0] == '\0') return 0;
+    
     uint8_t mode_b = 0;
     switch (mode[0]) {
-    case 'r':
-        mode_b |= mode_bit::r;
-        break;
-    case 'w':
-        mode_b |= mode_bit::w;
-        break;
-    case 'a':
-        mode_b |= mode_bit::a;
-        break;
-    default:
-        return 0;
+    case 'r': mode_b |= mode_bit::r; break;
+    case 'w': mode_b |= mode_bit::w; break;
+    case 'a': mode_b |= mode_bit::a; break;
+    default: return 0;
     }
 
-    switch (mode[1]) {
-    case '+':
-        mode_b |= mode_bit::plus;
-        break;
-    case 0:
-        break;
-    default:
-        return 0;
+    // Handle remaining chars
+    for (int i = 1; mode[i] != '\0'; ++i) {
+        if (mode[i] == '+') {
+            mode_b |= mode_bit::plus;
+        } else if (mode[i] == 'b') {
+            // ignore binary flag
+        } else {
+            return 0; // Invalid character
+        }
     }
-
     return mode_b;
 }
 

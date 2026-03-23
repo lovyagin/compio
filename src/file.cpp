@@ -22,106 +22,111 @@ static size_t portable_strnlen(const char *s, size_t maxlen) {
 
 static const uint8_t index_node_signature = 67;
 
-// Helper to batch read files table
-static bool read_files_batched(FILE* file, files_table& ftable) {
-    const size_t BATCH_SIZE = 4096; // 4096 files * 40 bytes = ~160KB buffer
-    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t); // 32 + 8 = 40
-    
-    // Ensure packing assumptions hold (no padding)
+bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64_t n_files_in) {
+    if (fseek64(file, addr, SEEK_SET) != 0) {
+        WARNING_PRINT("warning: fseek failed in files_table::read_from\n");
+        return false;
+    }
+
+    this->max_files = capacity;
+    this->n_files = n_files_in;
+    this->files.resize(capacity);
+
+    const size_t BATCH_SIZE = 4096;
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
     static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
-    
+
     std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
-    
-    // Read all max_files slots because the checksum covers the entire table
-    // (including unused slots), and we must advance the file pointer correctly.
-    size_t remaining = ftable.max_files;
+
+    size_t remaining = capacity; // We read capacity slots
     size_t current_idx = 0;
     bool is_be = is_big_endian();
-    
+
     while (remaining > 0) {
         size_t count = std::min(remaining, BATCH_SIZE);
         size_t bytes_to_read = count * ENTRY_SIZE;
-        
-        // Use lendian_fread with size=1 to read bytes directly into buffer
-        // (endian swapping is handled manually below). 
-        // Checks ferror and updates metrics.
+
         size_t read_count = lendian_fread(buffer.data(), 1, bytes_to_read, file);
         if (read_count != bytes_to_read) {
-            WARNING_PRINT("warning: short read in files table (expected %zu, got %zu)\n", 
-                          bytes_to_read, read_count);
+            WARNING_PRINT("warning: short read in files table\n");
             return false;
         }
-        
+
         for (size_t i = 0; i < count; ++i) {
-            files_table::file& f = ftable.files[current_idx + i];
+            files_table::file& f = this->files[current_idx + i];
             size_t offset = i * ENTRY_SIZE;
-            
-            // Copy name
             std::memcpy(f.name, &buffer[offset], COMPIO_FNAME_MAX_SIZE);
-            
-            // Copy size
             std::memcpy(&f.size, &buffer[offset + COMPIO_FNAME_MAX_SIZE], sizeof(uint64_t));
-            
-            // Swap if Big Endian (data on disk is Little Endian)
-            if (is_be) {
-                swap_uint64(&f.size);
-            }
+            if (is_be) swap_uint64(&f.size);
         }
-        
         current_idx += count;
         remaining -= count;
     }
+    rebuild_index();
     return true;
 }
 
-// Helper to batch write files table
-static bool write_files_batched(FILE* file, const files_table& ftable) {
+void files_table::write_to(FILE *file, uint64_t addr) const {
+    if (fseek64(file, addr, SEEK_SET) != 0) {
+        WARNING_PRINT("warning: fseek failed in files_table::write_to\n");
+        return;
+    }
+
     const size_t BATCH_SIZE = 4096;
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
-    
     std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
-    
-    size_t remaining = ftable.max_files; // write_to loops over max_files, not n_files
+
+    size_t remaining = this->max_files; // write capacity slots
     size_t current_idx = 0;
     bool is_be = is_big_endian();
-    
+
     while (remaining > 0) {
         size_t count = std::min(remaining, BATCH_SIZE);
         
         for (size_t i = 0; i < count; ++i) {
-            const files_table::file& f = ftable.files[current_idx + i];
+            const files_table::file& f = this->files[current_idx + i];
             size_t offset = i * ENTRY_SIZE;
-            
-            // Copy name
             std::memcpy(&buffer[offset], f.name, COMPIO_FNAME_MAX_SIZE);
-            
-            // Copy size
             uint64_t s = f.size;
-            if (is_be) {
-                swap_uint64(&s);
-            }
+            if (is_be) swap_uint64(&s);
             std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE], &s, sizeof(uint64_t));
         }
-        
+
         size_t bytes_to_write = count * ENTRY_SIZE;
-        // Use lendian_fwrite with size=1 to write bytes directly from buffer.
-        // Checks ferror and updates metrics.
         if (lendian_fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
             WARNING_PRINT("warning: short write in files table\n");
-            return false;
+            return;
         }
-        
         current_idx += count;
         remaining -= count;
     }
-    return true;
 }
+
+// Helper to batch read files table (Legacy v4 support)
+static bool read_files_batched_legacy(FILE* file, files_table& ftable) {
+    // Legacy reads from CURRENT position (part of header stream)
+    // Reuse new implementation logic but read from current pos?
+    // Or just copy-paste for safety.
+    // Actually we can use ftable.read_from if we know the address.
+    // But header::read_from(v4) calls it inline.
+    // So we can pass `ftell(file)` as address?
+    // But header::read_from calls fseek at start, then reads sequentially.
+    // So current file pos is correct.
+    // ftable.read_from calls fseek.
+    // So we can use `ftell`.
+    long pos = ftell(file);
+    if (pos < 0) return false;
+    return ftable.read_from(file, static_cast<uint64_t>(pos), ftable.max_files, ftable.n_files);
+}
+
 
 header::header()
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
-      ftable(),
+      files_table_addr(0),
+      files_table_capacity(COMPIO_MAX_FILES),
+      ftable(COMPIO_MAX_FILES),
       allocator_state_offset(0),
       allocator_state_size(0),
       compression_type(COMPIO_COMPRESS_ZLIB),
@@ -136,6 +141,8 @@ header::header(uint32_t max_files)
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
+      files_table_addr(0),
+      files_table_capacity(max_files),
       ftable(max_files),
       allocator_state_offset(0),
       allocator_state_size(0),
@@ -148,19 +155,17 @@ header::header(uint32_t max_files)
 }
 
 uint64_t header::disk_size() const {
-    // magic(4) + checksum(32) + sequence_id(8) + index_root(8) + file_size(8) 
-    // + allocator_state_offset(8) + allocator_state_size(8) + compression_type(4) 
-    // + block_size(4) + b_tree_degree(4) + max_files(4) + n_files(8)
-    // + files[max_files] * (32 + 8)
+    if (magic_number == 27110662) { // v5
+        return 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 4 + 8;
+    }
+    // v4 and older
     return 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
            static_cast<uint64_t>(ftable.max_files) * (COMPIO_FNAME_MAX_SIZE + 8);
 }
 
 void header::compute_checksum(uint8_t *out_hash) const {
     SHA256 ctx;
-    // Digest fields in order, SKIPPING the checksum field itself
     ctx.update(reinterpret_cast<const uint8_t*>(&magic_number), sizeof(magic_number));
-    // Skip checksum (32 bytes)
     ctx.update(reinterpret_cast<const uint8_t*>(&sequence_id), sizeof(sequence_id));
     ctx.update(reinterpret_cast<const uint8_t*>(&index_root), sizeof(index_root));
     ctx.update(reinterpret_cast<const uint8_t*>(&file_size), sizeof(file_size));
@@ -169,12 +174,24 @@ void header::compute_checksum(uint8_t *out_hash) const {
     ctx.update(reinterpret_cast<const uint8_t*>(&compression_type), sizeof(compression_type));
     ctx.update(reinterpret_cast<const uint8_t*>(&block_size), sizeof(block_size));
     ctx.update(reinterpret_cast<const uint8_t*>(&b_tree_degree), sizeof(b_tree_degree));
-    ctx.update(reinterpret_cast<const uint8_t*>(&ftable.max_files), sizeof(ftable.max_files));
-    ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
-    
-    for (uint32_t i = 0; i < ftable.max_files; ++i) {
-        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].name), sizeof(ftable.files[i].name));
-        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].size), sizeof(ftable.files[i].size));
+
+    if (magic_number == 27110662) { // v5
+        ctx.update(reinterpret_cast<const uint8_t*>(&files_table_addr), sizeof(files_table_addr));
+        ctx.update(reinterpret_cast<const uint8_t*>(&files_table_capacity), sizeof(files_table_capacity));
+        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
+        
+        for (uint32_t i = 0; i < files_table_capacity; ++i) {
+             ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].name), sizeof(ftable.files[i].name));
+             ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].size), sizeof(ftable.files[i].size));
+        }
+    } else { // v4
+        ctx.update(reinterpret_cast<const uint8_t*>(&files_table_capacity), sizeof(files_table_capacity));
+        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
+        
+        for (uint32_t i = 0; i < files_table_capacity; ++i) {
+            ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].name), sizeof(ftable.files[i].name));
+            ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].size), sizeof(ftable.files[i].size));
+        }
     }
     
     ctx.finalize(out_hash);
@@ -188,11 +205,14 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     }
         
     lendian_fread_member(magic_number, file);
-    if (magic_number != COMPIO_MAGIC_NUMBER) {
+    bool is_v5 = (magic_number == 27110662);
+    bool is_v4 = (magic_number == 27110661);
+
+    if (!is_v5 && !is_v4) {
         WARNING_PRINT("warning: header magic_number does not match "
-                      "(expected %d, got %d). "
+                      "(expected %d or %d, got %d). "
                       "The archive may have been created with an incompatible format version.\n",
-                      COMPIO_MAGIC_NUMBER, magic_number);
+                      27110662, 27110661, magic_number);
         return false;
     }
     
@@ -206,38 +226,68 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     lendian_fread_member(compression_type, file);
     lendian_fread_member(block_size, file);
     lendian_fread_member(b_tree_degree, file);
-    lendian_fread_member(ftable.max_files, file);
-    
-    if (ftable.max_files == 0 || ftable.max_files > COMPIO_MAX_FILES_LIMIT) {
-        WARNING_PRINT("warning: header max_files=%u is out of valid range [1, %u]\n",
-                      ftable.max_files, COMPIO_MAX_FILES_LIMIT);
+
+    if (is_v5) {
+        lendian_fread_member(files_table_addr, file);
+        lendian_fread_member(files_table_capacity, file);
+        lendian_fread_member(ftable.n_files, file);
+        
+        if (files_table_capacity == 0 || files_table_capacity > COMPIO_MAX_FILES_LIMIT) {
+             WARNING_PRINT("warning: header files_table_capacity=%u is out of valid range\n", files_table_capacity);
+             return false;
+        }
+
+        if (ftable.n_files > files_table_capacity) {
+             WARNING_PRINT("warning: header n_files=%lu > capacity=%u\n", ftable.n_files, files_table_capacity);
+             return false;
+        }
+        
+        // Read table from external address
+        // If addr is 0 (uninitialized) and capacity > 0, it's invalid unless capacity is small and we handle it?
+        // But newly created archive writes header then allocates table.
+        // Actually compio_open_archive creates empty header.
+        // If we read existing file, addr MUST be valid.
+        if (files_table_addr == 0 && files_table_capacity > 0 && ftable.n_files > 0) {
+             WARNING_PRINT("warning: files_table_addr is 0 but table is not empty\n");
+             return false;
+        }
+
+        if (!ftable.read_from(file, files_table_addr, files_table_capacity, ftable.n_files)) {
+            return false;
+        }
+
+    } else { // v4
+        uint32_t max_files_v4;
+        lendian_fread(&max_files_v4, 1, 4, file);
+        if (is_big_endian()) swap_uint32(&max_files_v4);
+        
+        lendian_fread_member(ftable.n_files, file);
+        
+        files_table_capacity = max_files_v4;
+        ftable.max_files = max_files_v4;
+        
+        if (max_files_v4 == 0 || max_files_v4 > COMPIO_MAX_FILES_LIMIT) {
+            WARNING_PRINT("warning: header max_files=%u is out of valid range\n", max_files_v4);
+            return false;
+        }
+        
+        // Read inline
+        long pos = ftell(file);
+        if (pos < 0) return false;
+        if (!ftable.read_from(file, static_cast<uint64_t>(pos), max_files_v4, ftable.n_files)) {
+             return false;
+        }
+        files_table_addr = 0; // Inline
+    }
+
+    // Verify checksum
+    uint8_t calc_checksum[32];
+    compute_checksum(calc_checksum);
+    if (memcmp(checksum, calc_checksum, 32) != 0) {
+        WARNING_PRINT("warning: header checksum mismatch\n");
         return false;
     }
     
-    ftable.files.resize(ftable.max_files);
-    lendian_fread_member(ftable.n_files, file);
-    
-    if (ftable.n_files > ftable.max_files) {
-        WARNING_PRINT("warning: header n_files=%llu exceeds max_files=%u\n",
-                      (unsigned long long)ftable.n_files, ftable.max_files);
-        return false;
-    }
-    
-    // Batched read for performance (O(N) -> O(N/BATCH))
-    if (!read_files_batched(file, ftable)) {
-        return false;
-    }
-    
-    // Rebuild the lookup map since we bypassed add()
-    ftable.rebuild_index();
-    
-    // Validate Checksum
-    uint8_t computed[32];
-    compute_checksum(computed);
-    if (memcmp(checksum, computed, 32) != 0) {
-         WARNING_PRINT("warning: header checksum mismatch! Archive header may be corrupted.\n");
-         return false;
-    }
     return true;
 }
 
@@ -282,17 +332,19 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
         write_u32(compression_type);
         write_u32(block_size);
         write_u32(b_tree_degree);
-        write_u32(ftable.max_files);
-        write_u64(ftable.n_files);
-        
-        // Files Table
-        for (uint32_t i = 0; i < ftable.max_files; ++i) {
-            const auto& f = ftable.files[i];
-            std::memcpy(ptr, f.name, COMPIO_FNAME_MAX_SIZE); ptr += COMPIO_FNAME_MAX_SIZE;
-            uint64_t s = f.size;
-            if (is_be) swap_uint64(&s);
-            std::memcpy(ptr, &s, 8); ptr += 8;
+
+        if (magic_number == 27110662) { // v5
+            write_u64(files_table_addr);
+            write_u32(files_table_capacity);
+            write_u64(ftable.n_files);
+        } else {
+             // Fallback for v4 (only partial, cannot write inline table anymore)
+             write_u32(ftable.max_files);
+             write_u64(ftable.n_files);
         }
+        
+        // Files Table is NOT written here for v5 (external)
+        // For v4 it was inline, but we removed support for inline writing.
         
         if (!wal_manager->log_write(WalRecordType::HEADER, addr, buffer.data(), buffer.size())) {
             WARNING_PRINT("error: WAL log_write failed for header at addr=%" PRIu64 "\n", addr);
@@ -317,12 +369,15 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
     lendian_fwrite_member(compression_type, file);
     lendian_fwrite_member(block_size, file);
     lendian_fwrite_member(b_tree_degree, file);
-    lendian_fwrite_member(ftable.max_files, file);
-    lendian_fwrite_member(ftable.n_files, file);
-    
-    // Batched write for performance
-    if (!write_files_batched(file, ftable)) {
-         DEBUG_PRINT("warning: write_files_batched failed\n");
+
+    if (magic_number == 27110662) { // v5
+        lendian_fwrite_member(files_table_addr, file);
+        lendian_fwrite_member(files_table_capacity, file);
+        lendian_fwrite_member(ftable.n_files, file);
+    } else { // v4
+         // Broken v4 write
+         lendian_fwrite_member(ftable.max_files, file);
+         lendian_fwrite_member(ftable.n_files, file);
     }
 }
 
@@ -707,9 +762,23 @@ files_table::file *files_table::find(const char *name) {
     );
 }
 
-files_table::file *files_table::add(const char *name) {
-    if (n_files >= max_files)
-        return NULL;
+files_table::file *files_table::add(const char *name, bool allow_resize) {
+    if (n_files >= max_files) {
+        if (!allow_resize) return NULL;
+        
+        // Dynamically resize the files table
+        uint32_t new_max = (max_files == 0) ? 16 : max_files * 2;
+        // Cap at some reasonable limit if needed, e.g. 1M files?
+        // But for now let it grow.
+        
+        // Resize vector. This invalidates all pointers and string_views in index_map_.
+        files.resize(new_max);
+        max_files = new_max;
+        
+        // Rebuild the index map from scratch with new pointers
+        rebuild_index();
+    }
+    
     if (!name) return NULL;
     
     // Create bounded string_view

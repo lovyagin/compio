@@ -25,11 +25,20 @@ TEST_F(MaxFilesTest, DiskSizeReflectsMaxFiles) {
     compio_archive *ar = compio_open_archive(fn, "w+", &cfg);
     ASSERT_NE(ar, nullptr);
 
-    const uint64_t expected =
-        4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
-        static_cast<uint64_t>(128) * (COMPIO_FNAME_MAX_SIZE + 8);
-    EXPECT_EQ(ar->header->disk_size(), expected);
-    EXPECT_EQ(ar->header->ftable.max_files, 128u);
+    bool is_v5 = (ar->header->magic_number == 27110662);
+    if (is_v5) {
+        // v5: header size is fixed (files table is external).
+        // Check that capacity is set correctly.
+        EXPECT_EQ(ar->header->files_table_capacity, 128u);
+        // Header size is constant (108 bytes).
+        EXPECT_EQ(ar->header->disk_size(), 108u);
+    } else {
+        const uint64_t expected =
+            4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
+            static_cast<uint64_t>(128) * (COMPIO_FNAME_MAX_SIZE + 8);
+        EXPECT_EQ(ar->header->disk_size(), expected);
+        EXPECT_EQ(ar->header->ftable.max_files, 128u);
+    }
 
     compio_close_archive(ar);
 }
@@ -62,13 +71,19 @@ TEST_F(MaxFilesTest, MaxFilesPersistsAcrossReopen) {
         compio_archive *ar = compio_open_archive(fn, "r", &cfg);
         ASSERT_NE(ar, nullptr);
 
-        EXPECT_EQ(ar->header->ftable.max_files, custom_max)
-            << "max_files should be read back from disk unchanged";
+        bool is_v5 = (ar->header->magic_number == 27110662);
+        if (is_v5) {
+             EXPECT_EQ(ar->header->files_table_capacity, custom_max);
+             EXPECT_EQ(ar->header->disk_size(), 108u);
+        } else {
+             EXPECT_EQ(ar->header->ftable.max_files, custom_max)
+                 << "max_files should be read back from disk unchanged";
 
-        const uint64_t expected =
-            4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
-            static_cast<uint64_t>(custom_max) * (COMPIO_FNAME_MAX_SIZE + 8);
-        EXPECT_EQ(ar->header->disk_size(), expected);
+             const uint64_t expected =
+                 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
+                 static_cast<uint64_t>(custom_max) * (COMPIO_FNAME_MAX_SIZE + 8);
+             EXPECT_EQ(ar->header->disk_size(), expected);
+        }
 
         compio_close_archive(ar);
     }

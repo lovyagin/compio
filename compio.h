@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#define COMPIO_MAGIC_NUMBER 27110661 /**< Bumped in format v4 (double-buffered header with strict reservation) */
+#define COMPIO_MAGIC_NUMBER 27110662 /**< Bumped in format v5 (dynamic files table) */
 
 /**
  * @brief Checksum algorithm types
