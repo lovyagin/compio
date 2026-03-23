@@ -817,8 +817,12 @@ void block_allocator::force_defragmentation() {
 }
 
 void block_allocator::maintenance() {
-    if (maintenance_suspended_ > 0) {
-        return;
+    {
+        // Ensure the suspended flag is read under the same mutex used for allocator state
+        std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
+        if (maintenance_suspended_ > 0) {
+            return;
+        }
     }
 
     uint8_t current_fragmentation = get_fragmentation();
