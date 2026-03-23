@@ -90,7 +90,9 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
 
     // Optimization: Bulk write if Little Endian
     if (!is_be) {
-        if (fwrite(this->files.data(), ENTRY_SIZE, this->files.size(), file) != this->files.size()) {
+        assert(this->files.size() >= this->max_files);
+        size_t entries_to_write = this->max_files;
+        if (fwrite(this->files.data(), ENTRY_SIZE, entries_to_write, file) != entries_to_write) {
             WARNING_PRINT("warning: short write in files table (bulk)\n");
         }
         return;
