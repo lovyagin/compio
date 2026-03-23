@@ -688,13 +688,13 @@ block_allocator::block_allocator(compio_archive *archive, WalManager *wal)
 
 uint8_t block_allocator::get_fragmentation() const {
     if (!archive_) return 0;
-    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
+    std::shared_lock<std::shared_mutex> lock(archive_->allocator_mutex);
     return blocks_manager_.get_cached_fragmentation();
 }
 
 free_blocks_manager::fragmentation_stats block_allocator::get_fragmentation_stats() const {
     if (!archive_) return {};
-    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
+    std::shared_lock<std::shared_mutex> lock(archive_->allocator_mutex);
     return blocks_manager_.get_fragmentation_stats();
 }
 
@@ -703,7 +703,7 @@ uint64_t block_allocator::allocate(uint64_t size) {
         return UINT64_MAX;
     }
 
-    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
+    std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
 
     try {
         // Convert allocation strategy from config to internal enum
@@ -753,14 +753,20 @@ uint64_t block_allocator::allocate(uint64_t size) {
     }
 }
 
+void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+    deallocate(offset, size, true);
+}
+
 void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_maintenance) {
     if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
         return;
     }
 
-    std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
-    
-    // Validate bounds using the cached file size pointer to avoid locking header_mutex
+    bool run_maintenance = false;
+    {
+        std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+
+        // Validate bounds using the cached file size pointer to avoid locking header_mutex
     // (which could cause deadlocks if held by caller).
     const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
     if (file_size_ptr) {
@@ -801,13 +807,18 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
     
     // Check if defragmentation is needed (throttled to avoid O(N) cost on every dealloc)
     if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
+        run_maintenance = true;
+    }
+    }
+
+    if (run_maintenance) {
         maintenance();
     }
 }
 
 void block_allocator::force_defragmentation() {
     auto index_lock = archive_->index->get_lock();
-    std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
+    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
 
     blocks_manager_.defragment();
     if (archive_->file && archive_->index) {
@@ -817,12 +828,8 @@ void block_allocator::force_defragmentation() {
 }
 
 void block_allocator::maintenance() {
-    {
-        // Ensure the suspended flag is read under the same mutex used for allocator state
-        std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
-        if (maintenance_suspended_ > 0) {
-            return;
-        }
+    if (maintenance_suspended_ > 0) {
+        return;
     }
 
     uint8_t current_fragmentation = get_fragmentation();
@@ -835,7 +842,11 @@ void block_allocator::maintenance() {
              // This avoids deadlocks when called from within a B-tree operation (which holds the lock).
              return;
         }
-        std::lock_guard<std::recursive_mutex> alloc_lock(archive_->allocator_mutex);
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+
+        if (maintenance_suspended_ > 0) {
+            return;
+        }
 
         if (blocks_manager_.get_cached_fragmentation() > threshold) {
             blocks_manager_.defragment();
@@ -848,7 +859,7 @@ void block_allocator::maintenance() {
         }
         last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
     } else {
-        std::lock_guard<std::recursive_mutex> lock(archive_->allocator_mutex);
+        std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
         last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
     }
 }
@@ -857,7 +868,7 @@ bool block_allocator::save_state(compio_archive *archive) {
     if (!archive) {
         return false;
     }
-    std::lock_guard<std::recursive_mutex> alloc_lock(archive->allocator_mutex);
+    std::unique_lock<std::shared_mutex> alloc_lock(archive->allocator_mutex);
     std::lock_guard<std::mutex> head_lock(archive->header_mutex);
     std::lock_guard<std::mutex> io_lock(archive->io_mutex);
     
@@ -890,7 +901,7 @@ bool block_allocator::load_state(compio_archive *archive) {
     if (!archive) {
         return false;
     }
-    std::lock_guard<std::recursive_mutex> alloc_lock(archive->allocator_mutex);
+    std::unique_lock<std::shared_mutex> alloc_lock(archive->allocator_mutex);
     std::lock_guard<std::mutex> head_lock(archive->header_mutex);
     std::lock_guard<std::mutex> io_lock(archive->io_mutex);
     return blocks_manager_.load_from_file(archive);

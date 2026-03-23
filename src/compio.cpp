@@ -527,9 +527,12 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         const auto& all_blocks = *all_blocks_opt;
 
     // Suspend maintenance to avoid re-entry during block removal
-    if (archive->allocator) {
-        archive->allocator->suspend_maintenance();
-    }
+    // Use RAII guard to ensure maintenance is resumed even if an error occurs
+    struct MaintenanceGuard {
+        block_allocator* alloc;
+        MaintenanceGuard(block_allocator* a) : alloc(a) { if(alloc) alloc->suspend_maintenance(); }
+        ~MaintenanceGuard() { if(alloc) alloc->resume_maintenance(); }
+    } maintenance_guard(archive->allocator);
 
     // Iterate over all blocks of the file
     {
@@ -551,7 +554,9 @@ int compio_remove_file(compio_archive *archive, const char *name) {
                     archive->index->remove(key);
 
                     // Deallocate. Maintenance is suspended globally, so this won't trigger defrag.
-                    archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size);
+                    // Use overloaded deallocate with explicit false for perform_maintenance, although
+                    // suspended state also prevents it.
+                    archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size, false);
                 } else {
                     WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
                     if (saved_pos >= 0) {
@@ -570,11 +575,6 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         if (saved_pos >= 0) {
             fseek64(archive->file, saved_pos, SEEK_SET);
         }
-    }
-
-    // Resume maintenance (this will trigger maintenance if needed)
-    if (archive->allocator) {
-        archive->allocator->resume_maintenance();
     }
     } // End if (file_size > 0)
     
