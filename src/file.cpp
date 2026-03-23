@@ -32,15 +32,26 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64
     this->n_files = n_files_in;
     this->files.resize(capacity);
 
-    const size_t BATCH_SIZE = 4096;
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
     static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
 
+    bool is_be = is_big_endian();
+
+    // Optimization: Bulk read if Little Endian
+    if (!is_be) {
+        if (fread(this->files.data(), ENTRY_SIZE, capacity, file) != capacity) {
+            WARNING_PRINT("warning: short read in files table (bulk)\n");
+            return false;
+        }
+        rebuild_index();
+        return true;
+    }
+
+    const size_t BATCH_SIZE = 4096;
     std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
 
     size_t remaining = capacity; // We read capacity slots
     size_t current_idx = 0;
-    bool is_be = is_big_endian();
 
     while (remaining > 0) {
         size_t count = std::min(remaining, BATCH_SIZE);
@@ -72,13 +83,24 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
         return;
     }
 
-    const size_t BATCH_SIZE = 4096;
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
+    static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
+
+    bool is_be = is_big_endian();
+
+    // Optimization: Bulk write if Little Endian
+    if (!is_be) {
+        if (fwrite(this->files.data(), ENTRY_SIZE, this->files.size(), file) != this->files.size()) {
+            WARNING_PRINT("warning: short write in files table (bulk)\n");
+        }
+        return;
+    }
+
+    const size_t BATCH_SIZE = 4096;
     std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
 
     size_t remaining = this->max_files; // write capacity slots
     size_t current_idx = 0;
-    bool is_be = is_big_endian();
 
     while (remaining > 0) {
         size_t count = std::min(remaining, BATCH_SIZE);
@@ -397,15 +419,24 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
         DEBUG_PRINT("warning: fseek failed\n");
         return false;
     }
-    uint8_t signature;
-    if (lendian_fread(&signature, sizeof(signature), 1, file) != 1) return false;
+
+    // Optimization: Read header (6 bytes)
+    uint8_t header_buf[6];
+    if (fread(header_buf, 1, 6, file) != 6) return false;
+
+    uint8_t signature = header_buf[0];
     if (signature != index_node_signature) {
         WARNING_PRINT("warning: index_node signature does not match\n");
         return false;
     }
-    if (lendian_fread_member(is_leaf, file) != 1) return false;
-    if (lendian_fread_member(num_keys, file) != 1) return false;
+    is_leaf = header_buf[1];
     
+    // Read num_keys (LE)
+    num_keys = static_cast<uint32_t>(header_buf[2]) |
+               (static_cast<uint32_t>(header_buf[3]) << 8) |
+               (static_cast<uint32_t>(header_buf[4]) << 16) |
+               (static_cast<uint32_t>(header_buf[5]) << 24);
+
     // Sanity check num_keys
     if (num_keys > 2 * (uint32_t)tree_degree - 1) {
         WARNING_PRINT("error: index_node num_keys %u exceeds max %u (degree=%d)\n", 
@@ -420,18 +451,44 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
         key_additions.resize(num_keys + 1);
     }
 
-    for (auto &key : keys) {
-        if (lendian_fread_member(key.hash, file) != 1) return false;
-        if (lendian_fread_member(key.pos, file) != 1) return false;
+    bool is_be = is_big_endian();
+
+    // Batch read keys (num_keys * 16 bytes)
+    if (num_keys > 0) {
+        if (fread(keys.data(), sizeof(tree_key), num_keys, file) != num_keys) return false;
+        if (is_be) {
+            for (auto &key : keys) {
+                swap_uint64(&key.hash);
+                swap_uint64(&key.pos);
+            }
+        }
     }
-    for (auto &value : values) {
-        if (lendian_fread_member(value.addr, file) != 1) return false;
-        if (lendian_fread_member(value.size, file) != 1) return false;
+
+    // Batch read values (num_keys * 16 bytes)
+    if (num_keys > 0) {
+        if (fread(values.data(), sizeof(tree_val), num_keys, file) != num_keys) return false;
+        if (is_be) {
+            for (auto &val : values) {
+                swap_uint64(&val.addr);
+                swap_uint64(&val.size);
+            }
+        }
     }
+
     if (!is_leaf) {
-        if (lendian_fread(children.data(), sizeof(uint64_t), children.size(), file) != children.size()) return false;
-        if (lendian_fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file) != key_additions.size()) return false;
+        // Batch read children
+        if (fread(children.data(), sizeof(uint64_t), children.size(), file) != children.size()) return false;
+        if (is_be) {
+            for (auto &child : children) swap_uint64(&child);
+        }
+
+        // Batch read key_additions
+        if (fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file) != key_additions.size()) return false;
+        if (is_be) {
+            for (auto &add : key_additions) swap_uint64((uint64_t*)&add);
+        }
     }
+
     validate();
     return true;
 }
@@ -440,19 +497,22 @@ void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
     DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, (uint64_t)INDEX_NODE_SIZE(tree_degree));
     validate();
     
-    std::vector<uint8_t> buffer;
-    buffer.reserve(4096); 
+    // Calculate total size needed
+    size_t total_size = INDEX_NODE_METASIZE;
+    total_size += keys.size() * sizeof(tree_key);
+    total_size += values.size() * sizeof(tree_val);
+    if (!is_leaf) {
+        total_size += children.size() * sizeof(uint64_t);
+        total_size += key_additions.size() * sizeof(int64_t);
+    }
 
+    std::vector<uint8_t> buffer;
+    buffer.reserve(total_size); 
+
+    // Header (manually serialized to ensure LE)
     auto push_u8 = [&](uint8_t v) { buffer.push_back(v); };
     auto push_u32 = [&](uint32_t v) { 
         for(int i=0; i<4; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
-    };
-    auto push_u64 = [&](uint64_t v) { 
-        for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(v >> (i*8))); 
-    };
-    auto push_i64 = [&](int64_t v) { 
-        uint64_t uv = static_cast<uint64_t>(v);
-        for(int i=0; i<8; ++i) buffer.push_back(static_cast<uint8_t>(uv >> (i*8))); 
     };
 
     push_u8(index_node_signature);
@@ -462,21 +522,43 @@ void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
     assert(num_keys == actual_num_keys);
     push_u32(actual_num_keys);
     
-    for (auto &key : keys) {
-        push_u64(key.hash);
-        push_u64(key.pos);
+    bool is_be = is_big_endian();
+
+    // Helper to append vector data
+    auto append_vector = [&](const void* data, size_t size, size_t count, bool swap_64) {
+        size_t byte_count = size * count;
+        size_t current_pos = buffer.size();
+        buffer.resize(current_pos + byte_count);
+        std::memcpy(buffer.data() + current_pos, data, byte_count);
+        
+        if (is_be && swap_64) {
+            // Swap 64-bit values in place
+            uint64_t* ptr = reinterpret_cast<uint64_t*>(buffer.data() + current_pos);
+            // Assuming strict 64-bit alignment/size for all swapped fields here
+            // keys: 2x u64
+            // values: 2x u64
+            // children: 1x u64
+            // additions: 1x i64 (u64)
+            size_t u64_count = byte_count / 8;
+            for (size_t i = 0; i < u64_count; ++i) {
+                swap_uint64(&ptr[i]);
+            }
+        }
+    };
+
+    if (!keys.empty()) {
+        append_vector(keys.data(), sizeof(tree_key), keys.size(), true);
     }
-    for (auto &value : values) {
-        push_u64(value.addr);
-        push_u64(value.size);
+    if (!values.empty()) {
+        append_vector(values.data(), sizeof(tree_val), values.size(), true);
     }
     
     if (!is_leaf) {
-        for (auto &child : children) {
-            push_u64(child);
+        if (!children.empty()) {
+            append_vector(children.data(), sizeof(uint64_t), children.size(), true);
         }
-        for (auto &add : key_additions) {
-            push_i64(add);
+        if (!key_additions.empty()) {
+            append_vector(key_additions.data(), sizeof(int64_t), key_additions.size(), true);
         }
     }
 
@@ -548,10 +630,27 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         DEBUG_PRINT("warning: fseek failed\n");
         return false;
     }
-    uint8_t signature;
-    if (lendian_fread(&signature, sizeof(signature), 1, file) != 1) {
+
+    // Optimization: Read all metadata in one go (22 bytes)
+    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE];
+    if (lendian_fread(meta_buffer, 1, STORAGE_BLOCK_METASIZE, file) != STORAGE_BLOCK_METASIZE) {
         return false;
     }
+
+    size_t meta_idx = 0;
+    auto read_u8 = [&]() { return meta_buffer[meta_idx++]; };
+    auto read_u32 = [&]() {
+        uint32_t v = 0;
+        for(int i=0; i<4; ++i) v |= (static_cast<uint32_t>(meta_buffer[meta_idx++]) << (i*8));
+        return v;
+    };
+    auto read_u64 = [&]() {
+        uint64_t v = 0;
+        for(int i=0; i<8; ++i) v |= (static_cast<uint64_t>(meta_buffer[meta_idx++]) << (i*8));
+        return v;
+    };
+
+    uint8_t signature = read_u8();
     if (signature == storage_block::signature) {
         checksum_type = COMPIO_CHECKSUM_FNV1A;
     } else if (signature == storage_block::signature_crc32c) {
@@ -560,12 +659,14 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         WARNING_PRINT("warning: storage_block signature does not match (got %d)\n", signature);
         return false;
     }
-    if (lendian_fread_member(is_compressed, file) != 1) return false;
+
+    is_compressed = read_u8();
     if (is_compressed > 1) {
         WARNING_PRINT("error: storage_block is_compressed invalid (%u) at addr=%" PRIu64 "\n", is_compressed, addr);
         return false;
     }
-    if (lendian_fread_member(size, file) != 1) return false;
+
+    size = read_u64();
     if (size == 0) {
         WARNING_PRINT("error: storage_block size is 0 at addr=%" PRIu64 "\n", addr);
         return false;
@@ -580,8 +681,10 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         return false;
     }
 
-    if (lendian_fread_member(original_size, file) != 1) return false;
-    if (lendian_fread_member(checksum, file) != 1) return false;
+    original_size = read_u64();
+    checksum = read_u32();
+
+    assert(meta_idx == STORAGE_BLOCK_METASIZE);
 
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     if (lendian_fread(data.get(), 1, size, file) != size) {
