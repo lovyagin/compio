@@ -182,7 +182,10 @@ typedef struct {
                                         percentage (1-100) */
     int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).
                         The table grows dynamically, so this is not a hard limit.
-                        Set to 0 to use the default capacity. */
+                        For archives using the v5 dynamic files table, this capacity may grow
+                        beyond the initial value (subject to the hard upper bound COMPIO_MAX_FILES_LIMIT).
+                        For legacy/fixed-table formats, the on-disk files table size is fixed, so this
+                        may act as an effective limit. Set to 0 to use the default capacity. */
     uint64_t wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
     compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
     compio_wal_sync_mode wal_sync_mode; /**< WAL synchronization mode */

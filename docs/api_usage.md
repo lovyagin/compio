@@ -71,6 +71,8 @@ compio_close_archive(archive);
 
 ```c
 compio_config config;
+compio_build_default_config(&config);       // Initialize with defaults first!
+
 config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
 config.block_size__minimum = 512;                   // Minumum block size in bytes
