@@ -71,6 +71,8 @@ compio_close_archive(archive);
 
 ```c
 compio_config config;
+compio_build_default_config(&config);       // Initialize with defaults first!
+
 config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
 config.block_size__minimum = 512;                   // Minumum block size in bytes
@@ -80,6 +82,9 @@ config.cache_size__blocks = 8192;                   // Storage block cache
 config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT; // Allocation strategy
 config.fragmentation_threshold = 30;                // Defrag threshold (%)
 config.fill_holes_with_zeros = false;               // Zero-fill freed blocks
+config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;      // WAL synchronization mode (ALWAYS, NORMAL, OFF)
+config.wal_max_size_bytes = 64 * 1024 * 1024;       // Max WAL size before checkpoint
+config.max_files = 4096;                            // Initial file table capacity (grows dynamically)
 ```
 
 ### Allocation Strategies
@@ -89,3 +94,37 @@ config.fill_holes_with_zeros = false;               // Zero-fill freed blocks
 - `COMPIO_ALLOC_WORST_FIT` - Use largest suitable free block
 - `COMPIO_ALLOC_NEXT_FIT` - Continue from last allocation position
 
+### Thread Safety
+
+The library is thread-safe for multi-threaded use on the same archive, with the following guarantees:
+- **Concurrent Reads**: Multiple threads can read from different files (or the same file) in the same archive concurrently.
+- **Writes Are Exclusive**: Write operations (`compio_write` and related APIs) take an exclusive lock on the archive. While a write is in progress, other reads and writes on that archive are blocked.
+- **Defragmentation Is Exclusive**: `compio_defragment` also takes an exclusive lock on the archive. It cannot run concurrently with reads or writes on that archive.
+
+Note: `compio_config` setup is not thread-safe; initialize it before opening an archive.
+
+### Tools
+
+#### compio_repair
+
+A CLI tool to recover data from corrupted archives.
+
+```bash
+# Basic usage
+./compio_repair input_archive.cmp output_directory/
+
+# It attempts to recover files even if the header or index is corrupted.
+```
+
+#### compio_unpack
+
+A CLI tool to extract all files from a valid archive.
+
+```bash
+# Basic usage
+./compio_unpack input_archive.cmp output_directory_prefix/
+
+# Extracts all files from the archive to the specified location.
+# Note: output_directory_prefix is a prefix, so if you want a directory, end it with /
+# Example: ./compio_unpack archive.cmp extracted/
+```

@@ -180,9 +180,12 @@ typedef struct {
     bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */
     uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
                                         percentage (1-100) */
-    int max_files; /**< Maximum number of files in a single archive (default: COMPIO_MAX_FILES).
-360.                         Set to 0 to use the default limit (COMPIO_MAX_FILES) when creating a new archive,
-361.                         or to read the limit from the archive header when opening an existing one. */
+    int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).
+                        The table grows dynamically, so this is not a hard limit.
+                        For archives using the v5 dynamic files table, this capacity may grow
+                        beyond the initial value (subject to the hard upper bound COMPIO_MAX_FILES_LIMIT).
+                        For legacy/fixed-table formats, the on-disk files table size is fixed, so this
+                        may act as an effective limit. Set to 0 to use the default capacity. */
     uint64_t wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
     compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
     compio_wal_sync_mode wal_sync_mode; /**< WAL synchronization mode */

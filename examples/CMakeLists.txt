@@ -19,7 +19,7 @@ set_target_properties(cpp_wrapper_example PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-# Recovery tool
-add_executable(compio_repair compio_repair.cpp)
-target_link_libraries(compio_repair PRIVATE compio)
-target_include_directories(compio_repair PRIVATE ${CMAKE_SOURCE_DIR})
+# Recovery tool example
+add_executable(repair_example compio_repair.cpp)
+target_link_libraries(repair_example PRIVATE compio)
+target_include_directories(repair_example PRIVATE ${CMAKE_SOURCE_DIR})
