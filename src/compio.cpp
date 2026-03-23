@@ -526,7 +526,16 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         }
         const auto& all_blocks = *all_blocks_opt;
 
-        // Save current file position
+    // Suspend maintenance to avoid re-entry during block removal
+    // Use RAII guard to ensure maintenance is resumed even if an error occurs
+    struct MaintenanceGuard {
+        block_allocator* alloc;
+        MaintenanceGuard(block_allocator* a) : alloc(a) { if(alloc) alloc->suspend_maintenance(); }
+        ~MaintenanceGuard() { if(alloc) alloc->resume_maintenance(); }
+    } maintenance_guard(archive->allocator);
+
+    // Iterate over all blocks of the file
+    {
         int64_t saved_pos = ftell64(archive->file);
 
         // Deallocate all blocks and remove them from index
@@ -541,8 +550,13 @@ int compio_remove_file(compio_archive *archive, const char *name) {
                 // Read storage_block metadata to get compressed size
                 storage_block sb;
                 if (sb.read_from(archive->file, val.addr)) {
-                    // Deallocate: metadata + compressed data size
-                    archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size);
+                    // Remove block from B-tree index BEFORE deallocating.
+                    archive->index->remove(key);
+
+                    // Deallocate. Maintenance is suspended globally, so this won't trigger defrag.
+                    // Use overloaded deallocate with explicit false for perform_maintenance, although
+                    // suspended state also prevents it.
+                    archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size, false);
                 } else {
                     WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
                     if (saved_pos >= 0) {
@@ -551,10 +565,10 @@ int compio_remove_file(compio_archive *archive, const char *name) {
                     errno = EIO;
                     return -1;
                 }
+            } else {
+                // Remove block from B-tree index (if addr is 0, it's still in index)
+                archive->index->remove(key);
             }
-
-            // Remove block from B-tree index
-            archive->index->remove(key);
         }
 
         // Restore file position
@@ -562,7 +576,8 @@ int compio_remove_file(compio_archive *archive, const char *name) {
             fseek64(archive->file, saved_pos, SEEK_SET);
         }
     }
-
+    } // End if (file_size > 0)
+    
     // Remove file from file table
     return archive->header->ftable.remove(name);
 }

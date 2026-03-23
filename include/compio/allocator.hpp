@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <atomic>
 
 #include "compio.h"
 
@@ -407,9 +408,30 @@ public:
     void deallocate(uint64_t offset, uint64_t size);
 
     /**
+     * @brief Release storage block with maintenance control
+     * @param offset Block start offset
+     * @param size Block size
+     * @param perform_maintenance Trigger maintenance (defragmentation) after deallocation?
+     */
+    void deallocate(uint64_t offset, uint64_t size, bool perform_maintenance);
+
+    /**
      * @brief Perform maintenance operations if needed
      */
     void maintenance();
+
+    /**
+     * @brief Suspend automatic maintenance operations (e.g. during file removal)
+     */
+    void suspend_maintenance() { maintenance_suspended_++; }
+
+    /**
+     * @brief Resume automatic maintenance operations
+     */
+    void resume_maintenance() { 
+        if (maintenance_suspended_ > 0) maintenance_suspended_--; 
+        if (maintenance_suspended_ == 0) maintenance();
+    }
 
     /**
      * @brief Force defragmentation unconditionally (ignores fragmentation threshold).
@@ -443,6 +465,7 @@ private:
     free_blocks_manager blocks_manager_; /**< Free blocks manager */
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
     uint64_t deallocate_count_ = 0;      /**< Counter to throttle maintenance checks */
+    std::atomic<int> maintenance_suspended_{0};      /**< Maintenance suspension counter */
 
     /**
      * @brief Check if defragmentation is needed

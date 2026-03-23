@@ -61,6 +61,31 @@ TEST_F(FileRemovalTest, RemoveFileFreesBlocks) {
     compio_close_archive(archive);
 }
 
+TEST_F(FileRemovalTest, RemoveFileWithManyBlocksTriggersMaintenanceCheck) {
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+
+    // Create a file with > 128 blocks to trigger maintenance checks (threshold 64)
+    compio_file* file = compio_open_file("many_blocks.txt", archive);
+    ASSERT_NE(file, nullptr);
+
+    const int num_blocks = 150;
+    const int block_size = 1024; // Ensure consistent block size
+    std::vector<uint8_t> buffer(block_size, 'A');
+
+    for (int i = 0; i < num_blocks; ++i) {
+         compio_write(buffer.data(), block_size, file);
+    }
+    compio_close_file(file);
+    compio_flush(archive);
+
+    // Remove should succeed without error/crash despite maintenance triggers
+    // The allocator should suspend maintenance, so no actual defrag happens during removal loop
+    EXPECT_EQ(compio_remove_file(archive, "many_blocks.txt"), 0);
+
+    compio_close_archive(archive);
+}
+
 TEST_F(FileRemovalTest, RemoveNonexistentFile) {
     compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
     ASSERT_NE(archive, nullptr);
