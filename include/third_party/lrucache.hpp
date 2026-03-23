@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <list>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include <optional>
@@ -187,6 +188,7 @@ public:
 
     double get_hit_probability() const {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (_total_count == 0) return 0.0;
         return static_cast<double>(_hit_count) / _total_count;
     }
 
@@ -332,11 +334,19 @@ public:
     sharded_lru_cache(size_t max_size, size_t num_shards = 16)
         : _max_size(max_size), _num_shards(num_shards) {
         if (_num_shards == 0) _num_shards = 1;
-        size_t per_shard = (_max_size + _num_shards - 1) / _num_shards;
-        if (per_shard == 0) per_shard = 1;
+        // For small caches, use a single shard to preserve associativity and avoid
+        // thrashing due to collisions in small buckets (effectively direct-mapped).
+        if (_max_size < _num_shards * 4) {
+            _num_shards = 1;
+        }
+        
+        size_t per_shard = _num_shards > 0 ? _max_size / _num_shards : 0;
+        size_t remainder = _num_shards > 0 ? _max_size % _num_shards : 0;
+
         _shards.reserve(_num_shards);
         for (size_t i = 0; i < _num_shards; ++i) {
-            _shards.emplace_back(new lru_cache_unordered<key_t, value_t, hasher, key_equal>(per_shard));
+            size_t shard_size = per_shard + (i < remainder ? 1 : 0);
+            _shards.emplace_back(new lru_cache_unordered<key_t, value_t, hasher, key_equal>(shard_size));
         }
     }
 
@@ -378,11 +388,12 @@ public:
 
 private:
     lru_cache_unordered<key_t, value_t, hasher, key_equal>* get_shard(const key_t &key) const {
-        return _shards[hasher()(key) % _num_shards].get();
+        return _shards[_hasher(key) % _num_shards].get();
     }
 
     size_t _max_size;
     size_t _num_shards;
+    hasher _hasher;
     std::vector<std::unique_ptr<lru_cache_unordered<key_t, value_t, hasher, key_equal>>> _shards;
 };
 
