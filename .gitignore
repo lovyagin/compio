@@ -97,3 +97,7 @@ docs/html/**
 tests/compio_gtest
 
 vcpkg/*
+
+# Benchmark results
+fragmentation_results.csv
+fragmentation_results_report.txt
