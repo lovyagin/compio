@@ -487,7 +487,12 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
         // Batch read key_additions
         if (fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file) != key_additions.size()) return false;
         if (is_be) {
-            for (auto &add : key_additions) swap_uint64((uint64_t*)&add);
+            for (auto &add : key_additions) {
+                uint64_t tmp;
+                std::memcpy(&tmp, &add, sizeof(int64_t));
+                swap_uint64(&tmp);
+                std::memcpy(&add, &tmp, sizeof(int64_t));
+            }
         }
     }
 
@@ -534,16 +539,14 @@ void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
         std::memcpy(buffer.data() + current_pos, data, byte_count);
         
         if (is_be && swap_64) {
-            // Swap 64-bit values in place
-            uint64_t* ptr = reinterpret_cast<uint64_t*>(buffer.data() + current_pos);
-            // Assuming strict 64-bit alignment/size for all swapped fields here
-            // keys: 2x u64
-            // values: 2x u64
-            // children: 1x u64
-            // additions: 1x i64 (u64)
+            // Swap 64-bit values in place without assuming alignment or strict aliasing
+            uint8_t* base = buffer.data() + current_pos;
             size_t u64_count = byte_count / 8;
             for (size_t i = 0; i < u64_count; ++i) {
-                swap_uint64(&ptr[i]);
+                uint64_t tmp;
+                std::memcpy(&tmp, base + i * 8, sizeof(tmp));
+                swap_uint64(&tmp);
+                std::memcpy(base + i * 8, &tmp, sizeof(tmp));
             }
         }
     };
