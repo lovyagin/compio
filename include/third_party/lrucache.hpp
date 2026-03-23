@@ -312,6 +312,9 @@ public:
 
     double get_hit_probability() const {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (_total_count == 0) {
+            return 0.0;
+        }
         return static_cast<double>(_hit_count) / _total_count;
     }
 
