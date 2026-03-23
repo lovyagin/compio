@@ -995,7 +995,7 @@ void block_allocator::perform_defragmentation() {
     uint64_t ft_size = 0;
     {
         const auto &hdr = readonly(archive_->header, header);
-        if (hdr->magic_number == 27110662) {
+        if (hdr->magic_number == COMPIO_MAGIC_NUMBER) {
              ft_addr = hdr->files_table_addr;
              // Capacity is header->files_table_capacity. Entry size is COMPIO_FNAME_MAX_SIZE + 8.
              // We use a safe estimate or exact size.

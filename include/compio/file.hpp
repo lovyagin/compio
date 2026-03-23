@@ -63,7 +63,8 @@ private:
     // Maps filename (std::string_view) to index in 'files' vector.
     // Transient (not serialized to disk), rebuilt on load/add/remove.
     // Key points to storage inside 'files' vector, so pointers must be stable.
-    // Since 'files' is pre-allocated to max_files, pointers are stable.
+    // 'files' vector may resize (reallocating storage), invalidating pointers.
+    // When that happens, rebuild_index() MUST be called to update this map.
     // USING CUSTOM FLAT MAP for memory efficiency and startup speed.
     detail::flat_map index_map_;
 };

@@ -155,7 +155,7 @@ header::header(uint32_t max_files)
 }
 
 uint64_t header::disk_size() const {
-    if (magic_number == 27110662) { // v5
+    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
         return 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 4 + 8;
     }
     // v4 and older
@@ -175,15 +175,14 @@ void header::compute_checksum(uint8_t *out_hash) const {
     ctx.update(reinterpret_cast<const uint8_t*>(&block_size), sizeof(block_size));
     ctx.update(reinterpret_cast<const uint8_t*>(&b_tree_degree), sizeof(b_tree_degree));
 
-    if (magic_number == 27110662) { // v5
+    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
         ctx.update(reinterpret_cast<const uint8_t*>(&files_table_addr), sizeof(files_table_addr));
         ctx.update(reinterpret_cast<const uint8_t*>(&files_table_capacity), sizeof(files_table_capacity));
         ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
         
-        for (uint32_t i = 0; i < files_table_capacity; ++i) {
-             ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].name), sizeof(ftable.files[i].name));
-             ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].size), sizeof(ftable.files[i].size));
-        }
+        // For v5, do not include the external files table contents in the header checksum.
+        // The table is stored and updated independently; hashing it here would break
+        // the double-buffered header crash-safety guarantees.
     } else { // v4
         ctx.update(reinterpret_cast<const uint8_t*>(&files_table_capacity), sizeof(files_table_capacity));
         ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
@@ -205,14 +204,14 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     }
         
     lendian_fread_member(magic_number, file);
-    bool is_v5 = (magic_number == 27110662);
+    bool is_v5 = (magic_number == COMPIO_MAGIC_NUMBER);
     bool is_v4 = (magic_number == 27110661);
 
     if (!is_v5 && !is_v4) {
         WARNING_PRINT("warning: header magic_number does not match "
                       "(expected %d or %d, got %d). "
                       "The archive may have been created with an incompatible format version.\n",
-                      27110662, 27110661, magic_number);
+                      COMPIO_MAGIC_NUMBER, 27110661, magic_number);
         return false;
     }
     
@@ -242,18 +241,21 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
              return false;
         }
         
-        // Read table from external address
-        // If addr is 0 (uninitialized) and capacity > 0, it's invalid unless capacity is small and we handle it?
-        // But newly created archive writes header then allocates table.
-        // Actually compio_open_archive creates empty header.
-        // If we read existing file, addr MUST be valid.
-        if (files_table_addr == 0 && files_table_capacity > 0 && ftable.n_files > 0) {
-             WARNING_PRINT("warning: files_table_addr is 0 but table is not empty\n");
-             return false;
-        }
-
-        if (!ftable.read_from(file, files_table_addr, files_table_capacity, ftable.n_files)) {
-            return false;
+        // Read table from external address.
+        // If addr is 0 (uninitialized) and there are files, this is invalid.
+        // If addr is 0 and n_files==0, treat it as an empty external table and skip reading.
+        if (files_table_addr == 0) {
+            if (ftable.n_files > 0) {
+                WARNING_PRINT("warning: files_table_addr is 0 but table is not empty\n");
+                return false;
+            }
+            // Empty table: no bytes to read from disk, but capacity is still meaningful.
+            ftable.max_files = files_table_capacity;
+        } else {
+            ftable.max_files = files_table_capacity;
+            if (!ftable.read_from(file, files_table_addr, files_table_capacity, ftable.n_files)) {
+                return false;
+            }
         }
 
     } else { // v4
@@ -333,7 +335,7 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
         write_u32(block_size);
         write_u32(b_tree_degree);
 
-        if (magic_number == 27110662) { // v5
+        if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
             write_u64(files_table_addr);
             write_u32(files_table_capacity);
             write_u64(ftable.n_files);
@@ -370,14 +372,22 @@ void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager
     lendian_fwrite_member(block_size, file);
     lendian_fwrite_member(b_tree_degree, file);
 
-    if (magic_number == 27110662) { // v5
+    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
         lendian_fwrite_member(files_table_addr, file);
         lendian_fwrite_member(files_table_capacity, file);
         lendian_fwrite_member(ftable.n_files, file);
-    } else { // v4
-         // Broken v4 write
-         lendian_fwrite_member(ftable.max_files, file);
-         lendian_fwrite_member(ftable.n_files, file);
+    } else {
+        // Non-v5 (legacy) archives are not supported for writing in this version.
+        // The previous implementation here was explicitly marked as "Broken v4 write"
+        // and did not serialize the inline files table correctly, which could lead
+        // to stale or inconsistent metadata on subsequent opens.
+        WARNING_PRINT("error: attempting to write header for non-v5 archive (magic=%" PRIu32 "); "
+                      "writing legacy/v4 archives is not supported\n", magic_number);
+        // Fail fast in debug builds to surface incorrect usage early.
+        assert(false && "writing legacy/v4 archives is not supported");
+        // In release builds, return after logging to avoid performing an incomplete
+        // or inconsistent v4-specific header update.
+        return;
     }
 }
 

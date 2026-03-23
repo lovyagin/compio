@@ -40,7 +40,7 @@ TEST_F(HeaderValidationTest, ValidateMaxFilesMismatch) {
     // So we expect SUCCESS.
     if (archive != nullptr) {
         // Verify that we are indeed v5
-        EXPECT_EQ(archive->header->magic_number, 27110662);
+        EXPECT_EQ(archive->header->magic_number, COMPIO_MAGIC_NUMBER);
         compio_close_archive(archive);
     } else {
         // If v4, failure is expected.
@@ -111,6 +111,8 @@ TEST_F(HeaderValidationTest, SmartOpenAutoDetect) {
     ASSERT_NE(archive, nullptr) << "Smart Open failed to auto-detect parameters";
     
     // Verify that the archive adopted the file's parameters
+    // For v5, max_files is dynamic and adopts the capacity from the file header,
+    // which starts at the initial max_files (10).
     EXPECT_EQ(archive->config.max_files, 10);
     EXPECT_EQ(archive->config.block_size, 4096);
     EXPECT_EQ(archive->config.b_tree_degree, 8);

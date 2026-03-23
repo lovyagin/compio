@@ -3,23 +3,31 @@
 #include <filesystem>
 #include <vector>
 #include <string>
+#include <chrono>
 
 namespace fs = std::filesystem;
 
 class DynamicFilesTableTest : public ::testing::Test {
 protected:
-    std::string test_dir = "test_dynamic_ftable";
-    std::string db_path = test_dir + "/archive.compio";
+    std::string test_dir;
+    std::string db_path;
 
     void SetUp() override {
-        if (fs::exists(test_dir)) {
-            fs::remove_all(test_dir);
+        // Create a unique temporary directory for this test run
+        fs::path base = fs::temp_directory_path();
+        auto unique = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        fs::path dir = base / ("test_dynamic_ftable_" + std::to_string(unique));
+
+        test_dir = dir.string();
+        db_path = (dir / "archive.compio").string();
+
+        if (fs::exists(dir)) {
+            fs::remove_all(dir);
         }
-        fs::create_directories(test_dir);
+        fs::create_directories(dir);
     }
 
     void TearDown() override {
-        // Cleanup handled by SetUp
         if (fs::exists(test_dir)) {
             fs::remove_all(test_dir);
         }
@@ -31,12 +39,6 @@ TEST_F(DynamicFilesTableTest, ResizesAutomatically) {
     compio_build_default_config(&cfg);
     cfg.max_files = 4; // Start very small
     
-    // Check path for creation
-    fs::path p(db_path);
-    if (!fs::exists(p.parent_path())) {
-        fs::create_directories(p.parent_path());
-    }
-
     // Create archive
     compio_archive* archive = compio_open_archive(db_path.c_str(), "wb+", &cfg); // wb+ creates file
     ASSERT_NE(archive, nullptr);

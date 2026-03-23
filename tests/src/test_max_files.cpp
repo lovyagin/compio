@@ -25,13 +25,18 @@ TEST_F(MaxFilesTest, DiskSizeReflectsMaxFiles) {
     compio_archive *ar = compio_open_archive(fn, "w+", &cfg);
     ASSERT_NE(ar, nullptr);
 
-    bool is_v5 = (ar->header->magic_number == 27110662);
+    bool is_v5 = (ar->header->magic_number == COMPIO_MAGIC_NUMBER);
     if (is_v5) {
         // v5: header size is fixed (files table is external).
         // Check that capacity is set correctly.
         EXPECT_EQ(ar->header->files_table_capacity, 128u);
-        // Header size is constant (108 bytes).
-        EXPECT_EQ(ar->header->disk_size(), 108u);
+        
+        // Header size is constant for v5 (calculated from fields)
+        // 4 (magic) + 32 (checksum) + 8 (seq) + 8 (root) + 8 (size) + 
+        // 8 (alloc_off) + 8 (alloc_sz) + 4 (comp) + 4 (block) + 4 (degree) +
+        // 8 (ft_addr) + 4 (ft_cap) + 8 (n_files) = 108
+        const uint64_t v5_header_size = 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 4 + 8;
+        EXPECT_EQ(ar->header->disk_size(), v5_header_size);
     } else {
         const uint64_t expected =
             4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
@@ -71,10 +76,11 @@ TEST_F(MaxFilesTest, MaxFilesPersistsAcrossReopen) {
         compio_archive *ar = compio_open_archive(fn, "r", &cfg);
         ASSERT_NE(ar, nullptr);
 
-        bool is_v5 = (ar->header->magic_number == 27110662);
+        bool is_v5 = (ar->header->magic_number == COMPIO_MAGIC_NUMBER);
         if (is_v5) {
              EXPECT_EQ(ar->header->files_table_capacity, custom_max);
-             EXPECT_EQ(ar->header->disk_size(), 108u);
+             const uint64_t v5_header_size = 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 4 + 8;
+             EXPECT_EQ(ar->header->disk_size(), v5_header_size);
         } else {
              EXPECT_EQ(ar->header->ftable.max_files, custom_max)
                  << "max_files should be read back from disk unchanged";

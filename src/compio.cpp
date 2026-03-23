@@ -1372,62 +1372,54 @@ static void sync_files_table(compio_archive *archive) {
     if (!archive || !archive->header) return;
 
     // Only applies to v5 format
-    if (archive->header->magic_number != 27110662) return;
+    if (archive->header->magic_number != COMPIO_MAGIC_NUMBER) return;
 
-    // We need to check if we need to (re)allocate storage for the files table.
-    // Conditions:
-    // 1. files_table_addr is 0 (new archive)
-    // 2. files_table_capacity is less than current max_files (we grew in memory)
-    
+    // Copy-on-write for the files table:
+    // Always allocate new space for the table and write into it, then update the
+    // header to point to the new region. We intentionally do NOT deallocate the
+    // old table here, because this function has no way to know when the updated
+    // header has been made durable on disk.
+    //
+    // Note: This intentionally leaks the old table block until a "GC" or full
+    // defragmentation (rebuild from index) is implemented. This is the price for
+    // crash safety with the current double-buffered header design.
+
     uint32_t current_capacity = archive->header->ftable.max_files;
-    
-    if (archive->header->files_table_addr == 0 || 
-        archive->header->files_table_capacity < current_capacity) {
-        
-        // Calculate needed size
-        // Each entry is COMPIO_FNAME_MAX_SIZE (256) + sizeof(uint64_t) (8) = 264 bytes.
-        // We allocate for full capacity.
-        uint64_t needed_size = static_cast<uint64_t>(current_capacity) * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
-        
-        // Allocate space using allocator if available
-        uint64_t new_addr = 0;
-        if (archive->allocator) {
-             // We allocate raw space. This is not a "block" with compression.
-             // It is metadata.
-             // Using allocator->allocate(size) gives us a region.
-             new_addr = archive->allocator->allocate(needed_size);
-        } else {
-             // Fallback if no allocator (should not happen in write mode usually)
-             // Append to end of file
-             if (fseek64(archive->file, 0, SEEK_END) == 0) {
-                  new_addr = ftell64(archive->file);
-                  // Update header file_size if we append blindly?
-                  // Allocate usually handles file_size update if appending.
-                  // Here we do it manually.
-                  archive->header->file_size = std::max(archive->header->file_size, new_addr + needed_size);
-             }
-        }
-        
-        if (new_addr != 0 && new_addr != UINT64_MAX) {
-            // If we had an old address, should we free it?
-            if (archive->header->files_table_addr != 0) {
-                 // Free old table
-                 uint64_t old_size = static_cast<uint64_t>(archive->header->files_table_capacity) * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
-                 if (archive->allocator) {
-                     archive->allocator->deallocate(archive->header->files_table_addr, old_size);
-                 }
-            }
-            
-            archive->header->files_table_addr = new_addr;
-            archive->header->files_table_capacity = current_capacity;
-        } else {
-             WARNING_PRINT("warning: failed to allocate space for files table\n");
-        }
+    if (current_capacity == 0) {
+        return;
+    }
+
+    // Calculate needed size
+    // Each entry is COMPIO_FNAME_MAX_SIZE (256) + sizeof(uint64_t) (8) = 264 bytes.
+    // We allocate for full capacity.
+    uint64_t needed_size = static_cast<uint64_t>(current_capacity) * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
+
+    // Allocate space using allocator if available
+    uint64_t new_addr = 0;
+    if (archive->allocator) {
+         // We allocate raw space. This is not a "block" with compression.
+         // It is metadata.
+         new_addr = archive->allocator->allocate(needed_size);
+    } else {
+         // Fallback if no allocator
+         // Append to end of file
+         if (fseek64(archive->file, 0, SEEK_END) == 0) {
+              new_addr = ftell64(archive->file);
+              // Update header file_size manually if appending blindly
+              archive->header->file_size = std::max(archive->header->file_size, new_addr + needed_size);
+         }
     }
     
-    // Always write the table content if we have an address
-    if (archive->header->files_table_addr != 0) {
+    if (new_addr != 0 && new_addr != UINT64_MAX) {
+        // Update header to point to the newly allocated table.
+        // We do NOT free the old address.
+        archive->header->files_table_addr = new_addr;
+        archive->header->files_table_capacity = current_capacity;
+        
+        // Write the table content at the new address.
         archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
+    } else {
+         WARNING_PRINT("warning: failed to allocate space for files table\n");
     }
 }
 

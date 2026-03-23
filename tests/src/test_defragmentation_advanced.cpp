@@ -106,19 +106,18 @@ TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {
 
     // v5 archives store files_table separately. It acts as an immovable obstacle during defragmentation,
     // which may cause some fragmentation (gaps) if it is located after data blocks.
-    bool is_v5 = (readonly(archive->header, header)->magic_number == 27110662);
+    bool is_v5 = (readonly(archive->header, header)->magic_number == COMPIO_MAGIC_NUMBER);
     if (!is_v5) {
         EXPECT_EQ(stats.fragmentation_percent, 0u)
             << "After defragmentation, fragmentation should be 0%";
         EXPECT_EQ(stats.total_free_bytes, 0u)
             << "After compacting, there should be no free bytes";
     } else {
-        // For v5, we expect fragmentation to be minimal but non-zero is possible.
-        // We can check that fragmentation is reduced or low.
-        // Or just warn.
-        if (stats.total_free_bytes > 0) {
-            std::cout << "[INFO] v5 archive has " << stats.total_free_bytes << " free bytes after defrag (expected due to files table)" << std::endl;
-        }
+        // For v5, we expect fragmentation to be minimal but non-zero is possible
+        // due to the immovable files_table. Still, it should remain low.
+        EXPECT_LE(stats.fragmentation_percent, 10u)
+            << "v5 archives may retain small gaps due to files_table placement, "
+            << "but overall fragmentation after defrag should stay low";
     }
 }
 
@@ -155,7 +154,7 @@ TEST_F(StatsAfterDefragTest, TotalFreeMatchesEraseBeforeDefrag) {
     compio_fragmentation_stats after{};
     ASSERT_EQ(compio_get_fragmentation_stats(archive, &after), COMPIO_SUCCESS);
 
-    bool is_v5 = (readonly(archive->header, header)->magic_number == 27110662);
+    bool is_v5 = (readonly(archive->header, header)->magic_number == COMPIO_MAGIC_NUMBER);
     if (!is_v5) {
         EXPECT_EQ(after.total_free_bytes, 0u)
             << "Defrag should reclaim all free bytes";
