@@ -1233,6 +1233,53 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         }
         
         if (block_idx == -1) {
+            // Check if we missed a block that spans across node boundary (or cache miss)
+            auto overlapping = archive->index->get_block(search_key);
+            if (overlapping) {
+                const auto& key = overlapping->first;
+                const auto& val = overlapping->second;
+                const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
+                
+                if (!b) {
+                    if (!retried_global_cache && archive->index) {
+                         // WARNING_PRINT("warning: read_block failed with fresh node (via get_block). Clearing global index cache and retrying.\n");
+                         archive->index->clear_cache();
+                         retried_global_cache = true;
+                         // Also clear local cache just in case
+                         file->cached_leaf = smart_infile_object<compio::index_node>();
+                         continue;
+                    }
+
+                    // failed to decompress OR checksum mismatch
+                    WARNING_PRINT("warning: failed to read block at addr=%" PRIu64 " (corruption or decompression error)\n", val.addr);
+                    errno = EIO;
+                    break;
+                }
+                
+                assert(b->size() == val.size);
+
+                const uint64_t block_start = key.pos;
+                const uint64_t block_end = key.pos + b->size();
+                const uint64_t copy_end = std::min(read_end, block_end); // Clamped by read_end
+                
+                // We always copy starting from current cursor
+                const uint64_t copy_size = copy_end - file->cursor;
+                const uint64_t dec_offset = file->cursor - block_start;
+                
+                DEBUG_PRINT("[CR]copying data of size %" PRIu64 " from block (offset=%" PRIu64 ") (via get_block)\n", copy_size,
+                            dec_offset);
+                assert(dec_offset + copy_size <= b->size());
+
+                std::copy_n(b->data() + dec_offset, copy_size, p_ptr);
+                p_ptr += copy_size;
+                ptr_bytes_read += copy_size;
+                file->cursor += copy_size;
+                
+                // Don't disable temporary index, because loop continues
+                // In fact, we should disable it at loop end (which is outside loop)
+                continue;
+            }
+
              // GAP or EOF
              if (file->cached_leaf) {
                   // debug print removed
@@ -1612,16 +1659,10 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
                     // and subsequent blocks are shifted by the global erase size,
                     // this block is the only one that needs this specific shift.
                     archive->index->add_to_range(local_shift, key, key);
-                    block_reader->add_to_range(local_shift, key, key);
-
-                    // If cache is disabled (or block evicted), block_reader->add_to_range won't update 'b'
-                    // because 'b' is not in cache. We must update it manually to ensure destructor
-                    // updates the correct key in the index.
-                    if (b->key().pos != erase_start) {
-                        tree_key new_key = b->key();
-                        new_key.pos = erase_start;
-                        b->set_key(new_key);
-                    }
+                    
+                    tree_key new_key = key;
+                    new_key.pos = erase_start;
+                    block_reader->rename_block(key, new_key, b);
                 } else {
                     DEBUG_PRINT("[CE]---left_size=0, block stays at %" PRIu64 ", size reduced\n", key.pos);
                 }

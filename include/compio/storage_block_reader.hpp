@@ -396,6 +396,18 @@ public:
     void add_to_range(int64_t addition, const tree_key &key_min, const tree_key &key_max);
 
     /**
+     * @brief Rename a block in the cache and temporary index
+     *
+     * Updates the key of a block in the cache and temporary index.
+     * This is used when a single block's key changes due to partial erasure.
+     *
+     * @param old_key The current key of the block
+     * @param new_key The new key for the block
+     * @param b The block itself (must be valid)
+     */
+    void rename_block(const tree_key &old_key, const tree_key &new_key, std::shared_ptr<block> b);
+
+    /**
      * @brief Remove a block from the system
      *
      * Marks the specified block for removal, removes it from cache,

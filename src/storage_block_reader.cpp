@@ -384,6 +384,29 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
     cache.add_to_range(addition, key_min, key_max);
 }
 
+void storage_block_reader::rename_block(const tree_key &old_key, const tree_key &new_key, std::shared_ptr<block> b) {
+    DEBUG_PRINT("[SBR][rename_block]: old_key.pos=%" PRIu64 ", new_key.pos=%" PRIu64 "\n", old_key.pos, new_key.pos);
+
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            auto it = context.temporary_index.find(old_key);
+            if (it != context.temporary_index.end()) {
+                uint64_t addr = it->second;
+                context.temporary_index.erase(it);
+                context.temporary_index[new_key] = addr;
+            }
+        }
+    }
+
+    b->set_key(new_key);
+
+    if (cache.exists(old_key)) {
+        cache.remove(old_key);
+        cache.put(new_key, b);
+    }
+}
+
 void storage_block_reader::remove_block(std::shared_ptr<block> b) {
     DEBUG_PRINT("[SBR]removing block with key.pos=%" PRIu64 "\n", b->key().pos);
     b->remove();
