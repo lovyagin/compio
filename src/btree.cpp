@@ -697,3 +697,19 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
 }
 
 shared_node btree::read_root() { return read_node(readonly(archive_header, header)->index_root); }
+
+shared_node btree::find_node(const tree_key &key) {
+    std::shared_lock<std::shared_mutex> lock(mutex);
+    auto node = read_root();
+    while (!RO(node)->is_leaf) {
+        auto it = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key);
+        if (it != RO(node)->keys.end() && *it == key) {
+             return node; // Key found in internal node!
+        }
+        
+        // key < *it. So child index is dist(begin, it).
+        size_t i = std::distance(RO(node)->keys.begin(), it);
+        node = read_child(node, i);
+    }
+    return node;
+}

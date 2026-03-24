@@ -202,6 +202,17 @@ struct btree {
     std::optional<std::pair<tree_key, tree_val>> get_block(const tree_key &key);
 
     /**
+     * @brief Find the node containing the specified key
+     * 
+     * Traverses the tree to find the node that contains the key or would contain it.
+     * Used for optimizing sequential access by caching the resulting node.
+     * 
+     * @param key The key to look for
+     * @return shared_node The node containing the key range
+     */
+    shared_node find_node(const tree_key &key);
+
+    /**
      * @brief Add a value to .pos field of all keys within the specified range
      *
      * Adds the specified addition value to .pos field of all keys that fall within

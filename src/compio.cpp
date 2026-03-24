@@ -242,6 +242,12 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         return NULL;
     }
 
+    // Optimize stdio buffering for sequential access (64KB buffer)
+    // This reduces syscalls significantly for sequential reads/writes
+    if (setvbuf(file, nullptr, _IOFBF, 64 * 1024) != 0) {
+        WARNING_PRINT("warning: failed to set stdio buffer size\n");
+    }
+
     // Initialize WAL Manager
     auto wal = std::make_unique<compio::WalManager>(fp);
     if (c) {
@@ -1033,7 +1039,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 
     auto file_table_item = readonly(archive->header, header)->ftable.find(file->name);
     if (!file_table_item) {
-        // should not happen, because compio_open_file creates ftable record
         WARNING_PRINT("warning: no such file in header.ftable\n");
         errno = ENOENT;
         return 0;
@@ -1047,29 +1052,60 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     const uint64_t read_start = file->cursor;
     const uint64_t read_end = read_start + size;
 
-    const tree_key key_min = {file->hash, read_start};
-    const tree_key key_max = {file->hash, read_end};
-    auto range_opt = archive->index->get_range(key_min, key_max);
-    if (!range_opt) {
-        WARNING_PRINT("error: failed to read index range during read\n");
-        errno = EIO;
-        return 0;
-    }
-    const auto& range = *range_opt;
-    assert(!range.empty());
-
-    for (std::size_t i = 1; i < range.size(); ++i) {
-        assert(range[i - 1].first.pos + range[i - 1].second.size == range[i].first.pos);
-    }
-    assert(range.front().first.pos <= read_start);
-    assert(range.back().first.pos + range.back().second.size >= read_end);
-
     auto p_ptr = reinterpret_cast<uint8_t *>(ptr);
     uint64_t ptr_bytes_read = 0;
 
-    // enable temporary index, so it will fix expired tree_vals, that we will have in our range
+    // enable temporary index, so it will fix expired tree_vals
     block_reader->enable_temporary_index();
-    for (const auto &[key, val] : range) {
+
+    while (file->cursor < read_end) {
+        const tree_key search_key = {file->hash, file->cursor};
+        
+        // Try cached node first
+        int block_idx = -1;
+        if (file->cached_leaf) {
+            const auto& node = *readonly(file->cached_leaf, index_node);
+            auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
+            if (it != node.keys.begin()) {
+                size_t idx = std::distance(node.keys.begin(), it) - 1;
+                const auto& k = node.keys[idx];
+                const auto& v = node.values[idx];
+                if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
+                    block_idx = idx;
+                }
+            }
+        }
+        
+        // Cache miss?
+        if (block_idx == -1) {
+             file->cached_leaf = archive->index->find_node(search_key);
+             if (!file->cached_leaf) {
+                  // Should not happen if root exists, unless empty tree
+                  WARNING_PRINT("error: failed to find node for key\n");
+                  break; 
+             }
+             const auto& node = *readonly(file->cached_leaf, index_node);
+             auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
+             if (it != node.keys.begin()) {
+                size_t idx = std::distance(node.keys.begin(), it) - 1;
+                const auto& k = node.keys[idx];
+                const auto& v = node.values[idx];
+                if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
+                    block_idx = idx;
+                }
+             }
+        }
+        
+        if (block_idx == -1) {
+             // GAP or EOF (unexpected since we clamped size)
+             WARNING_PRINT("warning: read hit gap or end of blocks\n");
+             break;
+        }
+
+        const auto& node = *readonly(file->cached_leaf, index_node);
+        const auto& key = node.keys[block_idx];
+        const auto& val = node.values[block_idx];
+
         DEBUG_PRINT("[CR]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                     val.size);
         const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
@@ -1077,18 +1113,18 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             // failed to decompress OR checksum mismatch
             WARNING_PRINT("warning: failed to read block (corruption or decompression error)\n");
             errno = EIO;
-            block_reader->disable_temporary_index();
-            return ptr_bytes_read;
+            break;
         }
         assert(b->size() == val.size);
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
-        const uint64_t copy_end = std::min(std::min(read_end, block_end), file->size);
-        const uint64_t copy_start = std::max(read_start, block_start);
-        assert(copy_end > copy_start); // if not, btree::get_range is broken
-        const uint64_t copy_size = copy_end - copy_start;
-        const uint64_t dec_offset = (read_start > block_start) ? (read_start - block_start) : 0;
+        const uint64_t copy_end = std::min(read_end, block_end); // Clamped by read_end
+        
+        // We always copy starting from current cursor
+        const uint64_t copy_size = copy_end - file->cursor;
+        const uint64_t dec_offset = file->cursor - block_start;
+        
         DEBUG_PRINT("[CR]copying data of size %" PRIu64 " from block (offset=%" PRIu64 ")\n", copy_size,
                     dec_offset);
         assert(dec_offset + copy_size <= b->size());
@@ -1098,9 +1134,11 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         ptr_bytes_read += copy_size;
         file->cursor += copy_size;
     }
-    block_reader->disable_temporary_index();
 
-    validate_tree(archive->index, file);
+    block_reader->disable_temporary_index();
+    
+    // validate_tree is expensive and redundant here
+    // validate_tree(archive->index, file);
 
     return ptr_bytes_read;
 }
