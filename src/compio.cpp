@@ -811,11 +811,13 @@ static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree
         // check that there's no gaps between blocks
         const auto &[key_prev, val_prev] = range[i - 1];
         const auto &[key, val] = range[i];
+        (void)key_prev; (void)val_prev; (void)key; (void)val;
         assert(key.pos == key_prev.pos + val_prev.size);
     }
 }
 
 static void validate_tree(btree *index, compio_file *file, bool allow_empty = false) {
+    (void)index; (void)file; (void)allow_empty;
 #ifndef NDEBUG
     DEBUG_PRINT("[VALIDATE_TREE]: current btree state for file with hash=%" PRIu64 ":\n", file->hash);
     auto file_range_opt = index->get_range(tree_key{file->hash, 0}, tree_key{file->hash, UINT64_MAX});
@@ -844,11 +846,19 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
 static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write_impl(cursor=%" PRIu64 ", size=%" PRIu64 ", file_size=%" PRIu64 ")\n", file->cursor, size, file->size);
 
+    // Invalidate cached leaf, because write operation modifies the tree/blocks
+    // Even if size is 0 or error occurs later, invalidating cache is safe (just a performance hit)
+    // But we need it for correctness on successful writes.
+    if (file) {
+        file->cached_leaf = {};
+    }
+
     const auto archive = file->archive;
     const auto block_reader = archive->block_reader;
     const uint64_t block_size = archive->config.block_size;
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
+    (void)block_size__maximum;
 
     if ((archive->mode_b & mode_bit::r) && !(archive->mode_b & mode_bit::plus)) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
@@ -997,23 +1007,9 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 #endif
             assert(current_block_size <= block_size__maximum);
             
-            // Create new block
-            const tree_key key{file->hash, current_pos};
-            const auto b = block_reader->create_block(current_block_size, key);
-            std::copy_n(p_ptr, current_block_size, b->data());
             
-            p_ptr += current_block_size;
-            ptr_bytes_written += current_block_size;
-            file->cursor += current_block_size;
-            file->size = std::max(file->size, file->cursor);
-            file_table_item->size = file->size;
-        }
-    }
-                 break; 
-            }
-#endif
-
-             const uint64_t copy_from_ptr = std::min(current_block_size, remaining_write);
+            // Create new block
+            const uint64_t copy_from_ptr = std::min(current_block_size, remaining_write);
              const uint64_t pad_size = current_block_size - copy_from_ptr;
              
              const tree_key key{file->hash, current_pos};
@@ -1134,6 +1130,8 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     }
 
     block_reader->disable_temporary_index();
+
+    file->cached_leaf = smart_infile_object<compio::index_node>();
 
     validate_tree(archive->index, file);
 
@@ -1392,9 +1390,6 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         const uint64_t left_size = file->cursor - left_key.pos;
         const uint64_t right_size = left_b->size() - left_size;
 
-        // Shrink the left block
-        left_b->shrink(left_size);
-        
         // Create the right block at the *shifted* position.
         // The right block will contain data that is conceptually after the insertion point.
         // So its key should be cursor + size.
@@ -1412,8 +1407,11 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         // Copy data to right block (offset by left_size)
         // We use safe copy, ensuring we don't read out of bounds
         if (right_size > 0) {
-             std::copy(left_b->data() + left_size, left_b->data() + left_b->size(), right_b->data());
+             std::copy(left_b->data() + left_size, left_b->data() + left_size + right_size, right_b->data());
         }
+
+        // Shrink the left block
+        left_b->shrink(left_size);
     }
 
     // shift blocks after cursor
@@ -1471,6 +1469,8 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
     
     file->cursor = current_cursor;
+    
+    file->cached_leaf = smart_infile_object<compio::index_node>();
 
     validate_tree(archive->index, file);
 
@@ -1637,6 +1637,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     if (file_table_item) {
         file_table_item->size = file->size;
     }
+
+    file->cached_leaf = smart_infile_object<compio::index_node>();
 
     validate_tree(archive->index, file, true);
 
@@ -1826,7 +1828,7 @@ int compio_repair(const char *path, const char *output_dir) {
         }
         
         // Use RAII to ensure file is closed even if exceptions occur
-        std::unique_ptr<FILE, decltype(&fclose)> f_guard(f_raw, fclose);
+        std::unique_ptr<FILE, void(*)(FILE*)> f_guard(f_raw, [](FILE* f){ fclose(f); });
         FILE* f = f_raw;
 
         fseek64(f, 0, SEEK_END);
@@ -1933,7 +1935,7 @@ int compio_repair(const char *path, const char *output_dir) {
         int recovered_count = 0;
         std::set<uint64_t> claimed_addrs;
 
-        auto dump_block = [&](FILE* out_f, uint64_t addr, uint64_t size, uint64_t original_size, bool is_compressed, uint64_t file_pos) {
+        auto dump_block = [&](FILE* out_f, uint64_t addr, uint64_t file_pos) {
             // Read block again to get data
             storage_block sb;
             if (sb.read_from(f, addr)) {
@@ -1994,19 +1996,19 @@ int compio_repair(const char *path, const char *output_dir) {
                 WARNING_PRINT("error: failed to create output file: %s (errno=%d)\n", out_path.string().c_str(), errno);
                 continue;
             }
-            std::unique_ptr<FILE, decltype(&fclose)> out_f_guard(out_f_raw, fclose);
+            std::unique_ptr<FILE, void(*)(FILE*)> out_f_guard(out_f_raw, [](FILE* f){ fclose(f); });
             FILE* out_f = out_f_raw;
 
             for (const auto& part : parts) {
-                if (discovered_blocks.count(part.addr)) {
+                    if (discovered_blocks.count(part.addr)) {
                     claimed_addrs.insert(part.addr);
                     const auto& meta = discovered_blocks[part.addr];
-                    dump_block(out_f, meta.addr, meta.size, meta.original_size, meta.is_compressed, part.pos);
+                    dump_block(out_f, meta.addr, part.pos);
                 } else {
                     storage_block sb;
                     if (sb.read_from(f, part.addr)) {
                         claimed_addrs.insert(part.addr);
-                        dump_block(out_f, part.addr, sb.size, sb.original_size, (bool)sb.is_compressed, part.pos);
+                        dump_block(out_f, part.addr, part.pos);
                     }
                 }
             }
@@ -2025,9 +2027,9 @@ int compio_repair(const char *path, const char *output_dir) {
                  FILE *out_f_raw = fopen(out_path.c_str(), "wb");
 #endif
                  if (out_f_raw) {
-                     std::unique_ptr<FILE, decltype(&fclose)> out_f_guard(out_f_raw, fclose);
+                     std::unique_ptr<FILE, void(*)(FILE*)> out_f_guard(out_f_raw, [](FILE* f){ fclose(f); });
                      FILE* out_f = out_f_raw;
-                     dump_block(out_f, meta.addr, meta.size, meta.original_size, meta.is_compressed, 0);
+                     dump_block(out_f, meta.addr, 0);
                      // fclose(out_f) handled by guard
                      recovered_count++;
                  } else {
