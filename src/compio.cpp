@@ -1190,6 +1190,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     bool retried_global_cache = false;
 
     while (file->cursor < read_end) {
+        // fprintf(stderr, "compio_read: cursor=%" PRIu64 ", read_end=%" PRIu64 "\n", file->cursor, read_end);
         const tree_key search_key = {file->hash, file->cursor};
         
         int block_idx = -1;
@@ -1215,23 +1216,27 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
              file->cached_leaf = archive->index->find_node(search_key);
              if (!file->cached_leaf) {
                   // Should not happen if root exists, unless empty tree
-                  WARNING_PRINT("error: failed to find node for key\n");
-                  break; 
-             }
-             const auto& node = *readonly(file->cached_leaf, index_node);
-             auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
-             if (it != node.keys.begin()) {
-                size_t idx = std::distance(node.keys.begin(), it) - 1;
-                const auto& k = node.keys[idx];
-                const auto& v = node.values[idx];
-                if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
-                    block_idx = idx;
-                }
+                  // WARNING_PRINT("error: failed to find node for key\n");
+                  // break; 
+             } else {
+                 const auto& node = *readonly(file->cached_leaf, index_node);
+                 auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
+                 if (it != node.keys.begin()) {
+                    size_t idx = std::distance(node.keys.begin(), it) - 1;
+                    const auto& k = node.keys[idx];
+                    const auto& v = node.values[idx];
+                    if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
+                        block_idx = idx;
+                    }
+                 }
              }
         }
         
         if (block_idx == -1) {
              // GAP or EOF
+             if (file->cached_leaf) {
+                  // debug print removed
+             }
              const auto& node = *readonly(file->cached_leaf, index_node);
              auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
              
@@ -1385,33 +1390,37 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         }
         assert(left_b->size() == left_val.size);
 
-        assert(left_key.pos < file->cursor);
-        assert(left_key.pos + left_b->size() > file->cursor);
+        assert(left_key.pos <= file->cursor);
         const uint64_t left_size = file->cursor - left_key.pos;
-        const uint64_t right_size = left_b->size() - left_size;
+        
+        // Only split if we are strictly inside the block (not at boundaries)
+        if (left_size > 0 && left_size < left_b->size()) {
+            assert(left_key.pos + left_b->size() > file->cursor);
+            const uint64_t right_size = left_b->size() - left_size;
 
-        // Create the right block at the *shifted* position.
-        // The right block will contain data that is conceptually after the insertion point.
-        // So its key should be cursor + size.
-        // However, we haven't shifted keys yet.
-        // The standard logic is:
-        // 1. Split block at cursor. Left part stays at left_key. Right part is created at cursor.
-        // 2. Shift all blocks starting from cursor by +size.
-        // So the right block (currently at cursor) will be shifted to cursor+size.
-        
-        // BUT: create_block adds the block to the cache with key=cursor_key.
-        // Then add_to_range shifts it.
-        const tree_key right_key = cursor_key;
-        right_b = block_reader->create_block(right_size, right_key);
-        
-        // Copy data to right block (offset by left_size)
-        // We use safe copy, ensuring we don't read out of bounds
-        if (right_size > 0) {
-             std::copy(left_b->data() + left_size, left_b->data() + left_size + right_size, right_b->data());
+            // Create the right block at the *shifted* position.
+            // The right block will contain data that is conceptually after the insertion point.
+            // So its key should be cursor + size.
+            // However, we haven't shifted keys yet.
+            // The standard logic is:
+            // 1. Split block at cursor. Left part stays at left_key. Right part is created at cursor.
+            // 2. Shift all blocks starting from cursor by +size.
+            // So the right block (currently at cursor) will be shifted to cursor+size.
+            
+            // BUT: create_block adds the block to the cache with key=cursor_key.
+            // Then add_to_range shifts it.
+            const tree_key right_key = cursor_key;
+            right_b = block_reader->create_block(right_size, right_key);
+            
+            // Copy data to right block (offset by left_size)
+            // We use safe copy, ensuring we don't read out of bounds
+            if (right_size > 0) {
+                 std::copy(left_b->data() + left_size, left_b->data() + left_size + right_size, right_b->data());
+            }
+    
+            // Shrink the left block
+            left_b->shrink(left_size);
         }
-
-        // Shrink the left block
-        left_b->shrink(left_size);
     }
 
     // shift blocks after cursor
