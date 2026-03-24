@@ -1044,7 +1044,11 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
-    size = std::max(UINT64_C(0), std::min(size, file->size - file->cursor));
+    if (file->cursor >= file->size) {
+        return 0;
+    }
+    size = std::min(size, file->size - file->cursor);
+
     if (size == 0) {
         return 0;
     }
@@ -1058,11 +1062,15 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     // enable temporary index, so it will fix expired tree_vals
     block_reader->enable_temporary_index();
 
+    bool retried_global_cache = false;
+
     while (file->cursor < read_end) {
         const tree_key search_key = {file->hash, file->cursor};
         
-        // Try cached node first
         int block_idx = -1;
+        bool used_cached_node = false;
+
+        // Try cached node first
         if (file->cached_leaf) {
             const auto& node = *readonly(file->cached_leaf, index_node);
             auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
@@ -1072,6 +1080,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                 const auto& v = node.values[idx];
                 if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
                     block_idx = idx;
+                    used_cached_node = true;
                 }
             }
         }
@@ -1097,9 +1106,36 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         }
         
         if (block_idx == -1) {
-             // GAP or EOF (unexpected since we clamped size)
-             WARNING_PRINT("warning: read hit gap or end of blocks\n");
-             break;
+             // GAP or EOF
+             const auto& node = *readonly(file->cached_leaf, index_node);
+             auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
+             
+             uint64_t gap_end = read_end;
+             if (it != node.keys.end() && it->hash == file->hash) {
+                 gap_end = std::min(gap_end, it->pos);
+             } else {
+                 // Check if there is a block in the next node
+                 const tree_key k_min = {file->hash, file->cursor};
+                 const tree_key k_max = {file->hash, read_end};
+                 auto range_opt = archive->index->get_range(k_min, k_max);
+                 if (range_opt && !range_opt->empty()) {
+                      gap_end = std::min(gap_end, range_opt->front().first.pos);
+                 }
+             }
+             
+             const uint64_t gap_size = gap_end - file->cursor;
+             if (gap_size > 0) {
+                 DEBUG_PRINT("[CR]filling gap of size %" PRIu64 "\n", gap_size);
+                 std::fill_n(p_ptr, gap_size, 0);
+                 p_ptr += gap_size;
+                 ptr_bytes_read += gap_size;
+                 file->cursor += gap_size;
+                 continue;
+             } else {
+                 // Should not happen if logic is correct
+                 WARNING_PRINT("warning: read hit gap or end of blocks (gap_size=0)\n");
+                 break;
+             }
         }
 
         const auto& node = *readonly(file->cached_leaf, index_node);
@@ -1110,6 +1146,22 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                     val.size);
         const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
         if (!b) {
+            if (used_cached_node) {
+                 // Stale cache? Retry.
+                 file->cached_leaf = smart_infile_object<compio::index_node>();
+                 continue;
+            }
+
+            if (!retried_global_cache && archive->index) {
+                 WARNING_PRINT("warning: read_block failed with fresh node. Clearing global index cache and retrying.\n");
+                 archive->index->clear_cache();
+                 retried_global_cache = true;
+                 
+                 // Also clear local cache just in case
+                 file->cached_leaf = smart_infile_object<compio::index_node>();
+                 continue;
+            }
+
             // failed to decompress OR checksum mismatch
             WARNING_PRINT("warning: failed to read block (corruption or decompression error)\n");
             errno = EIO;

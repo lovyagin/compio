@@ -84,7 +84,7 @@ block::block(context_t &context, const tree_key &key, uint64_t size, bool unused
 
 block::~block() {
     if (!_is_valid) {
-        DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
+        // DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
         return;
     }
     if (_is_modified && !_is_removed) {

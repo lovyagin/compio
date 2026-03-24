@@ -75,7 +75,6 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
-    DEBUG_PRINT("[BTREE]: insert_nonfull(node.addr=%" PRIu64 ", key={...%" PRIu64 ", %" PRIu64 "}, value={%" PRIu64 ", %" PRIu64 "})\n", node.addr(), key.hash % 100, key.pos, value.addr, value.size);
     if (RO(node)->is_leaf) {
         if (idx < RO(node)->num_keys && RO(node)->keys[idx] == key) {
             WARNING_PRINT("warning: trying to insert already existing key\n");
@@ -268,6 +267,7 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
         if (current_key >= key) {
             if (current_key == key) {
                 node->values[i] = new_value;
+
                 return true;
             }
             if (!RO(node)->is_leaf) {
@@ -303,7 +303,10 @@ void btree::_update_impl(const tree_key &key, const tree_val &new_value) {
         return;
     }
     if (!_update(root, key, new_value)) {
-        WARNING_PRINT("warning: trying to update non-existing key\n");
+        fprintf(stderr, "ERROR: trying to update non-existing key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+        WARNING_PRINT("warning: trying to update non-existing key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+    } else {
+        // fprintf(stderr, "DEBUG: Updated key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
     }
 }
 
@@ -340,16 +343,8 @@ std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &ke
     assert(key.pos < UINT64_MAX);
     assert(range.size() < 2);
     if (!range.empty()) {
-        if (key == range[0].first) {
-            DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
-            return std::nullopt;
-        } else {
-            DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> (key={...,%" PRIu64 "},val={%" PRIu64 ",%" PRIu64 "})\n",
-                        key.pos, range[0].first.pos, range[0].second.addr, range[0].second.size);
-            return range[0];
-        }
+        return range[0];
     } else {
-        DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
         return std::nullopt;
     }
 }

@@ -817,16 +817,17 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
 }
 
 void block_allocator::force_defragmentation() {
-    auto index_lock = archive_->index->get_lock();
-
-    // Flush caches before locking allocator to avoid deadlock.
-    // block::~block() calls allocate/deallocate which lock allocator_mutex.
+    // Flush caches before locking allocator/index to avoid deadlock.
+    // block::~block() calls allocate/deallocate/update which lock allocator_mutex and index->mutex.
     if (archive_->file) {
         archive_->block_reader->set_maintenance_mode(true);
         archive_->block_reader->clear_cache();
-        archive_->index->_clear_cache();
+        // Use public clear_cache which handles its own locking if needed, 
+        // or just relies on the fact we are the only thread (compio_defragment holds archive mutex).
+        archive_->index->clear_cache();
     }
 
+    auto index_lock = archive_->index->get_lock();
     std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
 
     blocks_manager_.defragment();
