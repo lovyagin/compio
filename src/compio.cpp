@@ -1362,6 +1362,8 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     // TODO: merge with existing block if size is small
 
+    std::shared_ptr<block> right_b;
+
     if (key_val.has_value()) {
         // split block into two
         const auto &[left_key, left_val] = key_val.value();
@@ -1394,7 +1396,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         // BUT: create_block adds the block to the cache with key=cursor_key.
         // Then add_to_range shifts it.
         const tree_key right_key = cursor_key;
-        const auto right_b = block_reader->create_block(right_size, right_key);
+        right_b = block_reader->create_block(right_size, right_key);
         
         // Copy data to right block (offset by left_size)
         // We use safe copy, ensuring we don't read out of bounds
