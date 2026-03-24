@@ -177,8 +177,9 @@ struct btree {
      *
      * @param key The key whose value should be updated
      * @param new_value The new value to associate with the key
+     * @return true if update succeeded, false otherwise
      */
-    void update(const tree_key &key, const tree_val &new_value);
+    bool update(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Get the value associated with a specific key
@@ -457,7 +458,7 @@ private:
     void _clear_cache();
     std::vector<uint64_t> _collect_node_addresses(uint64_t &node_size);
     std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
-    void _update_impl(const tree_key &key, const tree_val &new_value);
+    bool _update_impl(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Allocate space for a new node in the archive

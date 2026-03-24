@@ -278,7 +278,19 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
                 return false;
             }
         } else if (key < current_key + RO(node)->values[i].size) {
-            return false;
+            // Overlap detected. 
+            // In strict mode this should be an error/corruption.
+            // But if we want to allow updating a key that is shadowed by an overlap (to recover?), we should continue?
+            // However, if we continue, we might go to child[i] (since key > current_key).
+            // But child[i] contains keys < current_key! 
+            // So we can't go to child[i].
+            // We must go to child[i+1] (since key > current_key).
+            // But we are in the loop. The loop goes to next key (i+1).
+            // So `continue` would check `keys[i+1]`.
+            // If `key < keys[i+1]`, we go to child[i+1].
+            // So simply removing this check allows us to continue searching.
+            
+            // return false; 
         }
     }
     if (!RO(node)->is_leaf) {
@@ -289,24 +301,26 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
     return false;
 }
 
-void btree::update(const tree_key &key, const tree_val &new_value) {
+bool btree::update(const tree_key &key, const tree_val &new_value) {
     std::unique_lock<std::shared_mutex> lock(mutex);
-    _update_impl(key, new_value);
+    return _update_impl(key, new_value);
 }
 
-void btree::_update_impl(const tree_key &key, const tree_val &new_value) {
+bool btree::_update_impl(const tree_key &key, const tree_val &new_value) {
     DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
     auto root = read_root();
     if (!root) {
         WARNING_PRINT("error: failed to read root node for update\n");
-        return;
+        return false;
     }
     if (!_update(root, key, new_value)) {
         fprintf(stderr, "ERROR: trying to update non-existing key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
         WARNING_PRINT("warning: trying to update non-existing key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+        return false;
     } else {
         // fprintf(stderr, "DEBUG: Updated key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+        return true;
     }
 }
 
@@ -343,6 +357,9 @@ std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &ke
     assert(key.pos < UINT64_MAX);
     assert(range.size() < 2);
     if (!range.empty()) {
+        if (range[0].first.pos == key.pos) {
+            return std::nullopt;
+        }
         return range[0];
     } else {
         return std::nullopt;

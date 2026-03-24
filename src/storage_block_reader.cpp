@@ -134,10 +134,20 @@ block::~block() {
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
+        bool update_res = false;
         if (tl_maintenance_mode) {
              context.index->_update_impl(_key, {new_addr, _size});
+             update_res = true; // _update_impl returns void or we assume it works? Check btree.hpp
         } else {
-             context.index->update(_key, {new_addr, _size});
+             update_res = context.index->update(_key, {new_addr, _size});
+        }
+        
+        if (!update_res) {
+            WARNING_PRINT("[B][destructor] ERROR: failed to update index for key {%" PRIu64 ", %" PRIu64 "} with addr %" PRIu64 "\n",
+                          _key.hash, _key.pos, new_addr);
+            // This is a critical consistency error. The block is written to disk, but the index
+            // still points to addr=0 (or old addr). Future reads will fail.
+            assert(false && "Failed to update index in block destructor");
         }
 
         {
