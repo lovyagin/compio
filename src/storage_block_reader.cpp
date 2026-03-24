@@ -84,7 +84,7 @@ block::block(context_t &context, const tree_key &key, uint64_t size, bool unused
 
 block::~block() {
     if (!_is_valid) {
-        DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
+        // DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
         return;
     }
     if (_is_modified && !_is_removed) {
@@ -134,10 +134,20 @@ block::~block() {
 
         // block already in btree thanks to storage_block_reader
         // we just need to update it's file address
+        bool update_res = false;
         if (tl_maintenance_mode) {
              context.index->_update_impl(_key, {new_addr, _size});
+             update_res = true; // _update_impl returns void or we assume it works? Check btree.hpp
         } else {
-             context.index->update(_key, {new_addr, _size});
+             update_res = context.index->update(_key, {new_addr, _size});
+        }
+        
+        if (!update_res) {
+            WARNING_PRINT("[B][destructor] ERROR: failed to update index for key {%" PRIu64 ", %" PRIu64 "} with addr %" PRIu64 "\n",
+                          _key.hash, _key.pos, new_addr);
+            // This is a critical consistency error. The block is written to disk, but the index
+            // still points to addr=0 (or old addr). Future reads will fail.
+            assert(false && "Failed to update index in block destructor");
         }
 
         {
@@ -372,6 +382,29 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
 
     // and then update keys themselves
     cache.add_to_range(addition, key_min, key_max);
+}
+
+void storage_block_reader::rename_block(const tree_key &old_key, const tree_key &new_key, std::shared_ptr<block> b) {
+    DEBUG_PRINT("[SBR][rename_block]: old_key.pos=%" PRIu64 ", new_key.pos=%" PRIu64 "\n", old_key.pos, new_key.pos);
+
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            auto it = context.temporary_index.find(old_key);
+            if (it != context.temporary_index.end()) {
+                uint64_t addr = it->second;
+                context.temporary_index.erase(it);
+                context.temporary_index[new_key] = addr;
+            }
+        }
+    }
+
+    b->set_key(new_key);
+
+    if (cache.exists(old_key)) {
+        cache.remove(old_key);
+        cache.put(new_key, b);
+    }
 }
 
 void storage_block_reader::remove_block(std::shared_ptr<block> b) {

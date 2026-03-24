@@ -75,7 +75,6 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
-    DEBUG_PRINT("[BTREE]: insert_nonfull(node.addr=%" PRIu64 ", key={...%" PRIu64 ", %" PRIu64 "}, value={%" PRIu64 ", %" PRIu64 "})\n", node.addr(), key.hash % 100, key.pos, value.addr, value.size);
     if (RO(node)->is_leaf) {
         if (idx < RO(node)->num_keys && RO(node)->keys[idx] == key) {
             WARNING_PRINT("warning: trying to insert already existing key\n");
@@ -268,6 +267,7 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
         if (current_key >= key) {
             if (current_key == key) {
                 node->values[i] = new_value;
+
                 return true;
             }
             if (!RO(node)->is_leaf) {
@@ -278,7 +278,19 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
                 return false;
             }
         } else if (key < current_key + RO(node)->values[i].size) {
-            return false;
+            // Overlap detected. 
+            // In strict mode this should be an error/corruption.
+            // But if we want to allow updating a key that is shadowed by an overlap (to recover?), we should continue?
+            // However, if we continue, we might go to child[i] (since key > current_key).
+            // But child[i] contains keys < current_key! 
+            // So we can't go to child[i].
+            // We must go to child[i+1] (since key > current_key).
+            // But we are in the loop. The loop goes to next key (i+1).
+            // So `continue` would check `keys[i+1]`.
+            // If `key < keys[i+1]`, we go to child[i+1].
+            // So simply removing this check allows us to continue searching.
+            
+            // return false; 
         }
     }
     if (!RO(node)->is_leaf) {
@@ -289,21 +301,26 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
     return false;
 }
 
-void btree::update(const tree_key &key, const tree_val &new_value) {
+bool btree::update(const tree_key &key, const tree_val &new_value) {
     std::unique_lock<std::shared_mutex> lock(mutex);
-    _update_impl(key, new_value);
+    return _update_impl(key, new_value);
 }
 
-void btree::_update_impl(const tree_key &key, const tree_val &new_value) {
+bool btree::_update_impl(const tree_key &key, const tree_val &new_value) {
     DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
     auto root = read_root();
     if (!root) {
         WARNING_PRINT("error: failed to read root node for update\n");
-        return;
+        return false;
     }
     if (!_update(root, key, new_value)) {
-        WARNING_PRINT("warning: trying to update non-existing key\n");
+        fprintf(stderr, "ERROR: trying to update non-existing key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+        WARNING_PRINT("warning: trying to update non-existing key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+        return false;
+    } else {
+        // fprintf(stderr, "DEBUG: Updated key {%" PRIu64 ",%" PRIu64 "}\n", key.hash, key.pos);
+        return true;
     }
 }
 
@@ -340,16 +357,11 @@ std::optional<std::pair<tree_key, tree_val>> btree::get_block(const tree_key &ke
     assert(key.pos < UINT64_MAX);
     assert(range.size() < 2);
     if (!range.empty()) {
-        if (key == range[0].first) {
-            DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
+        if (range[0].first.pos == key.pos) {
             return std::nullopt;
-        } else {
-            DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> (key={...,%" PRIu64 "},val={%" PRIu64 ",%" PRIu64 "})\n",
-                        key.pos, range[0].first.pos, range[0].second.addr, range[0].second.size);
-            return range[0];
         }
+        return range[0];
     } else {
-        DEBUG_PRINT("[BTREE]: get_block(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
         return std::nullopt;
     }
 }
@@ -697,3 +709,19 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
 }
 
 shared_node btree::read_root() { return read_node(readonly(archive_header, header)->index_root); }
+
+shared_node btree::find_node(const tree_key &key) {
+    std::shared_lock<std::shared_mutex> lock(mutex);
+    auto node = read_root();
+    while (!RO(node)->is_leaf) {
+        auto it = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key);
+        if (it != RO(node)->keys.end() && *it == key) {
+             return node; // Key found in internal node!
+        }
+        
+        // key < *it. So child index is dist(begin, it).
+        size_t i = std::distance(RO(node)->keys.begin(), it);
+        node = read_child(node, i);
+    }
+    return node;
+}

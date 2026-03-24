@@ -177,8 +177,9 @@ struct btree {
      *
      * @param key The key whose value should be updated
      * @param new_value The new value to associate with the key
+     * @return true if update succeeded, false otherwise
      */
-    void update(const tree_key &key, const tree_val &new_value);
+    bool update(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Get the value associated with a specific key
@@ -200,6 +201,17 @@ struct btree {
      * @return std::optional<std::pair<tree_key, tree_val>> key-value pair, or nullopt if not found
      */
     std::optional<std::pair<tree_key, tree_val>> get_block(const tree_key &key);
+
+    /**
+     * @brief Find the node containing the specified key
+     * 
+     * Traverses the tree to find the node that contains the key or would contain it.
+     * Used for optimizing sequential access by caching the resulting node.
+     * 
+     * @param key The key to look for
+     * @return shared_node The node containing the key range
+     */
+    shared_node find_node(const tree_key &key);
 
     /**
      * @brief Add a value to .pos field of all keys within the specified range
@@ -446,7 +458,7 @@ private:
     void _clear_cache();
     std::vector<uint64_t> _collect_node_addresses(uint64_t &node_size);
     std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
-    void _update_impl(const tree_key &key, const tree_val &new_value);
+    bool _update_impl(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Allocate space for a new node in the archive

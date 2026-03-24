@@ -8,6 +8,7 @@
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
 #include "compio/wal.hpp"
+#include "compio/file.hpp"
 
 // forward declaration
 namespace compio {
@@ -44,6 +45,8 @@ struct compio_file {
     uint64_t cursor;
     uint64_t size;
     uint64_t hash;
+    // Cached index node from the B-tree; may be a leaf or an internal node.
+    smart_infile_object<compio::index_node> cached_leaf;
 };
 
 #endif // COMPIO_FILE_HEADER_
