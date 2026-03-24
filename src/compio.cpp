@@ -1536,12 +1536,29 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
                         b->size() - block_erase_size);
             b->shrink(b->size() - block_erase_size);
             if (left_size == 0) {
-                // If we erased the start of the block, the block stays at the same position (key).
-                // We moved data to the start, so valid data starts at 'key'.
-                // We shrink the block.
-                // Subsequent blocks (starting at erase_end) will be shifted left to fill the gap.
-                // So we DON'T need to shift this block.
-                DEBUG_PRINT("[CE]---left_size=0, block stays at %" PRIu64 ", size reduced\n", key.pos);
+                if (key.pos != erase_start) {
+                    const int64_t local_shift = static_cast<int64_t>(erase_start) - static_cast<int64_t>(key.pos);
+                    DEBUG_PRINT("[CE]---shifting block from %" PRIu64 " to %" PRIu64 " (shift=%" PRId64 ")\n",
+                                key.pos, erase_start, local_shift);
+
+                    // We need to shift this block to fill the gap at the start of the erase range.
+                    // Since other blocks in the range are either removed or truncated from right,
+                    // and subsequent blocks are shifted by the global erase size,
+                    // this block is the only one that needs this specific shift.
+                    archive->index->add_to_range(local_shift, key, key);
+                    block_reader->add_to_range(local_shift, key, key);
+
+                    // If cache is disabled (or block evicted), block_reader->add_to_range won't update 'b'
+                    // because 'b' is not in cache. We must update it manually to ensure destructor
+                    // updates the correct key in the index.
+                    if (b->key().pos != erase_start) {
+                        tree_key new_key = b->key();
+                        new_key.pos = erase_start;
+                        b->set_key(new_key);
+                    }
+                } else {
+                    DEBUG_PRINT("[CE]---left_size=0, block stays at %" PRIu64 ", size reduced\n", key.pos);
+                }
             }
         } else {
             // remove block completely
