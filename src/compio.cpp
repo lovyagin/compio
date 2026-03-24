@@ -846,9 +846,9 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     const auto archive = file->archive;
     const auto block_reader = archive->block_reader;
-    // const uint64_t block_size = archive->config.block_size;
-    // const uint64_t block_size__minimum = archive->config.block_size__minimum;
-    // const uint64_t block_size__maximum = archive->config.block_size__maximum;
+    const uint64_t block_size = archive->config.block_size;
+    const uint64_t block_size__minimum = archive->config.block_size__minimum;
+    const uint64_t block_size__maximum = archive->config.block_size__maximum;
 
     if ((archive->mode_b & mode_bit::r) && !(archive->mode_b & mode_bit::plus)) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
@@ -988,16 +988,27 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
             } else {
                 // Filling gap logic
                 if (available_space < block_size ||
-                    available_space - block_size < block_size__minimum) {
+                    (available_space >= block_size && available_space - block_size < block_size__minimum)) {
                     current_block_size = available_space;
                 } else {
                     current_block_size = block_size;
                 }
             }
+#endif
+            assert(current_block_size <= block_size__maximum);
             
-            if (current_block_size == 0) {
-                 // Should not happen unless logic error or zero size gap
-                 assert(false);
+            // Create new block
+            const tree_key key{file->hash, current_pos};
+            const auto b = block_reader->create_block(current_block_size, key);
+            std::copy_n(p_ptr, current_block_size, b->data());
+            
+            p_ptr += current_block_size;
+            ptr_bytes_written += current_block_size;
+            file->cursor += current_block_size;
+            file->size = std::max(file->size, file->cursor);
+            file_table_item->size = file->size;
+        }
+    }
                  break; 
             }
 #endif
