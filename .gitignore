@@ -101,3 +101,6 @@ vcpkg/*
 # Benchmark results
 fragmentation_results.csv
 fragmentation_results_report.txt
+# Benchmark temporary files
+bench_*.tmp
+bench_*.tmp.wal
