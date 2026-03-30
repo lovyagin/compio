@@ -31,15 +31,15 @@ namespace fs = std::filesystem;
 
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
-    compio_build_zlib_compressor(&result->compressor);
+    compio_build_lz4_compressor(&result->compressor);
 #ifdef NDEBUG
     result->fill_holes_with_zeros = false;
 #else
     result->fill_holes_with_zeros = true;
 #endif
-    result->block_size = 1 << 12;
-    result->block_size__minimum = 1 << 9;
-    result->block_size__maximum = 1 << 14;
+    result->block_size = 1 << 16;        // 64KB (default 4KB) - better for sequential I/O
+    result->block_size__minimum = 1 << 12;  // 4KB min ( default512B)
+    result->block_size__maximum = 1 << 18;  // 256KB max (default 16KB)
     result->cache_size__nodes = 1024;
     result->cache_size__blocks = 8192;
     result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
