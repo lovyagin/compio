@@ -51,6 +51,7 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
 
     for ([[maybe_unused]] auto _ : state) {
         remove(filename.c_str());
+        remove((filename + ".wal").c_str());
 
         compio_config config = {};
         compio_build_default_config(&config);
@@ -133,6 +134,7 @@ static void BM_FragmentationOverhead(benchmark::State& state) {
 
         compio_close_archive(archive);
         remove(filename.c_str());
+        remove((filename + ".wal").c_str());
     }
 
     state.counters["WastedSpace_KB"] = static_cast<double>(total_wasted_space) / 1024.0;
@@ -164,6 +166,7 @@ static void BM_SpaceReuseEfficiency(benchmark::State& state) {
 
     for ([[maybe_unused]] auto _ : state) {
         remove(filename.c_str());
+        remove((filename + ".wal").c_str());
 
         compio_config config = {};
         compio_build_default_config(&config);
@@ -220,6 +223,7 @@ static void BM_SpaceReuseEfficiency(benchmark::State& state) {
 
         compio_close_archive(archive);
         remove(filename.c_str());
+        remove((filename + ".wal").c_str());
     }
 
     double space_growth_pct = 100.0 * (static_cast<double>(space_after - space_before)) / space_before;
