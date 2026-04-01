@@ -36,6 +36,7 @@ class WalManager {
     std::mutex mutex_;
     uint64_t current_transaction_id_;
     int transaction_depth_ = 0;
+    int batch_depth_ = 0;
     uint64_t current_wal_size_ = 0;
     compio_wal_sync_mode sync_mode_ = COMPIO_WAL_SYNC_ALWAYS;
 
@@ -88,6 +89,11 @@ public:
     // BEFORE calling this method. This method only truncates the WAL.
     // returns true on success, false if busy or error.
     bool checkpoint();
+
+    // Batch operations API
+    void begin_batch();
+    bool end_batch(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
+    int get_batch_depth() const { return batch_depth_; }
 
     // Recover from WAL (replay records to the main archive file)
     // Returns true if recovery was successful or unnecessary (empty WAL)

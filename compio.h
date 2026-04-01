@@ -376,6 +376,29 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 int compio_defragment(compio_archive *archive);
 
 /**
+ * @brief Begin a batch of write operations
+ *
+ * Starts a batch transaction that delays WAL fsync until compio_end_batch().
+ * All write/insert/erase operations between begin and end are buffered.
+ * Batches can be nested; only the outermost end_batch triggers fsync.
+ *
+ * @param archive opened archive (write mode)
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ */
+int compio_begin_batch(compio_archive *archive);
+
+/**
+ * @brief End a batch of write operations
+ *
+ * Commits and syncs all buffered operations to the WAL.
+ * If this is the outermost batch, performs fsync according to WAL sync mode.
+ * 
+ * @param archive opened archive (write mode)
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ */
+int compio_end_batch(compio_archive *archive);
+
+/**
  * @brief Repair/Recover data from a corrupted archive
  *
  * Scans the archive file for valid storage blocks and attempts to reconstruct

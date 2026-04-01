@@ -563,4 +563,35 @@ uint32_t WalManager::calculate_checksum(const void* data, uint64_t size) {
     return fnv1a_32(static_cast<const uint8_t*>(data), size);
 }
 
+void WalManager::begin_batch() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    batch_depth_++;
+}
+
+bool WalManager::end_batch(FILE* archive_file, uint64_t max_wal_size) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    
+    if (batch_depth_ <= 0) {
+        return false;
+    }
+    
+    batch_depth_--;
+    
+    if (batch_depth_ > 0) {
+        return true;
+    }
+    
+    if (!wal_file_) return true;
+    
+    if (transaction_depth_ != 0) {
+        return true;
+    }
+    
+    compio_wal_sync_mode mode = sync_mode_;
+    lock.unlock();
+    
+    begin_transaction();
+    return commit_transaction_explicit(mode, archive_file, max_wal_size);
+}
+
 } // namespace compio
