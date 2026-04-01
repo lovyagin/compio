@@ -38,7 +38,18 @@ static void BM_BlockSizeImpact(benchmark::State& state) {
         config.wal_sync_mode = COMPIO_WAL_NORMAL;
         
         compio_archive* archive = compio_create_archive(filename.c_str(), &config);
+        if (!archive) {
+            state.SkipWithError("Failed to create compio archive");
+            state.ResumeTiming();
+            continue;
+        }
         compio_file* file = compio_open_file(archive, "testfile", "wb");
+        if (!file) {
+            compio_close_archive(archive);
+            state.SkipWithError("Failed to open compio file");
+            state.ResumeTiming();
+            continue;
+        }
         
         state.ResumeTiming();
         
