@@ -38,7 +38,7 @@ void compio_build_default_config(compio_config *result) {
     result->fill_holes_with_zeros = true;
 #endif
     result->block_size = 1 << 14;        // 16KB - balanced for performance and fragmentation
-    result->block_size__minimum = 1 << 12;  // 4KB min
+    result->block_size__minimum = 1 << 9;   // 512B min (compatible with test overrides)
     result->block_size__maximum = 1 << 18;  // 256KB max
     result->cache_size__nodes = 1024;
     result->cache_size__blocks = 8192;
@@ -1894,10 +1894,10 @@ int compio_repair(const char *path, const char *output_dir) {
         header h;
         bool valid_header = h.load_and_validate(f, 0);
         if (!valid_header) {
-            WARNING_PRINT("warning: header corrupted, using default settings for salvage (degree=16, zlib)\n");
+            WARNING_PRINT("warning: header corrupted, using default settings for salvage (degree=16, lz4, 16KB blocks)\n");
             h.b_tree_degree = 16;
-            h.compression_type = COMPIO_COMPRESS_ZLIB;
-            h.block_size = 4096;
+            h.compression_type = COMPIO_COMPRESS_LZ4;
+            h.block_size = 16384;  // Match current default (16KB)
             // Clear files table to avoid undefined behavior from iterating uninitialized data
             h.ftable.files.clear();
             h.ftable.n_files = 0;

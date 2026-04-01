@@ -79,6 +79,7 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
     compio_config cfg;
     compio_build_default_config(&cfg);
     cfg.max_files = 10; // Match creation config
+    cfg.block_size = 0; // Auto-detect from file
     
     // Use dummy compressor for reading too
     compio_build_dummy_compressor(&cfg.compressor);
