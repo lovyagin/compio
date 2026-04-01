@@ -588,10 +588,8 @@ bool WalManager::end_batch(FILE* archive_file, uint64_t max_wal_size) {
     }
     
     compio_wal_sync_mode mode = sync_mode_;
-    lock.unlock();
     
     begin_transaction();
     return commit_transaction_explicit(mode, archive_file, max_wal_size);
 }
-
 } // namespace compio
