@@ -47,7 +47,7 @@ void compio_build_default_config(compio_config *result) {
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
-    result->wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    result->wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {

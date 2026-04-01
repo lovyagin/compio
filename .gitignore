@@ -63,6 +63,7 @@ docs/public/html/
 
 # Build directories (for CMake)
 build/
+build_release/
 build-*/
 cmake-build-*/
 CMakeCache.txt
