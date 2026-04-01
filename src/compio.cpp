@@ -48,7 +48,7 @@ void compio_build_default_config(compio_config *result) {
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
     result->wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
-    result->auto_batch_size = 16; // Auto-batch 16 sequential operations
+    result->auto_batch_size = 8; // Conservative default for performance
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -502,8 +502,13 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
 
     // Initialize auto-batching state
     file->auto_batch_count = 0;
-    file->last_operation_offset = UINT64_MAX; // Invalid offset to start
+    file->last_operation_end = UINT64_MAX; // Invalid end to start
     file->is_auto_batching = false;
+
+    // Initialize range cache state
+    file->cached_range.clear();
+    file->cached_range_min = 0;
+    file->cached_range_max = 0;
 
     archive->open_files_count++;
 
@@ -639,34 +644,37 @@ static bool should_auto_batch(compio_file *file, uint64_t current_offset) {
         return false;
     }
     
-    // If this is not sequential (i.e. offset moves backwards), no auto-batching
-    if (file->last_operation_offset != UINT64_MAX &&
-        current_offset < file->last_operation_offset) {
-        return false;
+    // If this is the first operation, it's sequential
+    if (file->last_operation_end == UINT64_MAX) {
+        return true;
     }
     
-    return true;
+    // Sequential if current offset starts where last operation ended
+    return current_offset == file->last_operation_end;
 }
 
 /**
  * Start auto-batching if conditions are met
  */
-static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offset) {
+static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offset, uint64_t size) {
     if (!should_auto_batch(file, current_offset)) {
         // Break existing auto-batch if pattern breaks
         end_auto_batch_if_active(file);
-        file->auto_batch_count = 0;
-        file->last_operation_offset = current_offset;
+        file->auto_batch_count = 1; // Reset counter for new sequence
+        file->last_operation_end = current_offset + size;
         return;
     }
     
     file->auto_batch_count++;
-    file->last_operation_offset = current_offset;
+    file->last_operation_end = current_offset + size;
     
     // Start auto-batch when we reach the threshold
     if (!file->is_auto_batching && file->auto_batch_count >= 3) {
-        compio_begin_batch(file->archive);
-        file->is_auto_batching = true;
+        if (compio_begin_batch(file->archive) == COMPIO_SUCCESS) {
+            file->is_auto_batching = true;
+            file->auto_batch_count = 1; // Reset counter to count batched operations
+        }
+        // On failure, silently continue without auto-batching
     }
 }
 
@@ -676,7 +684,7 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
 static void end_auto_batch_if_needed(compio_file *file) {
     if (file->is_auto_batching && 
         file->auto_batch_count >= file->archive->config.auto_batch_size) {
-        compio_end_batch(file->archive);
+        compio_end_batch(file->archive); // Ignore return value - best effort
         file->is_auto_batching = false;
         file->auto_batch_count = 0;
     }
@@ -687,10 +695,67 @@ static void end_auto_batch_if_needed(compio_file *file) {
  */
 static void end_auto_batch_if_active(compio_file *file) {
     if (file->is_auto_batching) {
-        compio_end_batch(file->archive);
+        compio_end_batch(file->archive); // Best effort - ignore errors
         file->is_auto_batching = false;
         file->auto_batch_count = 0;
     }
+}
+
+/**
+ * Check if a range is covered by the cached range
+ */
+static bool is_range_cached(compio_file *file, uint64_t offset_min, uint64_t offset_max) {
+    return !file->cached_range.empty() && 
+           offset_min >= file->cached_range_min && 
+           offset_max <= file->cached_range_max;
+}
+
+/**
+ * Get blocks from cache for the given range
+ */
+static std::vector<std::pair<compio::tree_key, compio::tree_val>> get_cached_range_blocks(
+    compio_file *file, uint64_t offset_min, uint64_t offset_max) {
+    
+    std::vector<std::pair<compio::tree_key, compio::tree_val>> result;
+    
+    for (const auto& kv : file->cached_range) {
+        const auto& key = kv.first;
+        const auto& val = kv.second;
+        
+        // Skip blocks from other files
+        if (key.hash != file->hash) continue;
+        
+        // Check if block overlaps with requested range
+        uint64_t block_start = key.pos;
+        uint64_t block_end = key.pos + val.size;
+        
+        if (block_start < offset_max && block_end > offset_min) {
+            result.push_back(kv);
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * Cache range results and update cache bounds
+ */
+static void cache_range_results(compio_file *file, 
+                               const std::vector<std::pair<compio::tree_key, compio::tree_val>>& range_results,
+                               uint64_t offset_min, uint64_t offset_max) {
+    
+    file->cached_range = range_results;
+    file->cached_range_min = offset_min;
+    file->cached_range_max = offset_max;
+}
+
+/**
+ * Invalidate range cache (called on write/insert/erase operations)
+ */
+static void invalidate_range_cache(compio_file *file) {
+    file->cached_range.clear();
+    file->cached_range_min = 0;
+    file->cached_range_max = 0;
 }
 
 int compio_begin_batch(compio_archive *archive) {
@@ -917,12 +982,10 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
         return -1;
     }
 
-    // End auto-batch if seek breaks sequential pattern
-    if (file->cursor != new_cursor) {
-        end_auto_batch_if_active(file);
-        file->auto_batch_count = 0;
-        file->last_operation_offset = UINT64_MAX;
-    }
+    // End auto-batch if seek call happens (even no-op seeks)
+    end_auto_batch_if_active(file);
+    file->auto_batch_count = 0;
+    file->last_operation_end = UINT64_MAX;
 
     file->cursor = new_cursor;
     DEBUG_PRINT("\ncompio_seek(new_cursor=%" PRId64 ")\n", new_cursor);
@@ -1009,6 +1072,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     // But we need it for correctness on successful writes.
     if (file) {
         file->cached_leaf = {};
+        invalidate_range_cache(file);
     }
 
     const auto archive = file->archive;
@@ -1029,7 +1093,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     }
 
     // Auto-batching logic - start batching if sequential
-    start_auto_batch_if_needed(file, file->cursor);
+    start_auto_batch_if_needed(file, file->cursor, size);
 
     auto file_table_item = archive->header->ftable.find(file->name);
     if (!file_table_item) {
@@ -1063,16 +1127,24 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     // if write-range intersects existing blocks, we need to modify them
     std::vector<std::pair<tree_key, tree_val>> range;
     if (write_start < last_block_end) {
-        // get blocks range from b-tree
-        const tree_key key_min = {file->hash, write_start};
-        const tree_key key_max = {file->hash, write_end};
-        auto range_opt = archive->index->get_range(key_min, key_max);
-        if (!range_opt) {
-            WARNING_PRINT("error: failed to read index range during write\n");
-            errno = EIO;
-            return 0;
+        // Try to use cached range first
+        if (is_range_cached(file, write_start, write_end)) {
+            range = get_cached_range_blocks(file, write_start, write_end);
+        } else {
+            // Cache miss - get blocks range from b-tree
+            const tree_key key_min = {file->hash, write_start};
+            const tree_key key_max = {file->hash, write_end};
+            auto range_opt = archive->index->get_range(key_min, key_max);
+            if (!range_opt) {
+                WARNING_PRINT("error: failed to read index range during write\n");
+                errno = EIO;
+                return 0;
+            }
+            range = *range_opt;
+            
+            // Cache the results for future operations
+            cache_range_results(file, range, write_start, write_end);
         }
-        range = *range_opt;
         // Gaps are allowed now, we will fill them
     }
 
@@ -1567,7 +1639,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
 
     // Auto-batching logic - start batching if sequential
-    start_auto_batch_if_needed(file, file->cursor);
+    start_auto_batch_if_needed(file, file->cursor, size);
 
     auto file_table_item = archive->header->ftable.find(file->name);
     if (!file_table_item) {
@@ -1694,6 +1766,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     file->cursor = current_cursor;
     
     file->cached_leaf = smart_infile_object<compio::index_node>();
+    invalidate_range_cache(file);
 
     validate_tree(archive->index, file);
 
@@ -1731,7 +1804,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     }
 
     // Auto-batching logic - start batching if sequential
-    start_auto_batch_if_needed(file, file->cursor);
+    start_auto_batch_if_needed(file, file->cursor, size);
 
     // Start transaction
     bool can_write = (archive->mode_b & mode_bit::w) || 
@@ -1862,6 +1935,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     }
 
     file->cached_leaf = smart_infile_object<compio::index_node>();
+    invalidate_range_cache(file);
 
     validate_tree(archive->index, file, true);
 
@@ -2277,4 +2351,16 @@ int compio_repair(const char *path, const char *output_dir) {
         WARNING_PRINT("error: unknown exception during repair\n");
         return COMPIO_ERROR;
     }
+}
+
+// Auto-batching accessor functions for testing
+
+int compio_is_auto_batching(compio_file *file) {
+    if (!file) return 0;
+    return file->is_auto_batching ? 1 : 0;
+}
+
+int compio_get_auto_batch_count(compio_file *file) {
+    if (!file) return 0;
+    return file->auto_batch_count;
 }
