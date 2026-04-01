@@ -48,6 +48,7 @@ void compio_build_default_config(compio_config *result) {
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
     result->wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
+    result->auto_batch_size = 16; // Auto-batch 16 sequential operations
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -499,6 +500,11 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
 
     file->hash = fnv1a(name);
 
+    // Initialize auto-batching state
+    file->auto_batch_count = 0;
+    file->last_operation_offset = UINT64_MAX; // Invalid offset to start
+    file->is_auto_batching = false;
+
     archive->open_files_count++;
 
     return file;
@@ -620,6 +626,73 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
     return COMPIO_SUCCESS;
 }
 
+// Auto-batching helper functions
+
+// Forward declarations
+static void end_auto_batch_if_active(compio_file *file);
+
+/**
+ * Check if current operation is sequential and should be auto-batched
+ */
+static bool should_auto_batch(compio_file *file, uint64_t current_offset) {
+    if (!file || file->archive->config.auto_batch_size <= 0) {
+        return false;
+    }
+    
+    // If this is not sequential (i.e. offset moves backwards), no auto-batching
+    if (file->last_operation_offset != UINT64_MAX &&
+        current_offset < file->last_operation_offset) {
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * Start auto-batching if conditions are met
+ */
+static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offset) {
+    if (!should_auto_batch(file, current_offset)) {
+        // Break existing auto-batch if pattern breaks
+        end_auto_batch_if_active(file);
+        file->auto_batch_count = 0;
+        file->last_operation_offset = current_offset;
+        return;
+    }
+    
+    file->auto_batch_count++;
+    file->last_operation_offset = current_offset;
+    
+    // Start auto-batch when we reach the threshold
+    if (!file->is_auto_batching && file->auto_batch_count >= 3) {
+        compio_begin_batch(file->archive);
+        file->is_auto_batching = true;
+    }
+}
+
+/**
+ * End auto-batch if active and threshold reached
+ */
+static void end_auto_batch_if_needed(compio_file *file) {
+    if (file->is_auto_batching && 
+        file->auto_batch_count >= file->archive->config.auto_batch_size) {
+        compio_end_batch(file->archive);
+        file->is_auto_batching = false;
+        file->auto_batch_count = 0;
+    }
+}
+
+/**
+ * Force end auto-batch if currently active
+ */
+static void end_auto_batch_if_active(compio_file *file) {
+    if (file->is_auto_batching) {
+        compio_end_batch(file->archive);
+        file->is_auto_batching = false;
+        file->auto_batch_count = 0;
+    }
+}
+
 int compio_begin_batch(compio_archive *archive) {
     if (archive == nullptr) {
         WARNING_PRINT("warning: passed nullptr into compio_begin_batch\n");
@@ -729,6 +802,9 @@ int compio_close_file(compio_file *file) {
         return -1;
     }
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
+
+    // End any active auto-batch before closing
+    end_auto_batch_if_active(file);
 
     if (file->archive->open_files_count > 0) {
         file->archive->open_files_count--;
@@ -841,6 +917,13 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
         return -1;
     }
 
+    // End auto-batch if seek breaks sequential pattern
+    if (file->cursor != new_cursor) {
+        end_auto_batch_if_active(file);
+        file->auto_batch_count = 0;
+        file->last_operation_offset = UINT64_MAX;
+    }
+
     file->cursor = new_cursor;
     DEBUG_PRINT("\ncompio_seek(new_cursor=%" PRId64 ")\n", new_cursor);
     return 0;
@@ -944,6 +1027,9 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     if (size == 0) {
         return 0;
     }
+
+    // Auto-batching logic - start batching if sequential
+    start_auto_batch_if_needed(file, file->cursor);
 
     auto file_table_item = archive->header->ftable.find(file->name);
     if (!file_table_item) {
@@ -1215,6 +1301,9 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         return ptr_bytes_written;
     }
 
+    // Auto-batching logic - end batch if threshold reached
+    end_auto_batch_if_needed(file);
+
     return size;
 }
 
@@ -1477,6 +1566,9 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
+    // Auto-batching logic - start batching if sequential
+    start_auto_batch_if_needed(file, file->cursor);
+
     auto file_table_item = archive->header->ftable.find(file->name);
     if (!file_table_item) {
         // should not happen, because compio_open_file creates ftable record
@@ -1610,6 +1702,9 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
 
+    // Auto-batching logic - end batch if threshold reached
+    end_auto_batch_if_needed(file);
+
     return size;
 }
 
@@ -1634,6 +1729,9 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         errno = EROFS;
         return 0;
     }
+
+    // Auto-batching logic - start batching if sequential
+    start_auto_batch_if_needed(file, file->cursor);
 
     // Start transaction
     bool can_write = (archive->mode_b & mode_bit::w) || 
@@ -1771,6 +1869,9 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         errno = EIO;
         return 0;
     }
+
+    // Auto-batching logic - end batch if threshold reached
+    end_auto_batch_if_needed(file);
 
     return size;
 }

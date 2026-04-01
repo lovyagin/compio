@@ -47,6 +47,11 @@ struct compio_file {
     uint64_t hash;
     // Cached index node from the B-tree; may be a leaf or an internal node.
     smart_infile_object<compio::index_node> cached_leaf;
+    
+    // Auto-batching state for sequential operations
+    int auto_batch_count;           // Current count of operations in auto-batch
+    uint64_t last_operation_offset; // Offset of last write/insert/erase operation
+    bool is_auto_batching;         // Whether we're currently in an auto-batch
 };
 
 #endif // COMPIO_FILE_HEADER_
