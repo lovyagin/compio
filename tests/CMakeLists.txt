@@ -40,6 +40,8 @@ add_executable(compio_gtest
     src/test_repair.cpp
     src/test_wal_sync_mode.cpp
     src/test_dynamic_files_table.cpp
+    src/test_auto_batching.cpp
+    src/test_range_cache.cpp
 )
 
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)

@@ -4,11 +4,13 @@
 #include <memory>
 #include <shared_mutex>
 #include <mutex>
+#include <vector>
 
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
 #include "compio/wal.hpp"
 #include "compio/file.hpp"
+#include "compio/tree_types.hpp"
 
 // forward declaration
 namespace compio {
@@ -50,8 +52,13 @@ struct compio_file {
     
     // Auto-batching state for sequential operations
     int auto_batch_count;           // Current count of operations in auto-batch
-    uint64_t last_operation_offset; // Offset of last write/insert/erase operation
+    uint64_t last_operation_end;    // End offset of last operation (offset + size)
     bool is_auto_batching;         // Whether we're currently in an auto-batch
+    
+    // Range caching for B-tree operations
+    std::vector<std::pair<compio::tree_key, compio::tree_val>> cached_range;  // Cached range results
+    uint64_t cached_range_min;                                                // Minimum offset covered by cache
+    uint64_t cached_range_max;                                                // Maximum offset covered by cache
 };
 
 #endif // COMPIO_FILE_HEADER_

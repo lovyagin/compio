@@ -189,7 +189,7 @@ typedef struct {
     uint64_t wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
     compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
     compio_wal_sync_mode wal_sync_mode; /**< WAL synchronization mode */
-    int auto_batch_size; /**< Number of sequential operations to auto-batch (0 = disabled, default: 16) */
+    int auto_batch_size; /**< Number of sequential operations to auto-batch (0 = disabled, default: 8) */
 } compio_config;
 
 /**
@@ -413,6 +413,28 @@ int compio_end_batch(compio_archive *archive);
  * @return Number of recovered files (>= 0) on success, COMPIO_ERROR on failure
  */
 int compio_repair(const char *path, const char *output_dir);
+
+/**
+ * @brief Check if auto-batching is currently active for a file
+ *
+ * @param file File handle
+ * @return 1 if auto-batching is active, 0 if not
+ */
+int compio_is_auto_batching(compio_file *file);
+
+/**
+ * @brief Get the current operation counter used for auto-batching for a file
+ *
+ * This returns the logical counter of write-like operations that the
+ * auto-batching logic uses to decide when to start, extend, or end batches.
+ * The counter may be non-zero even when auto-batching is not currently
+ * active (see compio_is_auto_batching()), for example for pre-batch
+ * sequential operations or when auto-batching is disabled.
+ *
+ * @param file File handle
+ * @return Current logical operation counter used by the auto-batching logic
+ */
+int compio_get_auto_batch_count(compio_file *file);
 
 #ifdef __cplusplus
 }
