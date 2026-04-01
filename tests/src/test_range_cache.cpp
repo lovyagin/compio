@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <random>
+#include <cstdio>
 
 #include "compio.h"
 #include "test_util.hpp"
