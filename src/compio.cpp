@@ -639,9 +639,9 @@ static bool should_auto_batch(compio_file *file, uint64_t current_offset) {
         return false;
     }
     
-    // If this is not sequential, no auto-batching
-    if (file->last_operation_offset != UINT64_MAX && 
-        current_offset != file->last_operation_offset + file->archive->config.block_size) {
+    // If this is not sequential (i.e. offset moves backwards), no auto-batching
+    if (file->last_operation_offset != UINT64_MAX &&
+        current_offset < file->last_operation_offset) {
         return false;
     }
     
