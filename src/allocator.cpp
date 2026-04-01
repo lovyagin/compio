@@ -564,6 +564,9 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
 
     if (fseek64(archive->file, pos, SEEK_SET) != 0) {
         WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
+        if (!in_batch && archive->wal) {
+            archive->wal->rollback_transaction();
+        }
         return false;
     }
 
@@ -585,7 +588,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     fflush(archive->file);
 
     if (!in_batch && archive->wal) {
-        if (!archive->wal->commit_transaction()) {
+        if (!archive->wal->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
             WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
             return false;
         }

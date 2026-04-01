@@ -169,6 +169,10 @@ bool WalManager::log_write_vectored(WalRecordType type, uint64_t addr, const std
 
 void WalManager::begin_transaction() {
     std::unique_lock<std::mutex> lock(mutex_);
+    begin_transaction_impl();
+}
+
+void WalManager::begin_transaction_impl() {
     if (!wal_file_) {
         // We allow begin_transaction on unopened WAL to support read-only archives 
         // that might call it via guards but never write.
@@ -200,7 +204,10 @@ bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
 
 bool WalManager::commit_transaction_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size) {
     std::unique_lock<std::mutex> lock(mutex_);
-    
+    return commit_transaction_explicit_impl(sync_mode, archive_file, max_wal_size);
+}
+
+bool WalManager::commit_transaction_explicit_impl(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size) {
     if (transaction_depth_ > 0) {
         transaction_depth_--;
     } else {
@@ -589,7 +596,8 @@ bool WalManager::end_batch(FILE* archive_file, uint64_t max_wal_size) {
     
     compio_wal_sync_mode mode = sync_mode_;
     
-    begin_transaction();
-    return commit_transaction_explicit(mode, archive_file, max_wal_size);
+    // Call internal version without lock to avoid deadlock
+    begin_transaction_impl();
+    return commit_transaction_explicit_impl(mode, archive_file, max_wal_size);
 }
 } // namespace compio

@@ -93,7 +93,11 @@ public:
     // Batch operations API
     void begin_batch();
     bool end_batch(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
-    int get_batch_depth() const { return batch_depth_; }
+    
+    int get_batch_depth() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return batch_depth_;
+    }
 
     // Recover from WAL (replay records to the main archive file)
     // Returns true if recovery was successful or unnecessary (empty WAL)
@@ -104,6 +108,10 @@ public:
 
 private:
     uint32_t calculate_checksum(const void* data, uint64_t size);
+    
+    // Internal implementations without mutex locking
+    void begin_transaction_impl();
+    bool commit_transaction_explicit_impl(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size);
 };
 
 // RAII Guard for WAL Transactions
