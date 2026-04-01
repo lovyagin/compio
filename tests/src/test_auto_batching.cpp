@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 #include "compio.h"
 #include <cstring>
+#include <string>
+#include "test_util.hpp"
 
 class AutoBatchingTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        archive_path = "test_auto_batch.cmp";
-        remove(archive_path.c_str());
+        char tmp_path[512];
+        generate_tmp_fn(tmp_path, sizeof(tmp_path));
+        archive_path = std::string(tmp_path);
         
         compio_build_default_config(&config);
         config.auto_batch_size = 4; // Small batch size for testing

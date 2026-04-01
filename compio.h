@@ -423,10 +423,16 @@ int compio_repair(const char *path, const char *output_dir);
 int compio_is_auto_batching(compio_file *file);
 
 /**
- * @brief Get current auto-batch operation count for a file
+ * @brief Get the current operation counter used for auto-batching for a file
+ *
+ * This returns the logical counter of write-like operations that the
+ * auto-batching logic uses to decide when to start, extend, or end batches.
+ * The counter may be non-zero even when auto-batching is not currently
+ * active (see compio_is_auto_batching()), for example for pre-batch
+ * sequential operations or when auto-batching is disabled.
  *
  * @param file File handle
- * @return Current count of operations in the auto-batch
+ * @return Current logical operation counter used by the auto-batching logic
  */
 int compio_get_auto_batch_count(compio_file *file);
 

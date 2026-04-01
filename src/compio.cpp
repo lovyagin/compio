@@ -649,8 +649,9 @@ static bool should_auto_batch(compio_file *file, uint64_t current_offset) {
         return true;
     }
     
-    // Sequential if current offset starts where last operation ended
-    return current_offset == file->last_operation_end;
+    // Treat operations as sequential as long as we do not seek past the last end.
+    // This allows non-growing operations (e.g., erase) at the same offset to batch.
+    return current_offset <= file->last_operation_end;
 }
 
 /**
@@ -742,11 +743,36 @@ static std::vector<std::pair<compio::tree_key, compio::tree_val>> get_cached_ran
  */
 static void cache_range_results(compio_file *file, 
                                const std::vector<std::pair<compio::tree_key, compio::tree_val>>& range_results,
-                               uint64_t offset_min, uint64_t offset_max) {
+                               uint64_t /*offset_min*/, uint64_t /*offset_max*/) {
     
     file->cached_range = range_results;
-    file->cached_range_min = offset_min;
-    file->cached_range_max = offset_max;
+
+    if (range_results.empty()) {
+        file->cached_range_min = 0;
+        file->cached_range_max = 0;
+        return;
+    }
+
+    uint64_t min_pos = range_results.front().first.pos;
+    uint64_t max_pos = range_results.front().first.pos + range_results.front().second.size;
+
+    for (const auto &kv : range_results) {
+        const auto &key = kv.first;
+        const auto &val = kv.second;
+
+        uint64_t block_start = key.pos;
+        uint64_t block_end = key.pos + val.size;
+
+        if (block_start < min_pos) {
+            min_pos = block_start;
+        }
+        if (block_end > max_pos) {
+            max_pos = block_end;
+        }
+    }
+
+    file->cached_range_min = min_pos;
+    file->cached_range_max = max_pos;
 }
 
 /**
@@ -1072,7 +1098,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
     // But we need it for correctness on successful writes.
     if (file) {
         file->cached_leaf = {};
-        invalidate_range_cache(file);
+        // Note: range cache invalidation moved to end after successful operations
     }
 
     const auto archive = file->archive;
@@ -1375,6 +1401,9 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+
+    // Invalidate range cache after successful write operations
+    invalidate_range_cache(file);
 
     return size;
 }
@@ -2356,11 +2385,13 @@ int compio_repair(const char *path, const char *output_dir) {
 // Auto-batching accessor functions for testing
 
 int compio_is_auto_batching(compio_file *file) {
-    if (!file) return 0;
+    if (!file || !file->archive) return 0;
+    std::shared_lock<std::shared_mutex> lock(file->archive->mutex);
     return file->is_auto_batching ? 1 : 0;
 }
 
 int compio_get_auto_batch_count(compio_file *file) {
-    if (!file) return 0;
+    if (!file || !file->archive) return 0;
+    std::shared_lock<std::shared_mutex> lock(file->archive->mutex);
     return file->auto_batch_count;
 }
