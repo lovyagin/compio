@@ -546,22 +546,27 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         pos = hdr_size;
     }
 
-    compio::TransactionGuard txn(archive->wal.get());
+    bool in_batch = archive->wal && archive->wal->get_batch_depth() > 0;
+    
+    if (!in_batch && archive->wal) {
+        archive->wal->begin_transaction();
+    }
+    
     if (archive->wal) {
         if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
             WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
-            // txn destructor will rollback automatically
-            return false;
-        }
-        // Commit transaction (with optional auto-checkpoint)
-        if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
-            WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
+            if (!in_batch) {
+                archive->wal->rollback_transaction();
+            }
             return false;
         }
     }
 
     if (fseek64(archive->file, pos, SEEK_SET) != 0) {
         WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
+        if (!in_batch && archive->wal) {
+            archive->wal->rollback_transaction();
+        }
         return false;
     }
 
@@ -571,6 +576,9 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     if (written != size) {
         WARNING_PRINT(
             "warning: fwrite failed to write all bytes in allocator.save_state (%zu < %u)\n", written, size);
+        if (!in_batch && archive->wal) {
+            archive->wal->rollback_transaction();
+        }
         return false;
     }
     archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
@@ -578,6 +586,13 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     archive->header->file_size = static_cast<uint64_t>(pos) + size;
 
     fflush(archive->file);
+
+    if (!in_batch && archive->wal) {
+        if (!archive->wal->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
+            WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
+            return false;
+        }
+    }
 
     return true;
 }

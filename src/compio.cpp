@@ -47,7 +47,7 @@ void compio_build_default_config(compio_config *result) {
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
-    result->wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    result->wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -620,6 +620,50 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
     return COMPIO_SUCCESS;
 }
 
+int compio_begin_batch(compio_archive *archive) {
+    if (archive == nullptr) {
+        WARNING_PRINT("warning: passed nullptr into compio_begin_batch\n");
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+
+    if (archive->is_readonly()) {
+        WARNING_PRINT("warning: compio_begin_batch called on read-only archive\n");
+        errno = EACCES;
+        return COMPIO_ERROR;
+    }
+
+    // No need for external lock - WalManager has its own mutex
+    archive->wal->begin_batch();
+    return COMPIO_SUCCESS;
+}
+
+int compio_end_batch(compio_archive *archive) {
+    if (archive == nullptr) {
+        WARNING_PRINT("warning: passed nullptr into compio_end_batch\n");
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+
+    if (archive->is_readonly()) {
+        WARNING_PRINT("warning: compio_end_batch called on read-only archive\n");
+        errno = EACCES;
+        return COMPIO_ERROR;
+    }
+
+    // No need for external lock - WalManager has its own mutex
+    bool success = archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes);
+    
+    if (!success) {
+        if (errno == 0) {
+            errno = EIO;
+        }
+        return COMPIO_ERROR;
+    }
+    
+    return COMPIO_SUCCESS;
+}
+
 int compio_defragment(compio_archive *archive) {
     if (!archive) {
         WARNING_PRINT("warning: passed nullptr into compio_defragment\n");
@@ -843,6 +887,37 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
 #endif
 }
 
+// RAII guard for WAL transactions when not in batch mode
+struct WalTransactionGuard {
+    compio::WalManager* wal;
+    bool active;
+
+    explicit WalTransactionGuard(compio::WalManager* w)
+        : wal(w), active(false) {
+        if (wal && wal->get_batch_depth() == 0) {
+            wal->begin_transaction();
+            active = true;
+        }
+    }
+
+    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
+        if (!active || !wal) return true;
+        bool result = wal->commit_transaction(archive_file, max_wal_size);
+        active = false;
+        return result;
+    }
+
+    void dismiss() noexcept {
+        active = false;
+    }
+
+    ~WalTransactionGuard() {
+        if (active && wal) {
+            wal->rollback_transaction();
+        }
+    }
+};
+
 static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write_impl(cursor=%" PRIu64 ", size=%" PRIu64 ", file_size=%" PRIu64 ")\n", file->cursor, size, file->size);
 
@@ -884,7 +959,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                      (archive->mode_b & mode_bit::plus);
     
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    compio::TransactionGuard txn(wal_ptr);
+    WalTransactionGuard wal_tx_guard(wal_ptr);
 
     // actual range in file, where we need to write (write-range)
     const uint64_t write_start = file->cursor;
@@ -1135,7 +1210,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -1416,7 +1491,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
                      (archive->mode_b & mode_bit::plus);
     
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    compio::TransactionGuard txn(wal_ptr);
+    WalTransactionGuard wal_tx_guard(wal_ptr);
 
     const tree_key cursor_key = {file->hash, file->cursor};
     const auto key_val = archive->index->get_block(cursor_key);
@@ -1530,7 +1605,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
         errno = EIO;
         return 0;
     }
@@ -1566,7 +1641,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
                      (archive->mode_b & mode_bit::plus);
     
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    compio::TransactionGuard txn(wal_ptr);
+    WalTransactionGuard wal_tx_guard(wal_ptr);
 
     if (file->cursor > file->size) {
         return 0;
@@ -1692,11 +1767,11 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file, true);
 
-    if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
         errno = EIO;
         return 0;
     }
-    
+
     return size;
 }
 
@@ -1766,10 +1841,14 @@ void compio_flush(compio_archive *archive) {
                      (archive->mode_b & mode_bit::a) || 
                      (archive->mode_b & mode_bit::plus);
 
-    // Start atomic transaction for the entire flush operation using RAII guard
-    // Pass nullptr if we shouldn't use WAL, so guard becomes no-op
+    // Start atomic transaction for the entire flush operation
+    // Pass nullptr if we shouldn't use WAL
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    compio::TransactionGuard txn(wal_ptr);
+    
+    if (wal_ptr && wal_ptr->get_batch_depth() == 0) {
+        wal_ptr->begin_transaction();
+    }
+    
     bool wal_active = (wal_ptr != nullptr);
 
     // Track whether all durability operations succeed; used to decide if we can safely checkpoint.
@@ -1792,9 +1871,9 @@ void compio_flush(compio_archive *archive) {
     // Double-buffered Header Write
     flush_header_double_buffered(archive);
     
-    // Commit transaction (this performs a single fsync on the WAL)
-    if (wal_active) {
-        if (!txn.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    // Commit transaction (this performs WAL write/flush and optionally fsync based on sync mode)
+    if (wal_active && wal_ptr->get_batch_depth() == 0) {
+        if (!wal_ptr->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
             durable = false;
         }
