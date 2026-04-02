@@ -97,3 +97,5 @@ docs/html/**
 tests/compio_gtest
 
 vcpkg/*
+
+build*/
