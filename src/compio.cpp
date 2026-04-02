@@ -823,63 +823,46 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
 
     const tree_key cursor_key = {file->hash, file->cursor};
-    const auto key_val = archive->index->get_block(cursor_key);
-
-    // TODO: merge with existing block if size is small
-
-    if (key_val.has_value()) {
-        // split block into two
-        const auto &[left_key, left_val] = key_val.value();
-        const auto left_b = block_reader->read_block(left_val.addr, left_key);
-        if (!left_b) {
-            // failed to decompress
-            WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
-            errno = EIO;
-            return 0;
-        }
-        assert(left_b->size() == left_val.size);
-
-        assert(left_key.pos < file->cursor);
-        assert(left_key.pos + left_b->size() > file->cursor);
-        const uint64_t left_size = file->cursor - left_key.pos;
-        const uint64_t right_size = left_b->size() - left_size;
-        left_b->shrink(left_size);
-        const auto right_b = block_reader->create_block(right_size, cursor_key);
-        std::copy_n(left_b->data() + left_size, right_size, right_b->data());
+    const auto range = (file->cursor > 0) 
+                            ? (archive->index->get_range(cursor_key + (-1), cursor_key)) 
+                            : (archive->index->get_range(cursor_key, cursor_key + 1));
+    assert(range.size() == 1);
+    const auto &[left_key, left_val] = range[0];
+    
+    const auto left_b = block_reader->read_block(left_val.addr, left_key);
+    if (!left_b) {
+        // failed to decompress
+        WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+        errno = EIO;
+        return 0;
     }
+    assert(left_b->size() == left_val.size);
+    
+    assert(left_key.pos < file->cursor);
+    assert(left_key.pos + left_b->size() >= file->cursor);
 
+    const uint64_t block_size = archive->config.block_size;
+    const uint64_t block_size__minimum = archive->config.block_size__minimum;
+    const uint64_t block_size__maximum = archive->config.block_size__maximum;
+    
+    const uint64_t old_size = left_b->size();
+    const uint64_t left_size = file->cursor - left_key.pos;
+    const uint64_t right_size = old_size - left_size;
+    
     // shift blocks after cursor
     const tree_key file_end_key{file->hash, UINT64_MAX};
     archive->index->add_to_range(size, cursor_key, file_end_key);
     block_reader->add_to_range(size, cursor_key, file_end_key);
-
+    
+    // fully insert bytes into an existing block
+    left_b->grow(old_size + size);
+    std::copy_backward(left_b->data() + left_size, left_b->data() + old_size, left_b->data() + old_size + size);
     auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
-    uint64_t total_bytes_left = size;
+    std::copy_n(p_ptr, size, left_b->data() + left_size);
 
-    // write new data from p_ptr into new blocks
-    const uint64_t block_size = archive->config.block_size;
-    const uint64_t block_size__minimum = archive->config.block_size__minimum;
-    const uint64_t block_size__maximum = archive->config.block_size__maximum;
-    while (total_bytes_left > 0) {
-        uint64_t current_block_size;
-        if (total_bytes_left < block_size || total_bytes_left - block_size < block_size__minimum) {
-            current_block_size = total_bytes_left;
-        } else {
-            current_block_size = block_size;
-        }
-        assert(current_block_size <= block_size__maximum);
-        assert(current_block_size <= total_bytes_left);
-
-        const tree_key key{file->hash, file->cursor};
-        const auto b = block_reader->create_block(current_block_size, key);
-        std::copy_n(p_ptr, current_block_size, b->data());
-
-        p_ptr += current_block_size;
-        file->cursor += current_block_size;
-        file->size += current_block_size;
-        file_table_item->size += current_block_size;
-        total_bytes_left -= current_block_size;
-    }
+    file->cursor += size;
+    file->size += size;
+    file_table_item->size += size;
 
     validate_tree(archive->index, file);
 
@@ -975,8 +958,6 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             DEBUG_PRINT("[CE]---postmerge right block found ({%lu, %lu})\n", right_to_merge->hash,
                         right_to_merge->pos);
         }
-
-        // TODO: merge with adjacent block if new size is small
 
         if (block_erase_size < b->size()) {
             // keep block in btree, but update key.pos and val.size
