@@ -158,7 +158,7 @@ void block::shrink(uint64_t new_size) {
 void block::grow(uint64_t new_size) {
     assert(new_size > _size);
 
-    auto new_data = std::make_unique<uint8_t[]>(new_size);
+    std::unique_ptr<uint8_t[]> new_data(new uint8_t[new_size]);
     std::copy_n(_data.get(), _size, new_data.get());
     _data = std::move(new_data);
 
