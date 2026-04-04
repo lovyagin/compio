@@ -2039,6 +2039,13 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
                 std::copy_n(right_b->data() + gap_size, new_right_size, right_b->data());
                 right_b->shrink(new_right_size);
             }
+
+            int64_t key_delta = (left_b->key().pos + left_b->size()) - right_b->key().pos;
+            if (key_delta != 0) {
+                DEBUG_PRINT("[CE]---postmerge shifting right block by %ld\n", key_delta);
+                archive->index->add_to_range(key_delta, right_to_merge.value(), right_to_merge.value());
+                block_reader->add_to_range(key_delta, right_to_merge.value(), right_to_merge.value());
+            }
         }
     }
 after_merge:
