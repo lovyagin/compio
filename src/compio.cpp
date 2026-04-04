@@ -838,7 +838,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
     assert(left_b->size() == left_val.size);
     
-    assert(left_key.pos < file->cursor);
+    assert(left_key.pos < file->cursor || (left_key.pos == file->cursor && file->cursor == 0));
     assert(left_key.pos + left_b->size() >= file->cursor);
 
     const uint64_t block_size = archive->config.block_size;
@@ -850,15 +850,73 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     const uint64_t right_size = old_size - left_size;
     
     // shift blocks after cursor
+    const tree_key shift_start = {file->hash, left_key.pos + old_size};
     const tree_key file_end_key{file->hash, UINT64_MAX};
-    archive->index->add_to_range(size, cursor_key, file_end_key);
-    block_reader->add_to_range(size, cursor_key, file_end_key);
+    archive->index->add_to_range(size, shift_start, file_end_key);
+    block_reader->add_to_range(size, shift_start, file_end_key);
     
-    // fully insert bytes into an existing block
-    left_b->grow(old_size + size);
-    std::copy_backward(left_b->data() + left_size, left_b->data() + old_size, left_b->data() + old_size + size);
-    auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
-    std::copy_n(p_ptr, size, left_b->data() + left_size);
+    if (old_size + size <= block_size__maximum) {
+        // fully insert bytes into an existing block
+        left_b->grow(old_size + size);
+        std::copy_backward(left_b->data() + left_size, left_b->data() + old_size, left_b->data() + old_size + size);
+        auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
+        std::copy_n(p_ptr, size, left_b->data() + left_size);
+    } else {
+        block_reader->remove_block(left_b);
+
+        const uint8_t* src_left = left_b->data();
+        uint64_t left_rem = left_size;
+        const uint8_t* src_insert = reinterpret_cast<const uint8_t*>(ptr);
+        uint64_t insert_rem = size;
+        const uint8_t* src_right = left_b->data() + left_size;
+        uint64_t right_rem = right_size;
+
+        uint64_t total_bytes_left = old_size + size;
+        uint64_t current_pos = left_key.pos;
+
+        while (total_bytes_left > 0) {
+            uint64_t current_block_size;
+            if (total_bytes_left > block_size && total_bytes_left - block_size >= block_size__minimum) {
+                current_block_size = block_size;
+            } else {
+                current_block_size = total_bytes_left;
+            }
+
+            auto new_block = block_reader->create_block(current_block_size, {file->hash, current_pos});
+            uint8_t* dest = new_block->data();
+            uint64_t copied = 0;
+
+            // copy from left part (original data before cursor)
+            uint64_t from_left = std::min(left_rem, current_block_size - copied);
+            std::copy_n(src_left, from_left, dest + copied);
+            src_left += from_left;
+            left_rem -= from_left;
+            copied += from_left;
+
+            // copy from new data
+            if (copied < current_block_size) {
+                uint64_t from_insert = std::min(insert_rem, current_block_size - copied);
+                std::copy_n(src_insert, from_insert, dest + copied);
+                src_insert += from_insert;
+                insert_rem -= from_insert;
+                copied += from_insert;
+            }
+
+            // copy from right part (original data after cursor)
+            if (copied < current_block_size) {
+                uint64_t from_right = std::min(right_rem, current_block_size - copied);
+                std::copy_n(src_right, from_right, dest + copied);
+                src_right += from_right;
+                right_rem -= from_right;
+                copied += from_right;
+            }
+
+            assert(copied == current_block_size);
+
+            current_pos += current_block_size;
+            total_bytes_left -= current_block_size;
+        }
+    }
 
     file->cursor += size;
     file->size += size;
