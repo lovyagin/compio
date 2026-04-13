@@ -1055,20 +1055,19 @@ FILE_PATTERNS          = *.c \
                          *.f95 \
                          *.f03 \
                          *.f08 \
-                         *.f18 \
+                                                  *.f18 \
                          *.f \
                          *.for \
                          *.vhd \
                          *.vhdl \
                          *.ucf \
-RECURSIVE              = YES
                          *.ice
 
 # The RECURSIVE tag can be used to specify whether or not subdirectories should
 # be searched for input files as well.
 # The default value is: NO.
 
-RECURSIVE              = NO
+RECURSIVE              = YES
 
 # The EXCLUDE tag can be used to specify files and/or directories that should be
 # excluded from the INPUT source files. This way you can easily exclude a
