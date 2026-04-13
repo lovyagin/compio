@@ -214,65 +214,184 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t);
 typedef struct compio_archive compio_archive;
 
 /**
- * @brief Opened file inshide of an archive
+ * @brief Opened file inside of an archive (opaque pointer)
+ *
+ * Represents an open file handle for reading/writing within a compio_archive.
+ * See compio_open_file() to open a file.
+ *
+ * @par Thread Safety:
+ * A file handle cannot be safely used by multiple threads simultaneously.
+ * Each thread should have its own file handle (via compio_open_file).
+ * However, multiple threads CAN read from or write to DIFFERENT files
+ * within the same archive simultaneously.
  */
 typedef struct compio_file compio_file;
 
 /**
- * @brief Open archive
+ * @brief Opens an archive for reading or writing
  *
- * @param fp path to archive file
- * @param mode mode (https://en.cppreference.com/w/cpp/io/c/fopen)
- * @param c configuration
- * @return compio_archive*
+ * Opens an existing archive or creates a new one. Supports modes similar to fopen().
+ * Initializes internal structures including B-tree index, file table, and WAL.
+ *
+ * @param[in] fp Archive file path (filesystem path)
+ * @param[in] mode File open mode. Supported modes:
+ *   - "r":   Read-only (archive must exist)
+ *   - "r+":  Read-write (archive must exist)
+ *   - "w":   Create new (truncate if exists)
+ *   - "w+":  Create new (truncate if exists)
+ *   - "a":   Append (create if not exists)
+ *   - "a+":  Append (create if not exists)
+ * @param[in] c Configuration pointer (see compio_config). If NULL, defaults are used.
+ *            For auto-detection of block_size and b_tree_degree, set to 0 (Smart Open).
+ * @return Pointer to compio_archive on success, NULL on error (check errno)
+ *
+ * @par Thread Safety:
+ * The returned archive handle should be protected by external synchronization
+ * when calling compio_open_archive/compio_close_archive. However, once files
+ * are opened, concurrent operations are safe:
+ * - Multiple threads can read different files simultaneously
+ * - Multiple threads can write different files simultaneously
+ * - A single file cannot be read/written by multiple threads concurrently
+ *
+ * @par WAL Recovery:
+ * If a .wal file exists alongside the archive, recovery is attempted automatically.
+ * Uncommitted transactions are rolled back, ensuring data consistency.
+ *
+ * @par Smart Open (auto-detection):
+ * When config->block_size or config->b_tree_degree are 0, they are auto-detected
+ * from the archive header. Useful when opening archives with non-default parameters.
+ *
+ * @see compio_close_archive()
+ * @see compio_open_file()
+ * @see compio_config
  */
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c);
 
 /**
- * @brief Open file inside of an opened archive
+ * @brief Opens a file inside an archive
  *
- * @param name internal filename
- * @param archive opened archive
- * @return compio_file*
+ * Opens or creates a file with the given name within the archive.
+ * Returns a file handle for subsequent read/write operations.
+ *
+ * @param[in] name Internal filename (max COMPIO_FNAME_MAX_SIZE characters)
+ * @param[in] archive Opened archive handle
+ * @return Pointer to compio_file on success, NULL on error
+ *
+ * @par Thread Safety:
+ * Multiple threads can call compio_open_file on the same archive simultaneously,
+ * but each returned file handle must be used by only one thread.
+ * If multiple threads need to access the same filename, each must call
+ * compio_open_file separately to get their own handle.
+ *
+ * @see compio_close_file()
  */
 compio_file *compio_open_file(const char *name, compio_archive *archive);
 
 /**
- * @brief Write block of data to file
+ * @brief Writes data to a file
  *
- * @param ptr pointer to data
- * @param size size in bytes
- * @param file opened file
- * @return uint64_t number of successfully written bytes
+ * Appends data at current file position. File position advances by the number
+ * of bytes successfully written.
+ *
+ * @param[in] ptr Pointer to data to write. Must not be NULL if size > 0.
+ * @param[in] size Number of bytes to write
+ * @param[in,out] file Opened file handle (file position updated)
+ * @return Number of bytes successfully written. May be less than size on error.
+ *         Returns 0 on error; check errno for details.
+ *
+ * @par Performance:
+ * O(log N) in archive size (B-tree lookup). Sequential writes are optimized via
+ * internal caching, so multiple sequential writes are faster than random writes.
+ *
+ * @par Thread Safety:
+ * NOT thread-safe. Do not call compio_write on the same file handle from
+ * multiple threads concurrently. Each thread must have its own file handle.
+ *
+ * @par Atomicity:
+ * Partial writes are possible if the archive is full or disk error occurs.
+ * Caller should check return value and retry if needed.
+ *
+ * @see compio_read(), compio_seek()
  */
 uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file);
 
 /**
- * @brief Read block of data from file
+ * @brief Reads data from a file
  *
- * @param ptr pointer to buffer
- * @param size size in bytes
- * @param file opened file
- * @return uint64_t number of successfully read bytes
+ * Reads up to `size` bytes from current file position. File position advances
+ * by the number of bytes successfully read.
+ *
+ * @param[out] ptr Pointer to buffer to receive data. Must not be NULL if size > 0.
+ * @param[in] size Number of bytes to read
+ * @param[in,out] file Opened file handle (file position updated)
+ * @return Number of bytes successfully read. Less than size if EOF reached or error.
+ *         Returns 0 on error or EOF; check errno or compio_tell() to distinguish.
+ *
+ * @par Performance:
+ * O(log N) in archive size (B-tree lookup). Sequential reads are highly optimized
+ * via leaf caching, providing near-sequential disk I/O performance.
+ *
+ * @par Thread Safety:
+ * Multiple threads CAN call compio_read on different file handles (different files)
+ * concurrently. However, compio_read on the SAME file handle is NOT thread-safe.
+ *
+ * @par Consistency:
+ * Reads see all committed writes (from compio_write). Uncommitted data is not visible.
+ *
+ * @see compio_write(), compio_seek()
  */
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file);
 
 /**
- * @brief Insert block of data into file at current position, shifting existing data
+ * @brief Inserts data into file, shifting existing data forward
  *
- * @param ptr pointer to data to insert
- * @param size size of data to insert in bytes
- * @param file opened file
- * @return uint64_t number of successfully inserted bytes
+ * Inserts `size` bytes at current file position, shifting all data after the
+ * insertion point forward. File size increases by `size`. File position advances
+ * past the inserted data.
+ *
+ * @param[in] ptr Pointer to data to insert. Must not be NULL if size > 0.
+ * @param[in] size Number of bytes to insert
+ * @param[in,out] file Opened file handle (file position updated)
+ * @return Number of bytes successfully inserted. May be less than size on error.
+ *         Returns 0 on error; check errno.
+ *
+ * @par Performance:
+ * O(N log N) where N is the number of blocks after insertion point.
+ * Expensive operation - avoid if possible; consider append (compio_write) instead.
+ *
+ * @par Thread Safety:
+ * NOT thread-safe. Do not call on same file handle from multiple threads.
+ *
+ * @par Atomicity:
+ * Insertion is atomic at the transaction level (WAL-backed).
+ *
+ * @see compio_erase(), compio_write()
  */
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file);
 
 /**
- * @brief Erase block of data from file at current position, shifting remaining data
+ * @brief Erases data from file, shifting remaining data backward
  *
- * @param size number of bytes to erase
- * @param file opened file handle
- * @return uint64_t number of successfully erased bytes
+ * Removes `size` bytes at current file position, shifting all data after the
+ * erased region backward. File size decreases by `size`. File position remains
+ * at the start of the erased region (pointing to next data).
+ *
+ * @param[in] size Number of bytes to erase
+ * @param[in,out] file Opened file handle (file position updated)
+ * @return Number of bytes successfully erased. May be less than size if EOF or error.
+ *         Returns 0 on error; check errno.
+ *
+ * @par Performance:
+ * O(N log N) where N is the number of blocks after erased region.
+ * Expensive operation - avoid if possible.
+ *
+ * @par Thread Safety:
+ * NOT thread-safe. Do not call on same file handle from multiple threads.
+ *
+ * @par Atomicity:
+ * Erasure is atomic at the transaction level (WAL-backed).
+ *
+ * @see compio_insert(), compio_seek()
  */
 uint64_t compio_erase(uint64_t size, compio_file *file);
 
