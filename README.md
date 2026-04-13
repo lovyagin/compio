@@ -2,6 +2,14 @@
 
 Compio is a lightweight library designed for transparent data compression, enabling efficient and seamless integration into your projects.
 
+<div align="center">
+
+[![Build Status](https://img.shields.io/github/actions/workflow/status/lovyagin/compio/ci.yml?branch=develop&style=for-the-badge&color=B3E5B3&logoColor=B3E5B3)](https://github.com/lovyagin/compio/actions)
+[![Docs](https://img.shields.io/badge/Docs-B19CD9?style=for-the-badge)](https://lovyagin.github.io/compio/)
+[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-FFB3BA?style=for-the-badge)](LICENSE)
+
+</div>
+
 ## Prerequisites
 
 - **Git**: Required for cloning the repository.
