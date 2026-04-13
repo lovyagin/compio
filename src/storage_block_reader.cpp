@@ -3,6 +3,7 @@
 #include "compio/wal.hpp"
 #include "compio/file.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <mutex>
 #include <cinttypes>
@@ -87,6 +88,7 @@ block::~block() {
         // DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
         return;
     }
+    DEBUG_PRINT("[B][destructor]: called destructor for {%lu, %lu} (is_modified=%d, is_removed=%d)\n", _key.hash, _key.pos, _is_modified, _is_removed);
     if (_is_modified && !_is_removed) {
         storage_block b(context.compressor->get_bufsize(_size));
         b.original_size = _size;
@@ -196,6 +198,18 @@ void block::shrink(uint64_t new_size) {
     context.index->update(_key, {_addr, new_size});
 }
 
+void block::grow(uint64_t new_size) {
+    assert(new_size > _size);
+
+    std::unique_ptr<uint8_t[]> new_data(new uint8_t[new_size]);
+    std::copy_n(_data.get(), _size, new_data.get());
+    _data = std::move(new_data);
+
+    _is_modified = true;
+    _size = new_size;
+    context.index->update(_key, {_addr, new_size});
+}
+
 void block::remove() { _is_removed = true; }
 
 void block::shift_key(int64_t addition) {
@@ -230,6 +244,13 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
                 key.pos);
+#ifndef NDEBUG
+    DEBUG_PRINT("[SBR][CACHE]: cache contents:\n");
+    for (const auto &key_val : cache._cache_items_list) {
+        DEBUG_PRINT("\t{%lu, %lu}\n", key_val.first.hash, key_val.first.pos);
+    }
+#endif
+
     auto b_cached = cache.get(key);
     if (b_cached.has_value()) {
         DEBUG_PRINT("[SBR][read_block]: cache hit\n");

@@ -1878,6 +1878,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     validate_no_gaps_in_range(range);
 
     uint64_t bytes_erased = 0;
+    std::optional<tree_key> left_to_merge = std::nullopt;
+    std::optional<tree_key> right_to_merge = std::nullopt;
 
     block_reader->enable_temporary_index();
     for (const auto &[key, val] : range) {
@@ -1909,6 +1911,16 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         const uint64_t right_size = block_end - block_erase_end;
         DEBUG_PRINT("[CE]---left_size=%" PRIu64 ", erase_size=%" PRIu64 ", right_size=%" PRIu64 "\n", left_size,
                     block_erase_size, right_size);
+
+        if (left_size > 0 && right_size == 0) {
+            left_to_merge = key;
+            DEBUG_PRINT("[CE]---postmerge left block found ({%lu, %lu})\n", left_to_merge->hash,
+                        left_to_merge->pos);
+        } else if (left_size == 0 && right_size > 0) {
+            right_to_merge = key + block_erase_size;
+            DEBUG_PRINT("[CE]---postmerge right block found ({%lu, %lu})\n", right_to_merge->hash,
+                        right_to_merge->pos);
+        }
 
         // TODO: merge with adjacent block if new size is small
 
@@ -1965,6 +1977,78 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
     file->cached_leaf = smart_infile_object<compio::index_node>();
     invalidate_range_cache(file);
+
+    if (right_to_merge.has_value() && left_to_merge.has_value()) {
+        DEBUG_PRINT("[CE]---postmerge left={%lu, %lu}, right={%lu, %lu}, shift=%ld\n",
+                    left_to_merge->hash, left_to_merge->pos, right_to_merge->hash,
+                    right_to_merge->pos, shift);
+        right_to_merge.value() += shift;
+
+        const auto left_val = archive->index->get(left_to_merge.value());
+        if (!left_val.has_value()) {
+            WARNING_PRINT("warning: left_to_merge key ({%lu, %lu}) was not found in the tree after "
+                          "erase operation\n",
+                          left_to_merge->hash, left_to_merge->pos);
+            goto after_merge;
+        }
+        const auto right_val = archive->index->get(right_to_merge.value());
+        if (!right_val.has_value()) {
+            WARNING_PRINT(
+                "warning: right_to_merge key ({%lu, %lu}) was not found in the tree after "
+                "erase operation\n",
+                right_to_merge->hash, right_to_merge->pos);
+            goto after_merge;
+        }
+
+        const auto block_size__minimum = archive->config.block_size__minimum;
+        const auto block_size__maximum = archive->config.block_size__maximum;
+        const auto left_size = left_val->size;
+        const auto right_size = right_val->size;
+        DEBUG_PRINT("[CE]---postmerge sizes: %lu and %lu\n", left_size, right_size);
+        if (left_size >= block_size__minimum && right_size >= block_size__minimum) {
+            DEBUG_PRINT("[CE]---postmerge skip\n");
+            goto after_merge;
+        }
+
+        const auto left_b = block_reader->read_block(left_val->addr, left_to_merge.value());
+        const auto right_b = block_reader->read_block(right_val->addr, right_to_merge.value());
+
+        if (left_size + right_size < block_size__maximum) {
+            // full merge into one block
+            DEBUG_PRINT("[CE]---postmerge into one block\n");
+            left_b->grow(left_b->size() + right_b->size());
+            std::copy_n(right_b->data(), right_b->size(), left_b->data() + left_size);
+            block_reader->remove_block(right_b);
+        } else {
+            // partial merge from bigger block into the smaller one
+            const uint64_t new_left_size = (left_size + right_size) / 2;
+            const uint64_t new_right_size = left_size + right_size - new_left_size;
+            const uint64_t gap_size = (left_size > right_size) ? (left_size - new_left_size)
+                                                               : (right_size - new_right_size);
+            if (left_size > right_size) {
+                DEBUG_PRINT("[CE]---postmerge partial from left to right\n");
+                right_b->grow(new_right_size);
+                std::copy_backward(right_b->data(), right_b->data() + right_size,
+                                   right_b->data() + new_right_size);
+                std::copy_n(left_b->data() + new_left_size, gap_size, right_b->data());
+                left_b->shrink(new_left_size);
+            } else {
+                DEBUG_PRINT("[CE]---postmerge partial from right to left\n");
+                left_b->grow(new_left_size);
+                std::copy_n(right_b->data(), gap_size, left_b->data() + left_size);
+                std::copy_n(right_b->data() + gap_size, new_right_size, right_b->data());
+                right_b->shrink(new_right_size);
+            }
+
+            int64_t key_delta = (left_b->key().pos + left_b->size()) - right_b->key().pos;
+            if (key_delta != 0) {
+                DEBUG_PRINT("[CE]---postmerge shifting right block by %ld\n", key_delta);
+                archive->index->add_to_range(key_delta, right_to_merge.value(), right_to_merge.value());
+                block_reader->add_to_range(key_delta, right_to_merge.value(), right_to_merge.value());
+            }
+        }
+    }
+after_merge:
 
     validate_tree(archive->index, file, true);
 
