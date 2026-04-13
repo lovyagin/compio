@@ -10,6 +10,8 @@
 
 Compio is a lightweight library designed for transparent data compression, enabling efficient and seamless integration into your projects.
 
+---
+
 ## Prerequisites
 
 - **Git**: Required for cloning the repository.
