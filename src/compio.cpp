@@ -1235,6 +1235,43 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
             // Limit gap size by write_end (we don't fill gap beyond what we write, unless we want to zero-fill? 
             
             uint64_t remaining_write = size - ptr_bytes_written;
+
+#ifndef COMPIO_DISABLE_INSERT_ERASE
+            // When appending at EOF, try to extend the current tail block instead of creating a
+            // new one. This reduces internal fragmentation caused by many small appends.
+            if (current_pos == file->size && current_pos > 0) {
+                const tree_key tail_probe{file->hash, current_pos - 1};
+                const auto tail_kv = archive->index->get_block(tail_probe);
+                if (tail_kv.has_value()) {
+                    const auto &[tail_key, tail_val] = tail_kv.value();
+                    if (tail_key.hash == file->hash && tail_key.pos + tail_val.size == current_pos &&
+                        tail_val.size < block_size__maximum) {
+                        const auto tail_block = block_reader->read_block(tail_val.addr, tail_key);
+                        if (!tail_block) {
+                            WARNING_PRINT(
+                                "warning: failed to decompress data (compressed block is corrupted)\n");
+                            errno = EIO;
+                            block_reader->disable_temporary_index();
+                            return ptr_bytes_written;
+                        }
+
+                        const uint64_t append_size =
+                            std::min<uint64_t>(remaining_write, block_size__maximum - tail_block->size());
+                        if (append_size > 0) {
+                            const uint64_t old_tail_size = tail_block->size();
+                            tail_block->grow(old_tail_size + append_size);
+                            std::copy_n(p_ptr, append_size, tail_block->data() + old_tail_size);
+
+                            p_ptr += append_size;
+                            ptr_bytes_written += append_size;
+                            file->cursor += append_size;
+                            file_table_item->size = file->size = std::max(file->size, current_pos + append_size);
+                            continue;
+                        }
+                    }
+                }
+            }
+#endif
             uint64_t current_block_size;
             
 #ifdef COMPIO_DISABLE_INSERT_ERASE
@@ -1688,17 +1725,16 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     const tree_key cursor_key = {file->hash, file->cursor};
     const auto key_val = archive->index->get_block(cursor_key);
+    const uint64_t block_size = archive->config.block_size;
+    const uint64_t block_size__minimum = archive->config.block_size__minimum;
+    const uint64_t block_size__maximum = archive->config.block_size__maximum;
+    const tree_key file_end_key{file->hash, UINT64_MAX};
 
-    // TODO: merge with existing block if size is small
-
-    std::shared_ptr<block> right_b;
-
+    bool inserted_into_existing = false;
     if (key_val.has_value()) {
-        // split block into two
         const auto &[left_key, left_val] = key_val.value();
         const auto left_b = block_reader->read_block(left_val.addr, left_key);
         if (!left_b) {
-            // failed to decompress
             WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
             errno = EIO;
             return 0;
@@ -1707,92 +1743,155 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
         assert(left_key.pos <= file->cursor);
         const uint64_t left_size = file->cursor - left_key.pos;
-        
-        // Only split if we are strictly inside the block (not at boundaries)
-        if (left_size > 0 && left_size < left_b->size()) {
-            assert(left_key.pos + left_b->size() > file->cursor);
-            const uint64_t right_size = left_b->size() - left_size;
+        const uint64_t old_size = left_b->size();
+        const uint64_t right_size = old_size - left_size;
+        const bool is_inside_block = (left_size > 0 && left_size < old_size);
 
-            // Create the right block at the *shifted* position.
-            // The right block will contain data that is conceptually after the insertion point.
-            // So its key should be cursor + size.
-            // However, we haven't shifted keys yet.
-            // The standard logic is:
-            // 1. Split block at cursor. Left part stays at left_key. Right part is created at cursor.
-            // 2. Shift all blocks starting from cursor by +size.
-            // So the right block (currently at cursor) will be shifted to cursor+size.
-            
-            // BUT: create_block adds the block to the cache with key=cursor_key.
-            // Then add_to_range shifts it.
-            const tree_key right_key = cursor_key;
-            right_b = block_reader->create_block(right_size, right_key);
-            
-            // Copy data to right block (offset by left_size)
-            // We use safe copy, ensuring we don't read out of bounds
+        if (is_inside_block && old_size + size <= block_size__maximum) {
+            const tree_key old_block_end_key{file->hash, left_key.pos + old_size};
+            archive->index->add_to_range(size, old_block_end_key, file_end_key);
+            block_reader->add_to_range(size, old_block_end_key, file_end_key);
+
+            left_b->grow(old_size + size);
             if (right_size > 0) {
-                 std::copy(left_b->data() + left_size, left_b->data() + left_size + right_size, right_b->data());
+                std::copy_backward(left_b->data() + left_size, left_b->data() + old_size,
+                                   left_b->data() + old_size + size);
             }
-    
-            // Shrink the left block
-            left_b->shrink(left_size);
+            std::copy_n(reinterpret_cast<const uint8_t *>(ptr), size, left_b->data() + left_size);
+
+            file->cursor += size;
+            file->size += size;
+            file_table_item->size = file->size;
+            inserted_into_existing = true;
+        } else if (is_inside_block) {
+            const tree_key old_block_end_key{file->hash, left_key.pos + old_size};
+            archive->index->add_to_range(size, old_block_end_key, file_end_key);
+            block_reader->add_to_range(size, old_block_end_key, file_end_key);
+
+            const auto left_b_const = std::static_pointer_cast<const block>(left_b);
+            const uint8_t *left_data = left_b_const->data();
+            const uint8_t *insert_data = reinterpret_cast<const uint8_t *>(ptr);
+            block_reader->remove_block(left_b);
+
+            struct segment {
+                const uint8_t *data;
+                uint64_t size;
+            };
+            std::vector<segment> segments;
+            segments.reserve(3);
+            if (left_size > 0) {
+                segments.push_back({left_data, left_size});
+            }
+            segments.push_back({insert_data, size});
+            if (right_size > 0) {
+                segments.push_back({left_data + left_size, right_size});
+            }
+
+            std::size_t segment_index = 0;
+            uint64_t segment_offset = 0;
+            auto copy_sequence = [&](uint8_t *dst, uint64_t bytes_needed) {
+                uint64_t copied = 0;
+                while (copied < bytes_needed) {
+                    assert(segment_index < segments.size());
+                    const auto &seg = segments[segment_index];
+                    const uint64_t seg_remaining = seg.size - segment_offset;
+                    const uint64_t take = std::min<uint64_t>(seg_remaining, bytes_needed - copied);
+                    std::copy_n(seg.data + segment_offset, take, dst + copied);
+                    copied += take;
+                    segment_offset += take;
+                    if (segment_offset == seg.size) {
+                        segment_offset = 0;
+                        ++segment_index;
+                    }
+                }
+            };
+
+            uint64_t bytes_left = old_size + size;
+            uint64_t block_cursor = left_key.pos;
+            while (bytes_left > 0) {
+                uint64_t current_block_size;
+                if (bytes_left < block_size || bytes_left - block_size < block_size__minimum) {
+                    current_block_size = bytes_left;
+                } else {
+                    current_block_size = block_size;
+                }
+
+                const tree_key key{file->hash, block_cursor};
+                const auto b = block_reader->create_block(current_block_size, key);
+                copy_sequence(b->data(), current_block_size);
+
+                block_cursor += current_block_size;
+                bytes_left -= current_block_size;
+            }
+
+            file->cursor += size;
+            file->size += size;
+            file_table_item->size = file->size;
+            inserted_into_existing = true;
         }
     }
 
-    // shift blocks after cursor
-    const tree_key file_end_key{file->hash, UINT64_MAX};
-    // Note: add_to_range shifts keys in [cursor_key, end].
-    // Since we just inserted right_b at cursor_key, it will be shifted to cursor_key + size.
-    // That is correct.
-    // However, if right_b is in cache, we must ensure its internal key is updated.
-    
-    archive->index->add_to_range(size, cursor_key, file_end_key);
-    block_reader->add_to_range(size, cursor_key, file_end_key);
+    if (!inserted_into_existing) {
+        std::shared_ptr<block> right_b;
 
-    // Explicitly update right_b key if add_to_range didn't catch it (e.g. if evicted immediately,
-    // although create_block puts it in cache, eviction is possible if cache size is extremely small).
-    // Or if block_reader->add_to_range iterates in a way that skips it?
-    // It iterates map using lower_bound. cursor_key is in range.
-    // But explicit update is safer and consistent with compio_erase fix.
-    if (right_b && right_b->key() == cursor_key) {
-        // It should have been shifted to cursor_key + size.
-        // If it's still cursor_key, shift it manually.
-        tree_key new_key = cursor_key;
-        new_key.pos += size;
-        right_b->set_key(new_key);
-    }
+        if (key_val.has_value()) {
+            const auto &[left_key, left_val] = key_val.value();
+            const auto left_b = block_reader->read_block(left_val.addr, left_key);
+            if (!left_b) {
+                WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
+                errno = EIO;
+                return 0;
+            }
+            assert(left_b->size() == left_val.size);
 
-    auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
-    uint64_t total_bytes_left = size;
-    uint64_t current_cursor = file->cursor;
-    
-    // write new data from p_ptr into new blocks
-    const uint64_t block_size = archive->config.block_size;
-    const uint64_t block_size__minimum = archive->config.block_size__minimum;
-    // const uint64_t block_size__maximum = archive->config.block_size__maximum; // Unused warning fix
-    
-    while (total_bytes_left > 0) {
-        uint64_t current_block_size;
-        // Logic to determine block size...
-        if (total_bytes_left < block_size || total_bytes_left - block_size < block_size__minimum) {
-             current_block_size = total_bytes_left;
-        } else {
-             current_block_size = block_size;
+            assert(left_key.pos <= file->cursor);
+            const uint64_t left_size = file->cursor - left_key.pos;
+            if (left_size > 0 && left_size < left_b->size()) {
+                assert(left_key.pos + left_b->size() > file->cursor);
+                const uint64_t right_size = left_b->size() - left_size;
+                right_b = block_reader->create_block(right_size, cursor_key);
+                if (right_size > 0) {
+                    std::copy(left_b->data() + left_size, left_b->data() + left_size + right_size,
+                              right_b->data());
+                }
+                left_b->shrink(left_size);
+            }
         }
 
-        const tree_key key{file->hash, current_cursor};
-        // We create blocks at their final position (because we already shifted existing blocks)
-        const auto b = block_reader->create_block(current_block_size, key);
-        std::copy_n(p_ptr, current_block_size, b->data());
+        archive->index->add_to_range(size, cursor_key, file_end_key);
+        block_reader->add_to_range(size, cursor_key, file_end_key);
 
-        p_ptr += current_block_size;
-        current_cursor += current_block_size;
-        // file->cursor += current_block_size; // Don't update file->cursor in loop, update at end
-        file->size += current_block_size;
-        if (file_table_item) file_table_item->size += current_block_size;
-        total_bytes_left -= current_block_size;
+        if (right_b && right_b->key() == cursor_key) {
+            tree_key new_key = cursor_key;
+            new_key.pos += size;
+            right_b->set_key(new_key);
+        }
+
+        auto p_ptr = reinterpret_cast<const uint8_t *>(ptr);
+        uint64_t total_bytes_left = size;
+        uint64_t current_cursor = file->cursor;
+
+        while (total_bytes_left > 0) {
+            uint64_t current_block_size;
+            if (total_bytes_left < block_size || total_bytes_left - block_size < block_size__minimum) {
+                current_block_size = total_bytes_left;
+            } else {
+                current_block_size = block_size;
+            }
+
+            const tree_key key{file->hash, current_cursor};
+            const auto b = block_reader->create_block(current_block_size, key);
+            std::copy_n(p_ptr, current_block_size, b->data());
+
+            p_ptr += current_block_size;
+            current_cursor += current_block_size;
+            file->size += current_block_size;
+            file_table_item->size += current_block_size;
+            total_bytes_left -= current_block_size;
+        }
+
+        file->cursor = current_cursor;
     }
-    
-    file->cursor = current_cursor;
     
     file->cached_leaf = smart_infile_object<compio::index_node>();
     invalidate_range_cache(file);

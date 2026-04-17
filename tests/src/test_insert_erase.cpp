@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <vector>
 
+#include "compio/btree.hpp"
 #include "compio/compio_file.hpp"
 #include "compio.h"
 
@@ -67,6 +68,16 @@ protected:
         uint64_t bytes_written = compio_write(data.data(), data.size(), file);
         ASSERT_EQ(bytes_written, data.size()) << "Failed to write initial data";
     }
+
+    std::size_t GetBlockCount() {
+        const compio::tree_key min_key{file->hash, 0};
+        const compio::tree_key max_key{file->hash, UINT64_MAX};
+        auto range_opt = archive->index->get_range(min_key, max_key);
+        if (!range_opt.has_value()) {
+            return 0;
+        }
+        return range_opt->size();
+    }
 };
 
 class InsertEraseParamTest : public ::testing::TestWithParam<std::tuple<size_t, size_t, size_t>> {
@@ -126,6 +137,56 @@ protected:
         compio_seek(file, 0, COMPIO_SEEK_SET);
         uint64_t bytes_written = compio_write(data.data(), data.size(), file);
         ASSERT_EQ(bytes_written, data.size()) << "Failed to write initial data";
+    }
+};
+
+class FragmentationReuseTest : public ::testing::Test {
+protected:
+    compio_config config;
+    compio_archive *archive{};
+    compio_file *file{};
+    char fn[256]{};
+
+    void SetUp() override {
+        compio_build_default_config(&config);
+        config.block_size = 4;
+        config.block_size__minimum = 2;
+        config.block_size__maximum = 8;
+
+        generate_tmp_fn(fn, sizeof(fn));
+        archive = compio_open_archive(fn, "w+", &config);
+        ASSERT_NE(archive, nullptr);
+        file = compio_open_file("frag_file", archive);
+        ASSERT_NE(file, nullptr);
+    }
+
+    void TearDown() override {
+        if (file) {
+            ASSERT_EQ(compio_close_file(file), 0);
+        }
+        if (archive) {
+            ASSERT_EQ(compio_close_archive(archive), 0);
+        }
+        remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
+    }
+
+    std::size_t GetBlockCount() {
+        const compio::tree_key min_key{file->hash, 0};
+        const compio::tree_key max_key{file->hash, UINT64_MAX};
+        auto range_opt = archive->index->get_range(min_key, max_key);
+        if (!range_opt.has_value()) {
+            return 0;
+        }
+        return range_opt->size();
+    }
+
+    void VerifyFileContent(const std::vector<unsigned char> &expected) {
+        ASSERT_EQ(compio_get_size(file), expected.size());
+        std::vector<unsigned char> actual(expected.size());
+        compio_seek(file, 0, COMPIO_SEEK_SET);
+        ASSERT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+        ASSERT_EQ(actual, expected);
     }
 };
 
@@ -463,6 +524,50 @@ TEST_P(InsertEraseTest, MultiBlockFileErase2) {
     ASSERT_EQ(erased, 9);
     std::vector<unsigned char> expected = {1, 2, 3, 12, 13, 14};
     VerifyFileContent(expected);
+}
+
+TEST_P(InsertEraseTest, WriteAtEndAppendsIntoTailBlockWhenFits) {
+    std::vector<unsigned char> initial = {1, 2, 3};
+    WriteInitialData(initial);
+    ASSERT_EQ(GetBlockCount(), 1u);
+
+    compio_seek(file, 3, COMPIO_SEEK_SET);
+    std::vector<unsigned char> append = {4, 5};
+    uint64_t written = compio_write(append.data(), append.size(), file);
+
+    ASSERT_EQ(written, append.size());
+    std::vector<unsigned char> expected = {1, 2, 3, 4, 5};
+    VerifyFileContent(expected);
+    ASSERT_EQ(GetBlockCount(), 1u);
+}
+
+TEST_P(InsertEraseTest, InsertInMiddleReusesBlockWhenFitsMaximum) {
+    std::vector<unsigned char> initial = {1, 2, 3, 4};
+    WriteInitialData(initial);
+    ASSERT_EQ(GetBlockCount(), 1u);
+
+    compio_seek(file, 2, COMPIO_SEEK_SET);
+    std::vector<unsigned char> insert_data = {9, 8, 7};
+    uint64_t inserted = compio_insert(insert_data.data(), insert_data.size(), file);
+
+    ASSERT_EQ(inserted, insert_data.size());
+    std::vector<unsigned char> expected = {1, 2, 9, 8, 7, 3, 4};
+    VerifyFileContent(expected);
+    ASSERT_EQ(GetBlockCount(), 1u);
+}
+
+TEST_F(FragmentationReuseTest, InsertInMiddleRepacksBlockWhenExceedingMaximum) {
+    std::vector<unsigned char> initial = {1, 2, 3, 4};
+    ASSERT_EQ(compio_write(initial.data(), initial.size(), file), initial.size());
+    ASSERT_EQ(GetBlockCount(), 1u);
+
+    compio_seek(file, 2, COMPIO_SEEK_SET);
+    std::vector<unsigned char> insert_data = {9, 8, 7, 6, 5};
+    ASSERT_EQ(compio_insert(insert_data.data(), insert_data.size(), file), insert_data.size());
+
+    std::vector<unsigned char> expected = {1, 2, 9, 8, 7, 6, 5, 3, 4};
+    VerifyFileContent(expected);
+    ASSERT_EQ(GetBlockCount(), 2u);
 }
 
 // Parameterized tests for different data sizes
