@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <benchmark/benchmark.h>
 #include <random>
+#include <iostream>
 
 #include "compio/compio_file.hpp"
 #include "compio/storage_block_reader.hpp"
@@ -102,7 +103,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
             return;
         }
 
-        const std::size_t block_size = 4096;
+        const std::size_t block_size = sample_data_size;
         std::minstd_rand rng(0);
         std::uniform_int_distribution<std::size_t> d1(0, sample_data_size - block_size);
 
@@ -212,12 +213,12 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
             return;
         }
 
-        const std::size_t block_size = 4096;
+        const std::size_t block_size = sample_data_size;
         std::minstd_rand rng(0);
         std::uniform_int_distribution<std::size_t> d1(0, sample_data_size - block_size);
 
-        for (std::size_t i = 0; i < file_size / block_size; ++i) {
-            auto bytes_to_write = std::min(block_size, file_size - i * block_size);
+        for (std::size_t i = 0; i < file_size; i += block_size) {
+            auto bytes_to_write = std::min(block_size, file_size - i);
             auto bytes = compio_write(sample_data + d1(rng), bytes_to_write, file);
             if (bytes != bytes_to_write) {
                 compio_close_file(file);
@@ -231,7 +232,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         auto actual_file_size = compio_tell(file);
         if (actual_file_size != file_size) {
             state.SkipWithError("wrong file_size: " + std::to_string(actual_file_size) +
-                                " != " + std::to_string(file_size));
+                                " != " + std::to_string(file_size) + "; " + std::to_string(block_size));
         }
 
         compio_close_file(file);
@@ -335,8 +336,8 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {false, true}, {1 << 11}, {1 << 20}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
-    {2},           {2048},    {1 << 13},
+    {false, true}, {1 << 11}, {1 << 25}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
+    {2},           {1 << 12}, {1 << 17},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
