@@ -36,4 +36,6 @@ using benchmark_context = std::vector<std::pair<std::string, std::string>>;
 
 benchmark_context build_config_from_file(std::string fn, compio_config *config);
 
+std::pair<const char*, std::size_t> load_webster_data();
+
 #endif // BENCHMARK_UTIL_HPP_
