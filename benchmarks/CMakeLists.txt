@@ -1,5 +1,13 @@
 find_package(benchmark REQUIRED)
 
+add_library(zran STATIC third_party/zran/zran.c)
+target_link_libraries(zran PRIVATE ZLIB::ZLIB)
+target_include_directories(zran PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zran)
+
+add_library(seekable_zstd STATIC third_party/zstd_seekable/zstdseek_compress.c third_party/zstd_seekable/zstdseek_decompress.c)
+target_link_libraries(seekable_zstd PRIVATE $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>)
+target_include_directories(seekable_zstd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable)
+
 add_executable(compio_benchmarks
     src/benchmark_util.cpp
     src/benchmarks_main.cpp
@@ -14,8 +22,8 @@ add_executable(compio_benchmarks
     src/checksum_benchmark.cpp
     src/scatter.cpp
 )
-target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
-target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> ZLIB::ZLIB zran seekable_zstd)
+target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zran ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable)
 
 target_compile_definitions(compio_benchmarks PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
@@ -45,3 +53,39 @@ target_link_libraries(index_benchmark_custom PRIVATE compio)
 add_executable(io_overhead custom/io_overhead.cpp)
 target_link_libraries(io_overhead PRIVATE compio)
 
+if (FALSE)
+add_executable(size_comparison_3way
+    custom/size_comparison_3way.cpp
+    third_party/zstd_seekable/zstdseek_compress.c
+)
+target_include_directories(size_comparison_3way PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable
+)
+target_link_libraries(size_comparison_3way PRIVATE
+    compio
+    ZLIB::ZLIB
+    $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+)
+
+add_executable(locality_access_comparison
+    custom/locality_access_comparison.cpp
+    third_party/zran/zran.c
+    third_party/zstd_seekable/zstdseek_compress.c
+    third_party/zstd_seekable/zstdseek_decompress.c
+)
+target_include_directories(locality_access_comparison PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zran
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable
+)
+target_link_libraries(locality_access_comparison PRIVATE
+    compio
+    ZLIB::ZLIB
+    $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>
+)
+target_compile_definitions(locality_access_comparison PRIVATE
+    _POSIX_C_SOURCE=200809L
+    _FILE_OFFSET_BITS=64
+)
+endif()
