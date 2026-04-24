@@ -104,3 +104,32 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config) 
 
     return bc;
 }
+
+std::pair<const char*, std::size_t> load_webster_data() {
+    static std::vector<char> data;
+    static bool loaded = false;
+    if (loaded) {
+        return {data.data(), data.size()};
+    }
+
+    const char* webster_path = BENCHMARK_DATA_DIR "/webster";
+    const std::filesystem::path exePath = std::filesystem::canonical(webster_path);
+    const std::filesystem::path exeDir = exePath.parent_path();
+    const std::filesystem::path dataPath = exeDir / "webster";
+
+    std::ifstream file;
+    file.open(dataPath, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        throw std::runtime_error("could not open benchmark data file at: " + std::string(dataPath.c_str()));
+    }
+
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    data.resize(static_cast<std::size_t>(size));
+    if (!file.read(data.data(), size)) {
+        throw std::runtime_error("failed to read webster data file");
+    }
+
+    loaded = true;
+    return {data.data(), data.size()};
+}

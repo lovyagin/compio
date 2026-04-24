@@ -14,6 +14,8 @@ add_executable(compio_benchmarks
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
 target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+target_compile_definitions(compio_benchmarks PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
 add_executable(fsize_benchmark custom/fsize_benchmark.cpp)
 target_link_libraries(fsize_benchmark PRIVATE compio)
 target_include_directories(fsize_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

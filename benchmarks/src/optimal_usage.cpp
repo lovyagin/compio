@@ -13,8 +13,6 @@
 
 #include "compio.h"
 
-#include "sample_data.hpp"
-
 struct UsageStrategy {
     struct Operation {
         std::size_t pos;
@@ -88,6 +86,12 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
     const double gamma_scale = state.range(5);
     const double region_size = state.range(6);
 
+    auto [sample_data, sample_data_size] = load_webster_data();
+    if (!sample_data) {
+        state.SkipWithError("failed to load sample data file (webster)");
+        return;
+    }
+
     std::string fn = get_temporary_filename();
 
     if (!is_write) {
@@ -100,11 +104,11 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
 
         const std::size_t block_size = 4096;
         std::minstd_rand rng(0);
-        std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
+        std::uniform_int_distribution<std::size_t> d1(0, sample_data_size - block_size);
 
         for (std::size_t i = 0; i < file_size; i += block_size) {
             auto bytes_to_write = std::min(block_size, file_size - i);
-            auto bytes = fwrite(html_data + d1(rng), 1, bytes_to_write, file);
+            auto bytes = fwrite(sample_data + d1(rng), 1, bytes_to_write, file);
             if (bytes != bytes_to_write) {
                 fclose(file);
                 state.SkipWithError(std::string("fwrite returned ") + std::to_string(bytes) +
@@ -122,7 +126,7 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
         fclose(file);
     }
 
-    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, gamma_shape, gamma_scale,
+    UsageStrategy strategy(0, sample_data, sample_data_size, file_size, gamma_shape, gamma_scale,
                            region_size, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
@@ -185,6 +189,12 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     const double gamma_scale = state.range(5);
     const double region_size = state.range(6);
 
+    auto [sample_data, sample_data_size] = load_webster_data();
+    if (!sample_data) {
+        state.SkipWithError("failed to load sample data file (webster)");
+        return;
+    }
+
     std::string fn = get_temporary_filename();
 
     if (!is_write) {
@@ -204,11 +214,11 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 
         const std::size_t block_size = 4096;
         std::minstd_rand rng(0);
-        std::uniform_int_distribution<std::size_t> d1(0, sizeof(html_data) - block_size);
+        std::uniform_int_distribution<std::size_t> d1(0, sample_data_size - block_size);
 
         for (std::size_t i = 0; i < file_size / block_size; ++i) {
             auto bytes_to_write = std::min(block_size, file_size - i * block_size);
-            auto bytes = compio_write(html_data + d1(rng), bytes_to_write, file);
+            auto bytes = compio_write(sample_data + d1(rng), bytes_to_write, file);
             if (bytes != bytes_to_write) {
                 compio_close_file(file);
                 compio_close_archive(archive);
@@ -228,7 +238,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         compio_close_archive(archive);
     }
 
-    UsageStrategy strategy(0, html_data, sizeof(html_data), file_size, gamma_shape, gamma_scale,
+    UsageStrategy strategy(0, sample_data, sample_data_size, file_size, gamma_shape, gamma_scale,
                            region_size, n_switch);
     std::unique_ptr<char> buffer(new char[file_size]);
     std::size_t total_bytes_processed = 0;
