@@ -69,6 +69,42 @@ cd build/benchmarks
 ./random_usage
 ```
 
+### 5. **Locality Comparison Benchmark** (`locality_access_comparison`)
+Compares random-access read performance across:
+- `compio`
+- `zran` (indexed gzip random access)
+- `seekable zstd`
+
+Outputs a CSV with per-run metrics vs locality parameter (`n_switch`), then
+you can render a performance graph.
+
+**Run:**
+```bash
+cd build/benchmarks
+./locality_access_comparison locality_access_comparison.csv
+python3 ../../benchmarks/plot_locality_comparison.py locality_access_comparison.csv locality_access_comparison.png
+```
+
+If you want to source `compio` curve from an external Google Benchmark JSON
+(instead of the local comparison CSV), pass it as third argument:
+```bash
+python3 ../../benchmarks/plot_locality_comparison.py \
+  locality_access_comparison.csv locality_access_comparison.png ~/.copilot/out_zstd.json
+```
+
+### 6. **3-way File Size Comparison** (`size_comparison_3way`)
+Prints a small markdown table with on-disk sizes for:
+- `compio (zstd)`
+- `zran-compatible gzip` (with full flush points every 8 KiB)
+- `seekable zstd` (8 KiB frames)
+
+**Run:**
+```bash
+cd build/benchmarks
+./size_comparison_3way                 # default payload: 1.0625 GiB
+./size_comparison_3way 16777216        # custom payload size (bytes)
+```
+
 ## Quick Start
 
 ### Build all benchmarks:

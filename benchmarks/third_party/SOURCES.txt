@@ -1,0 +1,14 @@
+zran (Mark Adler zlib example):
+- https://raw.githubusercontent.com/madler/zlib/f9dd6009be3ed32415edf1e89d1bc38380ecb95d/examples/zran.c
+- https://raw.githubusercontent.com/madler/zlib/f9dd6009be3ed32415edf1e89d1bc38380ecb95d/examples/zran.h
+
+seekable zstd (facebook/zstd contrib):
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/contrib/seekable_format/zstd_seekable.h
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/contrib/seekable_format/zstdseek_compress.c
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/contrib/seekable_format/zstdseek_decompress.c
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/lib/common/mem.h
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/lib/common/xxhash.h
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/lib/common/compiler.h
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/lib/common/debug.h
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/lib/common/zstd_deps.h
+- https://raw.githubusercontent.com/facebook/zstd/48c0ed73625272cb7445183b5e256b5d0a130316/lib/common/portability_macros.h
