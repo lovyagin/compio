@@ -471,6 +471,7 @@ static void BM_zran_OptimalUsage(benchmark::State &state) {
     const double gamma_shape = state.range(3);
     const double gamma_scale = state.range(4);
     const std::size_t region_size = state.range(5);
+    const std::size_t block_size = state.range(6);
 
     auto [sample_data, sample_data_size] = load_webster_data();
     if (!sample_data) {
@@ -483,7 +484,7 @@ static void BM_zran_OptimalUsage(benchmark::State &state) {
 
     // Create a gzip file with flush intervals
     std::string gzip_path = get_temporary_filename() + ".gz";
-    write_gzip_file_with_flush(gzip_path, payload, region_size);
+    write_gzip_file_with_flush(gzip_path, payload, block_size);
 
     // Build zran index (once)
     FILE* index_file = std::fopen(gzip_path.c_str(), "rb");
@@ -492,13 +493,16 @@ static void BM_zran_OptimalUsage(benchmark::State &state) {
         return;
     }
     struct deflate_index* zran_index = nullptr;
-    int access_points = deflate_index_build(index_file, static_cast<off_t>(region_size), &zran_index);
+    int access_points = deflate_index_build(index_file, static_cast<off_t>(block_size), &zran_index);
     std::fclose(index_file);
     if (access_points < 1 || !zran_index) {
         state.SkipWithError("deflate_index_build failed");
         remove(gzip_path.c_str());
         return;
     }
+
+    const std::size_t bytes_per_index_entry = 1 << 15;
+    std::size_t index_storage_size = static_cast<std::size_t>(access_points) * bytes_per_index_entry;
 
     // Scratch buffer for reads (max size = region_size)
     std::vector<char> scratch(region_size);
@@ -535,8 +539,8 @@ static void BM_zran_OptimalUsage(benchmark::State &state) {
     }
 
     state.SetBytesProcessed(total_bytes_processed);
-    state.counters["file_size"] = get_file_size(gzip_path.c_str());
-    state.counters["n_bytes_read"] = static_cast<double>(total_bytes_processed) / state.iterations();
+    state.counters["file_size"] = get_file_size(gzip_path.c_str()) + index_storage_size;
+    state.counters["index_size"] = index_storage_size;
 
     deflate_index_free(zran_index);
     remove(gzip_path.c_str());
@@ -549,6 +553,7 @@ static void BM_seekable_zstd_OptimalUsage(benchmark::State &state) {
     const double gamma_shape = state.range(3);
     const double gamma_scale = state.range(4);
     const std::size_t region_size = state.range(5);
+    const std::size_t max_frame_size = state.range(6);
 
     auto [sample_data, sample_data_size] = load_webster_data();
     if (!sample_data) {
@@ -559,9 +564,8 @@ static void BM_seekable_zstd_OptimalUsage(benchmark::State &state) {
     // Build the raw payload from the sample data
     std::vector<char> payload = build_payload_from_sample(sample_data, sample_data_size, file_size);
 
-    // Create a seekable zstd file with max frame size = region_size
     std::string zstd_path = get_temporary_filename() + ".seek.zst";
-    write_seekable_zstd_file(zstd_path, payload, static_cast<unsigned>(region_size));
+    write_seekable_zstd_file(zstd_path, payload, max_frame_size);
 
     // Scratch buffer for reads
     std::vector<char> scratch(region_size);
@@ -614,7 +618,6 @@ static void BM_seekable_zstd_OptimalUsage(benchmark::State &state) {
 
     state.SetBytesProcessed(total_bytes_processed);
     state.counters["file_size"] = get_file_size(zstd_path.c_str());
-    state.counters["n_bytes_read"] = static_cast<double>(total_bytes_processed) / state.iterations();
 
     remove(zstd_path.c_str());
 }
@@ -640,6 +643,16 @@ const std::vector<std::vector<int64_t>> read_params_grid = {
     {1 << 17},     // region_size
 };
 
+const std::vector<std::vector<int64_t>> read_params_grid_alt = {
+    {1 << 11},     // n_operations
+    {1 << 25},     // file_size
+    {32},          // n_switch
+    {2},           // gamma_shape
+    {1 << 12},     // gamma_scale
+    {1 << 17},     // region_size
+    {1 << 14, 1 << 15, 1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20, 1 << 21, 1 << 22, 1 << 23},     // frame/block size
+};
+
 BENCHMARK(BM_stdio_OptimalUsage)
     ->ArgsProduct(params_grid)
     ->Unit(benchmark::kMillisecond)
@@ -651,11 +664,11 @@ BENCHMARK(BM_compio_OptimalUsage)
     ->UseRealTime();
 
 BENCHMARK(BM_zran_OptimalUsage)
-    ->ArgsProduct(read_params_grid)
+    ->ArgsProduct(read_params_grid_alt)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
 
 BENCHMARK(BM_seekable_zstd_OptimalUsage)
-    ->ArgsProduct(read_params_grid)
+    ->ArgsProduct(read_params_grid_alt)
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
