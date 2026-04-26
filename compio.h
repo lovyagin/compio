@@ -120,6 +120,11 @@ typedef struct compio_compressor {
      *
      */
     compio_compression_type compression_type;
+
+    /**
+     * @brief Compression level
+     */
+    int level;
 } compio_compressor;
 
 /**
@@ -137,11 +142,25 @@ void compio_build_dummy_compressor(compio_compressor *result);
 void compio_build_zlib_compressor(compio_compressor *result);
 
 /**
+ * @brief ZLIB compressor
+ *
+ * @param result
+ */
+void compio_build_zlib_compressor_with_level(compio_compressor *result, int level);
+
+/**
  * @brief LZ4 compressor - very fast compression/decompression
  *
  * @param result
  */
 void compio_build_lz4_compressor(compio_compressor *result);
+
+/**
+ * @brief LZ4 compressor - very fast compression/decompression
+ *
+ * @param result
+ */
+void compio_build_lz4_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief Zstandard (zstd) compressor - modern efficient compression
@@ -151,11 +170,25 @@ void compio_build_lz4_compressor(compio_compressor *result);
 void compio_build_zstd_compressor(compio_compressor *result);
 
 /**
+ * @brief Zstandard (zstd) compressor - modern efficient compression
+ *
+ * @param result
+ */
+void compio_build_zstd_compressor_with_level(compio_compressor *result, int level);
+
+/**
  * @brief Brotli compressor - high compression ratio
  *
  * @param result
  */
 void compio_build_brotli_compressor(compio_compressor *result);
+
+/**
+ * @brief Brotli compressor - high compression ratio
+ *
+ * @param result
+ */
+void compio_build_brotli_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief Build compressor based on compression type

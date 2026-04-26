@@ -36,7 +36,7 @@ int zlib_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst
     uLongf compressed_size = (uLongf)*dst_size;
 
     int ret = compress2((Bytef *)dst, &compressed_size, (const Bytef *)src, (uLong)src_size,
-                        Z_DEFAULT_COMPRESSION);
+                        comp->level);
 
     if (ret == Z_OK) {
         *dst_size = compressed_size;
@@ -75,12 +75,17 @@ uint64_t zlib_get_bufsize(const struct compio_compressor* comp, uint64_t src_siz
     return src_size + src_size / 1000 + 12;
 }
 
-void compio_build_zlib_compressor(compio_compressor *result) {
+void compio_build_zlib_compressor_with_level(compio_compressor *result, int level) {
     result->compress = zlib_compress;
     result->decompress = zlib_decompress;
     result->get_bufsize = zlib_get_bufsize;
     result->compression_type = COMPIO_COMPRESS_ZLIB;
+    result->level = level;
 }
+
+void compio_build_zlib_compressor(compio_compressor *result) {
+    compio_build_zlib_compressor_with_level(result, Z_DEFAULT_COMPRESSION);
+} 
 
 /**
  * @brief Compress data using LZ4 algorithm
@@ -98,8 +103,8 @@ int lz4_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_
         return -1;
     }
 
-    int compressed_size =
-        LZ4_compress_default((const char *)src, (char *)dst, (int)src_size, (int)*dst_size);
+    int compressed_size = 
+        LZ4_compress_fast((const char *)src, (char *)dst, (int)src_size, (int)*dst_size, comp->level);
 
     if (compressed_size <= 0) {
         errno = ENOBUFS;
@@ -151,11 +156,16 @@ uint64_t lz4_get_bufsize(const struct compio_compressor* comp, uint64_t src_size
     return LZ4_compressBound((int)src_size);
 }
 
-void compio_build_lz4_compressor(compio_compressor *result) {
+void compio_build_lz4_compressor_with_level(compio_compressor *result, int level) {
     result->compress = lz4_compress;
     result->decompress = lz4_decompress;
     result->get_bufsize = lz4_get_bufsize;
     result->compression_type = COMPIO_COMPRESS_LZ4;
+    result->level = level;
+}
+
+void compio_build_lz4_compressor(compio_compressor *result) {
+    compio_build_lz4_compressor_with_level(result, 1);
 }
 
 /**
@@ -168,7 +178,7 @@ void compio_build_lz4_compressor(compio_compressor *result) {
  * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
  */
 int zstd_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
-    size_t compressed_size = ZSTD_compress(dst, *dst_size, src, src_size, 5);
+    size_t compressed_size = ZSTD_compress(dst, *dst_size, src, src_size, comp->level);
 
     if (ZSTD_isError(compressed_size)) {
         errno = ENOBUFS;
@@ -208,11 +218,16 @@ int zstd_decompress(const struct compio_compressor* comp, void *dst, uint64_t *d
  */
 uint64_t zstd_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) { return ZSTD_compressBound(src_size); }
 
-void compio_build_zstd_compressor(compio_compressor *result) {
+void compio_build_zstd_compressor_with_level(compio_compressor *result, int level) {
     result->compress = zstd_compress;
     result->decompress = zstd_decompress;
     result->get_bufsize = zstd_get_bufsize;
     result->compression_type = COMPIO_COMPRESS_ZSTD;
+    result->level = level;
+}
+
+void compio_build_zstd_compressor(compio_compressor *result) {
+    compio_build_zstd_compressor_with_level(result, 5);
 }
 
 /**
@@ -228,7 +243,7 @@ int brotli_compress(const struct compio_compressor* comp, void *dst, uint64_t *d
     size_t encoded_size = *dst_size;
 
     int result =
-        BrotliEncoderCompress(5, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE,
+        BrotliEncoderCompress(comp->level, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE,
                               src_size, (const uint8_t *)src, &encoded_size, (uint8_t *)dst);
 
     if (!result) {
@@ -272,11 +287,16 @@ int brotli_decompress(const struct compio_compressor* comp, void *dst, uint64_t 
  */
 uint64_t brotli_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) { return BrotliEncoderMaxCompressedSize(src_size); }
 
-void compio_build_brotli_compressor(compio_compressor *result) {
+void compio_build_brotli_compressor_with_level(compio_compressor *result, int level) {
     result->compress = brotli_compress;
     result->decompress = brotli_decompress;
     result->get_bufsize = brotli_get_bufsize;
     result->compression_type = COMPIO_COMPRESS_BROTLI;
+    result->level = level;
+}
+
+void compio_build_brotli_compressor(compio_compressor *result) {
+    compio_build_brotli_compressor_with_level(result, 5);
 }
 
 /**
