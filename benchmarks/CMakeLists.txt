@@ -18,6 +18,9 @@ add_executable(compio_benchmarks
     src/optimal_usage.cpp
     src/allocator_benchmark.cpp
     src/defragmentation_benchmark.cpp
+    src/lookup_benchmark.cpp
+    src/checksum_benchmark.cpp
+    src/scatter.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> ZLIB::ZLIB zran seekable_zstd)
 target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zran ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable)
