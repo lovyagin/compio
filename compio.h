@@ -98,7 +98,7 @@ typedef struct compio_compressor {
      * dst_size. If dst buffer is too small, return non-zero code and set errno =
      * ENOBUFS.
      */
-    int (*compress)(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
+    int (*compress)(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
 
     /**
      * @brief Decompress src_size of bytes, that was previously
@@ -106,13 +106,13 @@ typedef struct compio_compressor {
      * success, return 0 and write real size of decompressed data into dst_size.
      * If dst buffer is too small, return non-zero code and set errno = ENOBUFS.
      */
-    int (*decompress)(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
+    int (*decompress)(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
 
     /**
      * @brief Get size of buffer, that needs to be provided to function compress()
      *
      */
-    uint64_t (*get_bufsize)(uint64_t src_size);
+    uint64_t (*get_bufsize)(const struct compio_compressor* comp, uint64_t src_size);
 
     /**
      * @brief Compression type, that will be saved in archive header (see compio_compression_type
@@ -120,6 +120,11 @@ typedef struct compio_compressor {
      *
      */
     compio_compression_type compression_type;
+
+    /**
+     * @brief Compression level
+     */
+    int level;
 } compio_compressor;
 
 /**
@@ -137,11 +142,25 @@ void compio_build_dummy_compressor(compio_compressor *result);
 void compio_build_zlib_compressor(compio_compressor *result);
 
 /**
+ * @brief ZLIB compressor
+ *
+ * @param result
+ */
+void compio_build_zlib_compressor_with_level(compio_compressor *result, int level);
+
+/**
  * @brief LZ4 compressor - very fast compression/decompression
  *
  * @param result
  */
 void compio_build_lz4_compressor(compio_compressor *result);
+
+/**
+ * @brief LZ4 compressor - very fast compression/decompression
+ *
+ * @param result
+ */
+void compio_build_lz4_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief Zstandard (zstd) compressor - modern efficient compression
@@ -151,11 +170,25 @@ void compio_build_lz4_compressor(compio_compressor *result);
 void compio_build_zstd_compressor(compio_compressor *result);
 
 /**
+ * @brief Zstandard (zstd) compressor - modern efficient compression
+ *
+ * @param result
+ */
+void compio_build_zstd_compressor_with_level(compio_compressor *result, int level);
+
+/**
  * @brief Brotli compressor - high compression ratio
  *
  * @param result
  */
 void compio_build_brotli_compressor(compio_compressor *result);
+
+/**
+ * @brief Brotli compressor - high compression ratio
+ *
+ * @param result
+ */
+void compio_build_brotli_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief Build compressor based on compression type

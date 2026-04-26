@@ -53,7 +53,7 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
 
     if (b.is_compressed) {
         _data = std::make_unique<uint8_t[]>(_size);
-        int ret = context.compressor->decompress(_data.get(), &_size, b.data.get(), b.size);
+        int ret = context.compressor->decompress(context.compressor, _data.get(), &_size, b.data.get(), b.size);
         if (ret != 0) {
             WARNING_PRINT(
                 "warning: compressed data is too big after decompression (%" PRIu64 " is not enough)\n",
@@ -90,11 +90,11 @@ block::~block() {
     }
     DEBUG_PRINT("[B][destructor]: called destructor for {%lu, %lu} (is_modified=%d, is_removed=%d)\n", _key.hash, _key.pos, _is_modified, _is_removed);
     if (_is_modified && !_is_removed) {
-        storage_block b(context.compressor->get_bufsize(_size));
+        storage_block b(context.compressor->get_bufsize(context.compressor, _size));
         b.original_size = _size;
         b.checksum_type = context.checksum_type;
 
-        int ret = context.compressor->compress(b.data.get(), &b.size, _data.get(), _size);
+        int ret = context.compressor->compress(context.compressor, b.data.get(), &b.size, _data.get(), _size);
         if (ret != 0 || b.size > _size) {
             if (ret != 0) {
                 WARNING_PRINT("warning: compressor->compress returned %d\n", ret);

@@ -2462,7 +2462,7 @@ int compio_repair(const char *path, const char *output_dir) {
                          return;
                     }
                     std::vector<uint8_t> decomp_buf(decomp_size);
-                    if (compressor.decompress(decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0) {
+                    if (compressor.decompress(&compressor, decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0) {
                         fseek64(out_f, file_pos, SEEK_SET);
                         fwrite(decomp_buf.data(), 1, decomp_size, out_f);
                     } else {
