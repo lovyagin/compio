@@ -98,7 +98,7 @@ typedef struct compio_compressor {
      * dst_size. If dst buffer is too small, return non-zero code and set errno =
      * ENOBUFS.
      */
-    int (*compress)(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
+    int (*compress)(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
 
     /**
      * @brief Decompress src_size of bytes, that was previously
@@ -106,13 +106,13 @@ typedef struct compio_compressor {
      * success, return 0 and write real size of decompressed data into dst_size.
      * If dst buffer is too small, return non-zero code and set errno = ENOBUFS.
      */
-    int (*decompress)(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
+    int (*decompress)(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size);
 
     /**
      * @brief Get size of buffer, that needs to be provided to function compress()
      *
      */
-    uint64_t (*get_bufsize)(uint64_t src_size);
+    uint64_t (*get_bufsize)(const struct compio_compressor* comp, uint64_t src_size);
 
     /**
      * @brief Compression type, that will be saved in archive header (see compio_compression_type

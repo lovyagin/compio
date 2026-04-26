@@ -18,14 +18,14 @@ TEST_P(CompressorTest, RoundTripTest) {
     std::vector<char> dec_data(src_size, 0);
     std::copy_n(std::begin(html_data), src_size / zeroes_percentage, dec_data.begin());
 
-    uint64_t buffer_size = compressor.get_bufsize(src_size);
+    uint64_t buffer_size = compressor.get_bufsize(&compressor, src_size);
     std::vector<char> c_buffer(buffer_size);
 
-    int ret = compressor.compress(c_buffer.data(), &buffer_size, dec_data.data(), src_size);
+    int ret = compressor.compress(&compressor, c_buffer.data(), &buffer_size, dec_data.data(), src_size);
     ASSERT_EQ(ret, 0);
 
     std::vector<char> dec_buffer(src_size);
-    ret = compressor.decompress(dec_buffer.data(), &src_size, c_buffer.data(), buffer_size);
+    ret = compressor.decompress(&compressor, dec_buffer.data(), &src_size, c_buffer.data(), buffer_size);
     ASSERT_EQ(ret, 0);
 
     for (std::size_t i = 0; i < src_size; ++i) {

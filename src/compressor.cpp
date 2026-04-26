@@ -9,7 +9,7 @@
 
 #include "compio.h"
 
-int dummy_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int dummy_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     if (*dst_size < src_size) {
         errno = ENOBUFS;
         return -1;
@@ -19,11 +19,11 @@ int dummy_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_
     return 0;
 }
 
-int dummy_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
-    return dummy_compress(dst, dst_size, src, src_size);
+int dummy_decompress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+    return dummy_compress(comp, dst, dst_size, src, src_size);
 }
 
-uint64_t dummy_get_bufsize(uint64_t src_size) { return src_size; }
+uint64_t dummy_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) { return src_size; }
 
 void compio_build_dummy_compressor(compio_compressor *result) {
     result->compress = dummy_compress;
@@ -32,7 +32,7 @@ void compio_build_dummy_compressor(compio_compressor *result) {
     result->compression_type = COMPIO_COMPRESS_DUMMY;
 }
 
-int zlib_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int zlib_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     uLongf compressed_size = (uLongf)*dst_size;
 
     int ret = compress2((Bytef *)dst, &compressed_size, (const Bytef *)src, (uLong)src_size,
@@ -50,7 +50,7 @@ int zlib_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_s
     }
 }
 
-int zlib_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int zlib_decompress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     uLongf decompressed_size = (uLongf)*dst_size;
 
     int ret = uncompress((Bytef *)dst, &decompressed_size, (const Bytef *)src, (uLong)src_size);
@@ -67,7 +67,7 @@ int zlib_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src
     }
 }
 
-uint64_t zlib_get_bufsize(uint64_t src_size) {
+uint64_t zlib_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) {
     /*
     source:
     https://refspecs.linuxbase.org/LSB_3.0.0/LSB-Core-generic/LSB-Core-generic/zlib-compress2-1.html#:~:text=(sourceLen%20%EF%BF%BD%201.001)%20%2B%2012
@@ -92,7 +92,7 @@ void compio_build_zlib_compressor(compio_compressor *result) {
  * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small, EINVAL if size too
  * large)
  */
-int lz4_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int lz4_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     if (src_size > INT_MAX || *dst_size > INT_MAX) {
         errno = EINVAL;
         return -1;
@@ -120,7 +120,7 @@ int lz4_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_si
  * @return 0 on success, -1 on error (sets errno to EIO on decompression failure, EINVAL if size too
  * large)
  */
-int lz4_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int lz4_decompress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     if (src_size > INT_MAX || *dst_size > INT_MAX) {
         errno = EINVAL;
         return -1;
@@ -144,7 +144,7 @@ int lz4_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_
  * @param src_size Size of data to be compressed
  * @return Maximum possible size of compressed data, or 0 if size too large
  */
-uint64_t lz4_get_bufsize(uint64_t src_size) {
+uint64_t lz4_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) {
     if (src_size > INT_MAX) {
         return 0;
     }
@@ -167,7 +167,7 @@ void compio_build_lz4_compressor(compio_compressor *result) {
  * @param src_size Source data size in bytes
  * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
  */
-int zstd_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int zstd_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     size_t compressed_size = ZSTD_compress(dst, *dst_size, src, src_size, 5);
 
     if (ZSTD_isError(compressed_size)) {
@@ -188,7 +188,7 @@ int zstd_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_s
  * @param src_size Compressed data size in bytes
  * @return 0 on success, -1 on error (sets errno to EIO on decompression failure)
  */
-int zstd_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int zstd_decompress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     size_t decompressed_size = ZSTD_decompress(dst, *dst_size, src, src_size);
 
     if (ZSTD_isError(decompressed_size)) {
@@ -206,7 +206,7 @@ int zstd_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src
  * @param src_size Size of data to be compressed
  * @return Maximum possible size of compressed data
  */
-uint64_t zstd_get_bufsize(uint64_t src_size) { return ZSTD_compressBound(src_size); }
+uint64_t zstd_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) { return ZSTD_compressBound(src_size); }
 
 void compio_build_zstd_compressor(compio_compressor *result) {
     result->compress = zstd_compress;
@@ -224,7 +224,7 @@ void compio_build_zstd_compressor(compio_compressor *result) {
  * @param src_size Source data size in bytes
  * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
  */
-int brotli_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int brotli_compress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     size_t encoded_size = *dst_size;
 
     int result =
@@ -249,7 +249,7 @@ int brotli_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src
  * @param src_size Compressed data size in bytes
  * @return 0 on success, -1 on error (sets errno to EIO on decompression failure)
  */
-int brotli_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
+int brotli_decompress(const struct compio_compressor* comp, void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
     size_t decoded_size = *dst_size;
 
     BrotliDecoderResult result =
@@ -270,7 +270,7 @@ int brotli_decompress(void *dst, uint64_t *dst_size, const void *src, uint64_t s
  * @param src_size Size of data to be compressed
  * @return Maximum possible size of compressed data
  */
-uint64_t brotli_get_bufsize(uint64_t src_size) { return BrotliEncoderMaxCompressedSize(src_size); }
+uint64_t brotli_get_bufsize(const struct compio_compressor* comp, uint64_t src_size) { return BrotliEncoderMaxCompressedSize(src_size); }
 
 void compio_build_brotli_compressor(compio_compressor *result) {
     result->compress = brotli_compress;
