@@ -168,7 +168,7 @@ void compio_build_lz4_compressor(compio_compressor *result) {
  * @return 0 on success, -1 on error (sets errno to ENOBUFS if buffer too small)
  */
 int zstd_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src_size) {
-    size_t compressed_size = ZSTD_compress(dst, *dst_size, src, src_size, ZSTD_CLEVEL_DEFAULT);
+    size_t compressed_size = ZSTD_compress(dst, *dst_size, src, src_size, 5);
 
     if (ZSTD_isError(compressed_size)) {
         errno = ENOBUFS;
@@ -228,7 +228,7 @@ int brotli_compress(void *dst, uint64_t *dst_size, const void *src, uint64_t src
     size_t encoded_size = *dst_size;
 
     int result =
-        BrotliEncoderCompress(BROTLI_DEFAULT_QUALITY, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE,
+        BrotliEncoderCompress(5, BROTLI_DEFAULT_WINDOW, BROTLI_DEFAULT_MODE,
                               src_size, (const uint8_t *)src, &encoded_size, (uint8_t *)dst);
 
     if (!result) {
