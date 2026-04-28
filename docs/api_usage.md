@@ -32,6 +32,24 @@ compio_build_lz4_compressor(&config.compressor);      // LZ4
 compio_archive* archive = compio_open_archive("archive.cmp", "w+", &config);
 ```
 
+### Selecting Compression Level
+
+Each algorithm supports an explicit level via `_with_level` variants:
+
+```c
+// ZLIB: 0 = no compression, 1 = fastest, 9 = best; default = Z_DEFAULT_COMPRESSION
+compio_build_zlib_compressor_with_level(&config.compressor, 9);
+
+// LZ4: acceleration factor — 1 = default balance, higher = faster/lower ratio
+compio_build_lz4_compressor_with_level(&config.compressor, 1);
+
+// Zstandard: 1 = fastest, 22 = best compression; default = 5
+compio_build_zstd_compressor_with_level(&config.compressor, 3);
+
+// Brotli: 0 = fastest, 11 = best compression; default = 5
+compio_build_brotli_compressor_with_level(&config.compressor, 11);
+```
+
 ### Automatic Compression Detection
 
 The compression algorithm is automatically saved in the archive header. When reopening an archive, the correct compressor is automatically selected:
@@ -75,7 +93,7 @@ compio_build_default_config(&config);       // Initialize with defaults first!
 
 config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
-config.block_size__minimum = 512;                   // Minumum block size in bytes
+config.block_size__minimum = 512;                   // Minimum block size in bytes
 config.block_size__maximum = 16384;                 // Maximum block size in bytes
 config.cache_size__nodes = 1024;                    // B-tree node cache
 config.cache_size__blocks = 8192;                   // Storage block cache
