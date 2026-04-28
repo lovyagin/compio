@@ -18,26 +18,25 @@ jobs:
             triplet: x64-linux
           - os: windows-latest
             triplet: x64-windows
+          - os: macos-latest
+            triplet: arm64-osx
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Initialize vcpkg submodule
-        run: |
-          git submodule init
-          git submodule update
+        with:
+          submodules: recursive
 
       - name: Cache vcpkg packages
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/vcpkg_installed
-          key: vcpkg-${{ matrix.os }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: |
-            vcpkg-${{ matrix.os }}-
+            vcpkg-${{ matrix.triplet }}-
 
-      - name: Bootstrap vcpkg (Linux)
-        if: runner.os == 'Linux'
+      - name: Bootstrap vcpkg (Linux/macOS)
+        if: runner.os != 'Windows'
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
       - name: Bootstrap vcpkg (Windows)
@@ -45,8 +44,8 @@ jobs:
         run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
         shell: pwsh
 
-      - name: Install dependencies via vcpkg (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies via vcpkg (Linux/macOS)
+        if: runner.os != 'Windows'
         run: ./vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
 
       - name: Install dependencies via vcpkg (Windows)
@@ -66,4 +65,17 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Run tests
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        run: >
+          ctest --test-dir build
+          --build-config Release
+          --output-on-failure
+          --no-tests=error
+          --output-junit test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: build/test-results.xml
+          if-no-files-found: ignore

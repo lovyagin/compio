@@ -8,7 +8,7 @@
 
 namespace fs = std::filesystem;
 
-int main(int argc, char** argv) {
+int main(int /*argc*/, char** /*argv*/) {
     const int NUM_FILES = 1000;
     const int NUM_READS = 10000;
     const int DATA_SIZE = 64;

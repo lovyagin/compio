@@ -2099,8 +2099,8 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             goto after_merge;
         }
 
-        const auto block_size__minimum = archive->config.block_size__minimum;
-        const auto block_size__maximum = archive->config.block_size__maximum;
+        const auto block_size__minimum = static_cast<uint64_t>(archive->config.block_size__minimum);
+        const auto block_size__maximum = static_cast<uint64_t>(archive->config.block_size__maximum);
         const auto left_size = left_val->size;
         const auto right_size = right_val->size;
         DEBUG_PRINT("[CE]---postmerge sizes: %lu and %lu\n", left_size, right_size);
