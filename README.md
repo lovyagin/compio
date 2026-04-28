@@ -57,7 +57,7 @@ Compio is a lightweight library designed for transparent data compression, enabl
 
    ```cmd
    git clone https://github.com/lovyagin/compio.git
-   cd C:\Users\Admin\compio
+   cd compio
    ```
 
 2. **Set Up vcpkg**:
@@ -78,7 +78,7 @@ Compio is a lightweight library designed for transparent data compression, enabl
       ```cmd
       vcpkg install
       ```
-    - **Optional**: Add the vcpkg directory (e.g., `C:\Users\Admin\compio\vcpkg`) to your system's `PATH` environment variable for easier access to `vcpkg.exe`.
+    - **Optional**: Add the vcpkg directory (e.g., `C:\path\to\compio\vcpkg`) to your system's `PATH` environment variable for easier access to `vcpkg.exe`.
 
 3. **Build the Project**:
 
@@ -91,7 +91,7 @@ Compio is a lightweight library designed for transparent data compression, enabl
     - Configure the project with CMake, specifying the vcpkg toolchain file:
 
       ```cmd
-      cmake .. -DCMAKE_TOOLCHAIN_FILE=C:/Users/Admin/compio/vcpkg/scripts/buildsystems/vcpkg.cmake
+      cmake .. -DCMAKE_TOOLCHAIN_FILE=C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake
       ```
     - Build the project:
 
@@ -101,7 +101,7 @@ Compio is a lightweight library designed for transparent data compression, enabl
     - **Using an IDE (e.g., CLion)**: If you are using an IDE like CLion, open the project and add the following to your CMake options:
 
       ```
-      -DCMAKE_TOOLCHAIN_FILE=C:/Users/Admin/compio/vcpkg/scripts/buildsystems/vcpkg.cmake
+      -DCMAKE_TOOLCHAIN_FILE=C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake
       ```
 
       Then, use the IDE's build tools to compile the project.
@@ -137,7 +137,7 @@ See [`docs/cpp_wrapper.md`](docs/cpp_wrapper.md) for full API reference and [`ex
 
 ## Notes
 
-- Ensure the path `C:/Users/Admin/compio/vcpkg/scripts/buildsystems/vcpkg.cmake` is adjusted to match your actual directory structure on Windows.
+- Ensure the path `C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake` is adjusted to match your actual directory structure on Windows.
 - If you encounter issues with dependencies, verify that vcpkg has installed all required packages by running `vcpkg install` in the vcpkg directory.
 - For additional support or to report issues, visit the Compio GitHub repository.
 
