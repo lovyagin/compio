@@ -26,7 +26,6 @@ struct UsageStrategy {
                   std::size_t file_size, double gamma_shape, double gamma_scale,
                   std::size_t region_size, std::size_t n_switch)
         : rng(seed),
-          file_size(file_size),
           sample_data(sample_data),
           sample_data_size(sample_data_size),
           gamma_shape(gamma_shape),
@@ -61,7 +60,6 @@ struct UsageStrategy {
 
 private:
     std::minstd_rand rng;
-    std::size_t file_size;
     const char *sample_data;
     std::size_t sample_data_size;
 

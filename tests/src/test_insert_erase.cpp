@@ -614,8 +614,8 @@ TEST_P(InsertEraseParamTest, ParametrizedEraseTest) {
     WriteInitialData(initial_data);
 
     // Perform erase
-    uint64_t pos = std::min(erase_pos, initial_size);
-    uint64_t actual_erase_size = std::min(erase_size, initial_size - pos);
+    size_t pos = std::min(erase_pos, initial_size);
+    size_t actual_erase_size = std::min(erase_size, initial_size - pos);
     compio_seek(file, pos, COMPIO_SEEK_SET);
     uint64_t erased = compio_erase(erase_size, file);
 
@@ -631,7 +631,7 @@ TEST_P(InsertEraseParamTest, ParametrizedEraseTest) {
 }
 
 // Instantiate parameterized tests with various combinations
-INSTANTIATE_TEST_CASE_P(InsertEraseParamTests, InsertEraseParamTest,
+INSTANTIATE_TEST_SUITE_P(InsertEraseParamTests, InsertEraseParamTest,
                         ::testing::Values(
                             // Small files
                             std::make_tuple(0, 0, 1),  // empty file, insert at start
@@ -743,7 +743,7 @@ TEST_P(InsertEraseBlockConfigTest, InsertAcrossBlockBoundaries) {
     ASSERT_EQ(actual, expected);
 }
 
-INSTANTIATE_TEST_CASE_P(InsertEraseBlockConfigTests, InsertEraseBlockConfigTest,
+INSTANTIATE_TEST_SUITE_P(InsertEraseBlockConfigTests, InsertEraseBlockConfigTest,
                         ::testing::Values(4, 8, 16, 32, 64, 128, 256));
 
-INSTANTIATE_TEST_CASE_P(InsertEraseCacheTests, InsertEraseTest, ::testing::Values(16, 0));
+INSTANTIATE_TEST_SUITE_P(InsertEraseCacheTests, InsertEraseTest, ::testing::Values(16, 0));

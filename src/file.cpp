@@ -126,37 +126,20 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
     }
 }
 
-// Helper to batch read files table (Legacy v4 support)
-static bool read_files_batched_legacy(FILE* file, files_table& ftable) {
-    // Legacy reads from CURRENT position (part of header stream)
-    // Reuse new implementation logic but read from current pos?
-    // Or just copy-paste for safety.
-    // Actually we can use ftable.read_from if we know the address.
-    // But header::read_from(v4) calls it inline.
-    // So we can pass `ftell(file)` as address?
-    // But header::read_from calls fseek at start, then reads sequentially.
-    // So current file pos is correct.
-    // ftable.read_from calls fseek.
-    // So we can use `ftell`.
-    long pos = ftell(file);
-    if (pos < 0) return false;
-    return ftable.read_from(file, static_cast<uint64_t>(pos), ftable.max_files, ftable.n_files);
-}
-
 
 header::header()
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
-      files_table_addr(0),
-      files_table_capacity(COMPIO_MAX_FILES),
       ftable(COMPIO_MAX_FILES),
       allocator_state_offset(0),
       allocator_state_size(0),
       compression_type(COMPIO_COMPRESS_ZLIB),
       block_size(0),
       b_tree_degree(0),
-      sequence_id(0) {
+      sequence_id(0),
+      files_table_addr(0),
+      files_table_capacity(COMPIO_MAX_FILES) {
     memset(checksum, 0, sizeof(checksum));
     file_size = disk_size();
 }
@@ -165,15 +148,15 @@ header::header(uint32_t max_files)
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
-      files_table_addr(0),
-      files_table_capacity(max_files),
       ftable(max_files),
       allocator_state_offset(0),
       allocator_state_size(0),
       compression_type(COMPIO_COMPRESS_ZLIB),
       block_size(0),
       b_tree_degree(0),
-      sequence_id(0) {
+      sequence_id(0),
+      files_table_addr(0),
+      files_table_capacity(max_files) {
     memset(checksum, 0, sizeof(checksum));
     file_size = disk_size();
 }
@@ -261,7 +244,7 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
         }
 
         if (ftable.n_files > files_table_capacity) {
-             WARNING_PRINT("warning: header n_files=%lu > capacity=%u\n", ftable.n_files, files_table_capacity);
+             WARNING_PRINT("warning: header n_files=%" PRIu64 " > capacity=%u\n", ftable.n_files, files_table_capacity);
              return false;
         }
         

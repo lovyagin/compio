@@ -143,7 +143,7 @@ void SHA256::finalize(uint8_t *hash) {
 std::string SHA256::hash_to_string(const uint8_t *hash) {
     char hex_str[65];
     for (size_t i = 0; i < 32; ++i) {
-        sprintf(hex_str + i * 2, "%02x", hash[i]);
+        snprintf(hex_str + i * 2, 3, "%02x", hash[i]);
     }
     hex_str[64] = '\0';
     return std::string(hex_str);
