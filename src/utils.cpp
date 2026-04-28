@@ -141,7 +141,7 @@ static uint32_t crc32c_sw(uint32_t crc, const uint8_t *data, size_t size) {
     
     static uint32_t crc32c_hw(uint32_t crc, const uint8_t *data, size_t size) {
         // MSVC's _mm_crc32_u64 takes unsigned __int64
-        unsigned __int64 c = ~crc;
+        unsigned __int64 c = ~static_cast<unsigned __int64>(crc);
         const uint8_t *p = data;
         
         #if defined(_M_X64) || defined(_M_AMD64)

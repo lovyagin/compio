@@ -42,7 +42,7 @@ TEST_F(ConcurrencyStressTest, ParallelUniqueFileOperations) {
 
     std::vector<std::thread> threads;
     for (int i = 0; i < num_threads; ++i) {
-        threads.emplace_back([this, i, &errors]() {
+        threads.emplace_back([this, i, ops_per_thread, &errors]() {
             for (int j = 0; j < ops_per_thread; ++j) {
                 std::string fname = "file_" + std::to_string(i) + "_" + std::to_string(j);
                 std::string content = "data_" + fname;
@@ -119,7 +119,7 @@ TEST_F(ConcurrencyStressTest, ParallelReadSharedWriteUnique) {
     // Readers
     std::vector<std::thread> readers;
     for(int i=0; i<num_readers; ++i) {
-        readers.emplace_back([this, &run, &read_errors]() {
+        readers.emplace_back([this, &run, &read_errors, initial_files]() {
             std::mt19937 rng(std::random_device{}());
             std::uniform_int_distribution<int> dist(0, initial_files - 1);
             
