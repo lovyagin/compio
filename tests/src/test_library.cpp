@@ -187,7 +187,7 @@ TEST_P(WriteReadNBytesTest, RandomWriteResetRead) {
     }
 }
 
-INSTANTIATE_TEST_CASE_P(WriteReadTests, WriteReadNBytesTest,
+INSTANTIATE_TEST_SUITE_P(WriteReadTests, WriteReadNBytesTest,
                         ::testing::Values(1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096));
 
 class RWBlocksTest : public ::testing::TestWithParam<std::pair<int, int>> {};
@@ -244,7 +244,7 @@ TEST_P(RWBlocksTest, ConsecutiveBlocksWriteRead) {
     remove((std::string(fn) + ".wal").c_str());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     RWBlocksTests, RWBlocksTest,
     ::testing::Values(std::pair<int, int>(2, 4), std::pair<int, int>(16, 16),
                       std::pair<int, int>(32, 16), std::pair<int, int>(64, 16),
@@ -317,7 +317,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
                 if (cursor < max_file_size) {
                     std::uniform_int_distribution<int> d_size(
                         1,
-                        std::min(static_cast<uint64_t>(max_file_size - cursor), sizeof(html_data)));
+                        std::min(static_cast<uint64_t>(max_file_size - cursor), static_cast<uint64_t>(sizeof(html_data))));
                     int size = d_size(rng);
                     std::uniform_int_distribution<int> d_start(0, sizeof(html_data) - size);
                     int start = d_start(rng);
@@ -382,7 +382,7 @@ TEST_P(RandomUsageTest, RandomUsage) {
     remove((std::string(fn) + ".wal").c_str());
 }
 
-INSTANTIATE_TEST_CASE_P(RandomUsageTests, RandomUsageTest,
+INSTANTIATE_TEST_SUITE_P(RandomUsageTests, RandomUsageTest,
                         ::testing::Values(std::tuple<int, int, int>(5000, 200, 100),
                                           std::tuple<int, int, int>(5000, 1000, 20),
                                           std::tuple<int, int, int>(10000, 1000, 20),
@@ -464,7 +464,7 @@ TEST_P(CustomUsageTest, CustomUsage) {
     remove((std::string(fn) + ".wal").c_str());
 }
 
-INSTANTIATE_TEST_CASE_P(CustomUsageTests, CustomUsageTest,
+INSTANTIATE_TEST_SUITE_P(CustomUsageTests, CustomUsageTest,
                         ::testing::Values(UsageParams{30,
                                                       {
                                                           {OperationType::WRITE, 8, 16},
@@ -530,7 +530,7 @@ TEST_P(ManySmallWritesOneBigReadTest, ManySmallWritesOneBigRead) {
     remove((std::string(fn) + ".wal").c_str());
 }
 
-INSTANTIATE_TEST_CASE_P(ManySmallWritesOneBigReadTests, ManySmallWritesOneBigReadTest,
+INSTANTIATE_TEST_SUITE_P(ManySmallWritesOneBigReadTests, ManySmallWritesOneBigReadTest,
                         ::testing::Combine(::testing::Values(10, 100, 1000),
                                            ::testing::Values(1, 4, 16, 256),
                                            ::testing::Values(0, 10, 100)));

@@ -120,7 +120,7 @@ TEST_F(ThreadSafetyTest, ConcurrentAllocations) {
 
     // Launch threads that allocate blocks
     for (int t = 0; t < num_threads; t++) {
-        threads.emplace_back([this, t, allocations_per_thread, block_size, &thread_allocations]() {
+        threads.emplace_back([this, t, &thread_allocations]() {
             for (int i = 0; i < allocations_per_thread; i++) {
                 uint64_t offset = allocator->allocate(block_size);
                 if (offset != UINT64_MAX) {
