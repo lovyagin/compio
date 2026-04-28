@@ -142,9 +142,11 @@ void compio_build_dummy_compressor(compio_compressor *result);
 void compio_build_zlib_compressor(compio_compressor *result);
 
 /**
- * @brief ZLIB compressor
+ * @brief ZLIB compressor with explicit compression level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Compression level (0 = no compression, 1 = fastest, 9 = best compression,
+ *              Z_DEFAULT_COMPRESSION = default balance)
  */
 void compio_build_zlib_compressor_with_level(compio_compressor *result, int level);
 
@@ -156,9 +158,11 @@ void compio_build_zlib_compressor_with_level(compio_compressor *result, int leve
 void compio_build_lz4_compressor(compio_compressor *result);
 
 /**
- * @brief LZ4 compressor - very fast compression/decompression
+ * @brief LZ4 compressor with explicit acceleration level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Acceleration factor (1 = default speed/ratio balance, higher = faster but lower
+ *              compression ratio)
  */
 void compio_build_lz4_compressor_with_level(compio_compressor *result, int level);
 
@@ -170,9 +174,10 @@ void compio_build_lz4_compressor_with_level(compio_compressor *result, int level
 void compio_build_zstd_compressor(compio_compressor *result);
 
 /**
- * @brief Zstandard (zstd) compressor - modern efficient compression
+ * @brief Zstandard (zstd) compressor with explicit compression level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Compression level (1 = fastest, 22 = best compression, default = 5)
  */
 void compio_build_zstd_compressor_with_level(compio_compressor *result, int level);
 
@@ -184,9 +189,10 @@ void compio_build_zstd_compressor_with_level(compio_compressor *result, int leve
 void compio_build_brotli_compressor(compio_compressor *result);
 
 /**
- * @brief Brotli compressor - high compression ratio
+ * @brief Brotli compressor with explicit compression level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Compression level (0 = fastest, 11 = best compression, default = 5)
  */
 void compio_build_brotli_compressor_with_level(compio_compressor *result, int level);
 
