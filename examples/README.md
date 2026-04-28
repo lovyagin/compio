@@ -4,6 +4,14 @@ This directory contains examples demonstrating compression functionality.
 
 ## Examples
 
+### `example_usage.c`
+Basic end-to-end example: open archive, write data, read it back, close.
+
+**Usage:**
+```bash
+./example_usage
+```
+
 ### `compressor_example.c`
 Demonstrates all available compression algorithms and their compression ratios on sample data.
 
@@ -29,6 +37,14 @@ Demonstrates that compression type is automatically saved and restored when reop
 - Verifies data integrity and correct decompression
 
 This example proves that you don't need to specify the compression algorithm when opening an existing archive - it's automatically detected from the header.
+
+### `cpp_wrapper_example.cpp`
+Demonstrates the C++ wrapper API: RAII archive/file management, stream operators, and error handling.
+
+**Usage:**
+```bash
+./cpp_wrapper_example
+```
 
 ## Available Compression Algorithms
 
