@@ -130,63 +130,69 @@ typedef struct compio_compressor {
 /**
  * @brief Test compressor, keeps data exactly the same
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_dummy_compressor(compio_compressor *result);
 
 /**
  * @brief ZLIB compressor
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_zlib_compressor(compio_compressor *result);
 
 /**
- * @brief ZLIB compressor
+ * @brief ZLIB compressor with explicit compression level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Compression level (0 = no compression, 1 = fastest, 9 = best compression,
+ *              Z_DEFAULT_COMPRESSION = default balance)
  */
 void compio_build_zlib_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief LZ4 compressor - very fast compression/decompression
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_lz4_compressor(compio_compressor *result);
 
 /**
- * @brief LZ4 compressor - very fast compression/decompression
+ * @brief LZ4 compressor with explicit acceleration level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Acceleration factor (1 = default speed/ratio balance, higher = faster but lower
+ *              compression ratio)
  */
 void compio_build_lz4_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief Zstandard (zstd) compressor - modern efficient compression
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_zstd_compressor(compio_compressor *result);
 
 /**
- * @brief Zstandard (zstd) compressor - modern efficient compression
+ * @brief Zstandard (zstd) compressor with explicit compression level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Compression level (1 = fastest, 22 = best compression, default = 5)
  */
 void compio_build_zstd_compressor_with_level(compio_compressor *result, int level);
 
 /**
  * @brief Brotli compressor - high compression ratio
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_brotli_compressor(compio_compressor *result);
 
 /**
- * @brief Brotli compressor - high compression ratio
+ * @brief Brotli compressor with explicit compression level
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
+ * @param level Compression level (0 = fastest, 11 = best compression, default = 5)
  */
 void compio_build_brotli_compressor_with_level(compio_compressor *result, int level);
 
@@ -257,16 +263,16 @@ typedef struct {
 /**
  * @brief Default configuration
  *
- * @param result
+ * @param result Pointer to config structure to initialize with defaults
  */
 void compio_build_default_config(compio_config *result);
 
 /**
  * @brief Get compression type from header of existing archive
  *
- * @param fp path to archive file
- * @param t pointer t compression_type object
- * @return int
+ * @param fp Path to archive file
+ * @param t Pointer to compression_type to receive the result
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
  */
 int compio_get_compression_type(const char *fp, compio_compression_type *t);
 

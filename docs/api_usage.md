@@ -32,6 +32,24 @@ compio_build_lz4_compressor(&config.compressor);      // LZ4
 compio_archive* archive = compio_open_archive("archive.cmp", "w+", &config);
 ```
 
+### Selecting Compression Level
+
+Each algorithm supports an explicit level via `_with_level` variants:
+
+```c
+// ZLIB: 0 = no compression, 1 = fastest, 9 = best; default = Z_DEFAULT_COMPRESSION
+compio_build_zlib_compressor_with_level(&config.compressor, 9);
+
+// LZ4: acceleration factor — 1 = default balance, higher = faster/lower ratio
+compio_build_lz4_compressor_with_level(&config.compressor, 1);
+
+// Zstandard: 1 = fastest, 22 = best compression; default = 5
+compio_build_zstd_compressor_with_level(&config.compressor, 3);
+
+// Brotli: 0 = fastest, 11 = best compression; default = 5
+compio_build_brotli_compressor_with_level(&config.compressor, 11);
+```
+
 ### Automatic Compression Detection
 
 The compression algorithm is automatically saved in the archive header. When reopening an archive, the correct compressor is automatically selected:
@@ -75,7 +93,7 @@ compio_build_default_config(&config);       // Initialize with defaults first!
 
 config.b_tree_degree = 16;                          // B-Tree degree
 config.block_size = 4096;                           // Block size in bytes
-config.block_size__minimum = 512;                   // Minumum block size in bytes
+config.block_size__minimum = 512;                   // Minimum block size in bytes
 config.block_size__maximum = 16384;                 // Maximum block size in bytes
 config.cache_size__nodes = 1024;                    // B-tree node cache
 config.cache_size__blocks = 8192;                   // Storage block cache
@@ -85,6 +103,8 @@ config.fill_holes_with_zeros = false;               // Zero-fill freed blocks
 config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;      // WAL synchronization mode (ALWAYS, NORMAL, OFF)
 config.wal_max_size_bytes = 64 * 1024 * 1024;       // Max WAL size before checkpoint
 config.max_files = 4096;                            // Initial file table capacity (grows dynamically)
+config.checksum_type = COMPIO_CHECKSUM_CRC32C;      // Checksum algorithm (FNV1A or CRC32C)
+config.auto_batch_size = 8;                         // Auto-batch sequential ops (0 = disabled)
 ```
 
 ### Allocation Strategies
@@ -97,9 +117,10 @@ config.max_files = 4096;                            // Initial file table capaci
 ### Thread Safety
 
 The library is thread-safe for multi-threaded use on the same archive, with the following guarantees:
-- **Concurrent Reads**: Multiple threads can read from different files (or the same file) in the same archive concurrently.
-- **Writes Are Exclusive**: Write operations (`compio_write` and related APIs) take an exclusive lock on the archive. While a write is in progress, other reads and writes on that archive are blocked.
-- **Defragmentation Is Exclusive**: `compio_defragment` also takes an exclusive lock on the archive. It cannot run concurrently with reads or writes on that archive.
+- **Concurrent reads**: Multiple threads can read from different files (or the same file) concurrently using separate file handles.
+- **Concurrent writes**: Multiple threads can write to **different** files simultaneously, each using its own file handle.
+- **Per-file exclusivity**: A single file handle must not be used by multiple threads concurrently — each thread needs its own handle (via `compio_open_file`).
+- **Defragmentation is exclusive**: `compio_defragment` cannot run concurrently with reads or writes on that archive.
 
 Note: `compio_config` setup is not thread-safe; initialize it before opening an archive.
 

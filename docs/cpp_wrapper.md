@@ -31,7 +31,7 @@ config.set_block_size(4096)
       .set_compressor(compio::compressors::lz4());
 ```
 
-**Methods**: `set_block_size()`, `set_btree_degree()`, `set_cache_blocks()`, `set_compressor()`, `set_allocation_strategy()`, `set_fill_holes()`, `set_fragmentation_threshold()`
+**Methods**: `set_block_size()`, `set_btree_degree()`, `set_cache_nodes()`, `set_cache_blocks()`, `set_compressor()`, `set_allocation_strategy()`, `set_fill_holes()`, `set_fragmentation_threshold()`
 
 ### Archive
 
