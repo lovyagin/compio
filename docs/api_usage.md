@@ -103,6 +103,8 @@ config.fill_holes_with_zeros = false;               // Zero-fill freed blocks
 config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;      // WAL synchronization mode (ALWAYS, NORMAL, OFF)
 config.wal_max_size_bytes = 64 * 1024 * 1024;       // Max WAL size before checkpoint
 config.max_files = 4096;                            // Initial file table capacity (grows dynamically)
+config.checksum_type = COMPIO_CHECKSUM_CRC32C;      // Checksum algorithm (FNV1A or CRC32C)
+config.auto_batch_size = 8;                         // Auto-batch sequential ops (0 = disabled)
 ```
 
 ### Allocation Strategies
@@ -115,9 +117,10 @@ config.max_files = 4096;                            // Initial file table capaci
 ### Thread Safety
 
 The library is thread-safe for multi-threaded use on the same archive, with the following guarantees:
-- **Concurrent Reads**: Multiple threads can read from different files (or the same file) in the same archive concurrently.
-- **Writes Are Exclusive**: Write operations (`compio_write` and related APIs) take an exclusive lock on the archive. While a write is in progress, other reads and writes on that archive are blocked.
-- **Defragmentation Is Exclusive**: `compio_defragment` also takes an exclusive lock on the archive. It cannot run concurrently with reads or writes on that archive.
+- **Concurrent reads**: Multiple threads can read from different files (or the same file) concurrently using separate file handles.
+- **Concurrent writes**: Multiple threads can write to **different** files simultaneously, each using its own file handle.
+- **Per-file exclusivity**: A single file handle must not be used by multiple threads concurrently — each thread needs its own handle (via `compio_open_file`).
+- **Defragmentation is exclusive**: `compio_defragment` cannot run concurrently with reads or writes on that archive.
 
 Note: `compio_config` setup is not thread-safe; initialize it before opening an archive.
 
