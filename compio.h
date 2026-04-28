@@ -130,14 +130,14 @@ typedef struct compio_compressor {
 /**
  * @brief Test compressor, keeps data exactly the same
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_dummy_compressor(compio_compressor *result);
 
 /**
  * @brief ZLIB compressor
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_zlib_compressor(compio_compressor *result);
 
@@ -153,7 +153,7 @@ void compio_build_zlib_compressor_with_level(compio_compressor *result, int leve
 /**
  * @brief LZ4 compressor - very fast compression/decompression
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_lz4_compressor(compio_compressor *result);
 
@@ -169,7 +169,7 @@ void compio_build_lz4_compressor_with_level(compio_compressor *result, int level
 /**
  * @brief Zstandard (zstd) compressor - modern efficient compression
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_zstd_compressor(compio_compressor *result);
 
@@ -184,7 +184,7 @@ void compio_build_zstd_compressor_with_level(compio_compressor *result, int leve
 /**
  * @brief Brotli compressor - high compression ratio
  *
- * @param result
+ * @param result Pointer to compressor structure to initialize
  */
 void compio_build_brotli_compressor(compio_compressor *result);
 
@@ -263,16 +263,16 @@ typedef struct {
 /**
  * @brief Default configuration
  *
- * @param result
+ * @param result Pointer to config structure to initialize with defaults
  */
 void compio_build_default_config(compio_config *result);
 
 /**
  * @brief Get compression type from header of existing archive
  *
- * @param fp path to archive file
- * @param t pointer t compression_type object
- * @return int
+ * @param fp Path to archive file
+ * @param t Pointer to compression_type to receive the result
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
  */
 int compio_get_compression_type(const char *fp, compio_compression_type *t);
 
