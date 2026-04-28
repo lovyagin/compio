@@ -60,7 +60,7 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
     long fsize = ftell(f);
     rewind(f);
     file_content.resize(fsize);
-    fread(file_content.data(), 1, fsize, f);
+    ASSERT_EQ(fread(file_content.data(), 1, fsize, f), static_cast<size_t>(fsize));
 
     // Find content
     size_t found_pos = std::string(file_content.begin(), file_content.end()).find(content);
@@ -69,7 +69,7 @@ TEST_F(DataIntegrityStrictTest, ReadFailsOnCorruptedBlock) {
     // Corrupt one byte of the content
     fseek(f, found_pos, SEEK_SET);
     uint8_t byte;
-    fread(&byte, 1, 1, f);
+    ASSERT_EQ(fread(&byte, 1, 1, f), static_cast<size_t>(1));
     byte ^= 0xFF; // Flip bits
     fseek(f, found_pos, SEEK_SET);
     fwrite(&byte, 1, 1, f);

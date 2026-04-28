@@ -2085,7 +2085,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
 
         const auto left_val = archive->index->get(left_to_merge.value());
         if (!left_val.has_value()) {
-            WARNING_PRINT("warning: left_to_merge key ({%lu, %lu}) was not found in the tree after "
+            WARNING_PRINT("warning: left_to_merge key ({%" PRIu64 ", %" PRIu64 "}) was not found in the tree after "
                           "erase operation\n",
                           left_to_merge->hash, left_to_merge->pos);
             goto after_merge;
@@ -2093,7 +2093,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         const auto right_val = archive->index->get(right_to_merge.value());
         if (!right_val.has_value()) {
             WARNING_PRINT(
-                "warning: right_to_merge key ({%lu, %lu}) was not found in the tree after "
+                "warning: right_to_merge key ({%" PRIu64 ", %" PRIu64 "}) was not found in the tree after "
                 "erase operation\n",
                 right_to_merge->hash, right_to_merge->pos);
             goto after_merge;

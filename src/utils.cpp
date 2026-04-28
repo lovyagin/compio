@@ -99,7 +99,7 @@ static uint32_t crc32c_sw(uint32_t crc, const uint8_t *data, size_t size) {
     return ~c;
 }
 
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
     #pragma GCC push_options
     #pragma GCC target("sse4.2")
     #include <nmmintrin.h>

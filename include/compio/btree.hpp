@@ -112,7 +112,7 @@ private:
  * insertion, deletion, range queries, and key updates.
  */
 struct btree {
-    friend struct block_allocator;
+    friend class block_allocator;
     friend class block;
 
     /**

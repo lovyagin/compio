@@ -244,7 +244,7 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
         }
 
         if (ftable.n_files > files_table_capacity) {
-             WARNING_PRINT("warning: header n_files=%lu > capacity=%u\n", ftable.n_files, files_table_capacity);
+             WARNING_PRINT("warning: header n_files=%" PRIu64 " > capacity=%u\n", ftable.n_files, files_table_capacity);
              return false;
         }
         
