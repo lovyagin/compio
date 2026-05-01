@@ -12,6 +12,7 @@ add_executable(compio_benchmarks
     src/defragmentation_benchmark.cpp
     src/lookup_benchmark.cpp
     src/checksum_benchmark.cpp
+    src/scatter.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
 target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
