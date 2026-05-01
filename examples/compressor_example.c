@@ -26,7 +26,7 @@ int main() {
     compio_build_brotli_compressor(&compressors[4]);
 
     for (int i = 0; i < 5; i++) {
-        uint64_t buf_size = compressors[i].get_bufsize(data_size);
+        uint64_t buf_size = compressors[i].get_bufsize(&compressors[i], data_size);
         char *compressed = (char *)malloc(buf_size);
         if (!compressed) {
             printf("%s compressor: FAILED (malloc)\n\n", names[i]);
@@ -35,7 +35,7 @@ int main() {
 
         uint64_t compressed_size = buf_size;
 
-        if (compressors[i].compress(compressed, &compressed_size, test_data, data_size) == 0) {
+        if (compressors[i].compress(&compressors[i], compressed, &compressed_size, test_data, data_size) == 0) {
             printf("%s compressor:\n", names[i]);
             printf("  Compressed size: %lu bytes\n", compressed_size);
             printf("  Compression ratio: %.2f%%\n",
@@ -52,7 +52,7 @@ int main() {
 
             uint64_t decompressed_size = data_size;
 
-            if (compressors[i].decompress(decompressed, &decompressed_size, compressed,
+            if (compressors[i].decompress(&compressors[i], decompressed, &decompressed_size, compressed,
                                           compressed_size) == 0) {
                 if (strcmp(test_data, decompressed) == 0) {
                     printf("  Decompression: OK\n");
