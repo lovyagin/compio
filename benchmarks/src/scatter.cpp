@@ -7,6 +7,7 @@
 #include <exception>
 #include <cstring>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "benchmark_util.hpp"
 
@@ -157,6 +158,23 @@ static void BM_compio_Scatter(benchmark::State& state) {
     remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
+static bool copy_file(const std::string& src, const std::string& dst) {
+    FILE* in = fopen(src.c_str(), "rb");
+    if (!in) return false;
+    FILE* out = fopen(dst.c_str(), "wb");
+    if (!out) { fclose(in); return false; }
+    char buf[64*1024];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) {
+            fclose(in); fclose(out); return false;
+        }
+    }
+    fclose(in);
+    fclose(out);
+    return true;
+}
+
 static void BM_compio_ScatterWrite(benchmark::State& state) {
     const size_t block_size = state.range(0);
     config.block_size = block_size;
@@ -172,9 +190,9 @@ static void BM_compio_ScatterWrite(benchmark::State& state) {
         write_buf_init = true;
     }
 
-    std::string fn = get_temporary_filename();
+    std::string template_fn = "/dev/shm/" + get_temporary_filename();
 
-    compio_archive* arch = compio_open_archive(fn.c_str(), "w+", &config);
+    compio_archive* arch = compio_open_archive(template_fn.c_str(), "w+", &config);
     if (!arch) throw std::runtime_error("compio_open_archive failed");
     compio_file* f = compio_open_file("A", arch);
     if (!f) { compio_close_archive(arch); throw std::runtime_error("compio_open_file failed"); }
@@ -186,7 +204,12 @@ static void BM_compio_ScatterWrite(benchmark::State& state) {
 
     size_t total_bytes = 0;
     for (auto _ : state) {
-        compio_archive* arch = compio_open_archive(fn.c_str(), "r+", &config);
+        std::string fn = get_temporary_filename();
+        if (!copy_file(template_fn, fn)) {
+            state.SkipWithError("copy file failed");
+            break;
+        }
+        compio_archive* arch = compio_open_archive(fn.c_str(), "a", &config);
         if (!arch) { state.SkipWithError("open archive failed"); break; }
         compio_file* f = compio_open_file("A", arch);
         if (!f) { compio_close_archive(arch); state.SkipWithError("open file failed"); break; }
@@ -204,10 +227,12 @@ static void BM_compio_ScatterWrite(benchmark::State& state) {
         }
         compio_close_file(f);
         compio_close_archive(arch);
+        remove(fn.c_str());
+        remove((fn + ".wal").c_str());
     }
     state.SetBytesProcessed(total_bytes);
-    state.counters["file_size"] = get_file_size(fn.c_str());
-    remove(fn.c_str()); remove((fn + ".wal").c_str());
+    state.counters["file_size"] = get_file_size(template_fn.c_str());
+    remove(template_fn.c_str()); remove((template_fn + ".wal").c_str());
 }
 
 static void BM_zran_Scatter(benchmark::State& state) {
