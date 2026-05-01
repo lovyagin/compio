@@ -18,8 +18,6 @@ add_executable(compio_benchmarks
     src/optimal_usage.cpp
     src/allocator_benchmark.cpp
     src/defragmentation_benchmark.cpp
-    src/lookup_benchmark.cpp
-    src/checksum_benchmark.cpp
     src/scatter.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> ZLIB::ZLIB zran seekable_zstd)
@@ -49,12 +47,6 @@ target_include_directories(compression_drift_benchmark PRIVATE ${CMAKE_CURRENT_S
 
 add_executable(segregated_free_list_analysis custom/segregated_free_list_analysis.cpp)
 target_include_directories(segregated_free_list_analysis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-add_executable(index_benchmark_custom src/index_benchmark_custom.cpp)
-target_link_libraries(index_benchmark_custom PRIVATE compio)
-
-add_executable(io_overhead custom/io_overhead.cpp)
-target_link_libraries(io_overhead PRIVATE compio)
 
 if (FALSE)
 add_executable(size_comparison_3way
