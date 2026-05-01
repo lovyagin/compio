@@ -157,6 +157,59 @@ static void BM_compio_Scatter(benchmark::State& state) {
     remove(fn.c_str()); remove((fn + ".wal").c_str());
 }
 
+static void BM_compio_ScatterWrite(benchmark::State& state) {
+    const size_t block_size = state.range(0);
+    config.block_size = block_size;
+    config.block_size__minimum = block_size / 4;
+    config.block_size__maximum = block_size * 4;
+
+    static std::vector<char> payload = build_payload();
+    static std::vector<char> write_buffer(READ_SIZE);
+    static bool write_buf_init = false;
+    if (!write_buf_init) {
+        for (size_t i = 0; i < READ_SIZE; ++i)
+            write_buffer[i] = payload[i % payload.size()];
+        write_buf_init = true;
+    }
+
+    std::string fn = get_temporary_filename();
+
+    compio_archive* arch = compio_open_archive(fn.c_str(), "w+", &config);
+    if (!arch) throw std::runtime_error("compio_open_archive failed");
+    compio_file* f = compio_open_file("A", arch);
+    if (!f) { compio_close_archive(arch); throw std::runtime_error("compio_open_file failed"); }
+    size_t written = compio_write(payload.data(), payload.size(), f);
+    if (written != payload.size()) { compio_close_file(f); compio_close_archive(arch);
+        throw std::runtime_error("compio_write failed"); }
+    compio_close_file(f);
+    compio_close_archive(arch);
+
+    size_t total_bytes = 0;
+    for (auto _ : state) {
+        compio_archive* arch = compio_open_archive(fn.c_str(), "a", &config);
+        if (!arch) { state.SkipWithError("open archive failed"); break; }
+        compio_file* f = compio_open_file("A", arch);
+        if (!f) { compio_close_archive(arch); state.SkipWithError("open file failed"); break; }
+
+        for (auto [pos, len] : kReadOps) {
+            if (compio_seek(f, pos, COMPIO_SEEK_SET) != 0) {
+                state.SkipWithError("seek failed"); break;
+            }
+            size_t n = compio_write(write_buffer.data(), len, f);
+            if (n != len) {
+                state.SkipWithError("write failed"); break;
+            }
+            total_bytes += len;
+            compio_flush(arch);
+        }
+        compio_close_file(f);
+        compio_close_archive(arch);
+    }
+    state.SetBytesProcessed(total_bytes);
+    state.counters["file_size"] = get_file_size(fn.c_str());
+    remove(fn.c_str()); remove((fn + ".wal").c_str());
+}
+
 static void BM_zran_Scatter(benchmark::State& state) {
     const size_t flush_interval = state.range(0);
     std::vector<char> payload = build_payload();
@@ -232,6 +285,11 @@ static void BM_seekable_zstd_Scatter(benchmark::State& state) {
 }
 
 BENCHMARK(BM_compio_Scatter)
+    ->ArgsProduct({{1 << 8, 1 << 9, 1 << 10, 1 << 11, 1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16, 1 << 17, 1 << 18}})
+    ->Unit(benchmark::kMillisecond)
+    ->UseRealTime();
+
+BENCHMARK(BM_compio_ScatterWrite)
     ->ArgsProduct({{1 << 8, 1 << 9, 1 << 10, 1 << 11, 1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16, 1 << 17, 1 << 18}})
     ->Unit(benchmark::kMillisecond)
     ->UseRealTime();
