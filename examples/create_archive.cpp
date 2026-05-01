@@ -15,18 +15,20 @@ static std::string unique_path() {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 5) {
-        std::cerr << "Usage: " << argv[0] << " <block_size> <sample_file> <N_bytes> <compression>\n";
-        std::cerr << "  compression: dummy, zlib, lz4, zstd, brotli\n";
+    if (argc != 6) {
+        std::cerr << "Usage: " << argv[0] << " <block_size> <compressor> <level> <sample_file> <N_bytes>\n";
+        std::cerr << "  compressor: dummy, zlib, lz4, zstd, brotli\n";
+        std::cerr << "  level: compression level (ignored for dummy, algorithm-specific)\n";
         return 1;
     }
 
     int block_size = std::stoi(argv[1]);
-    std::string sample_path = argv[2];
-    size_t N = std::stoull(argv[3]);
-    std::string comp_str = argv[4];
+    std::string comp_str = argv[2];
+    int level = std::stoi(argv[3]);
+    std::string sample_path = argv[4];
+    size_t N = std::stoull(argv[5]);
 
-    // Map compression string to type
+    // Map compression string to type and prepare compressor
     compio_compression_type comp_type;
     if (comp_str == "dummy")      comp_type = COMPIO_COMPRESS_DUMMY;
     else if (comp_str == "zlib")  comp_type = COMPIO_COMPRESS_ZLIB;
@@ -55,13 +57,36 @@ int main(int argc, char* argv[]) {
     // Set up configuration
     compio_config cfg;
     compio_build_default_config(&cfg);
-    compio_build_compressor_by_type(&cfg.compressor, comp_type);
+
+    // Build compressor with given level
+    switch (comp_type) {
+        case COMPIO_COMPRESS_DUMMY:
+            compio_build_dummy_compressor(&cfg.compressor);
+            break;
+        case COMPIO_COMPRESS_ZLIB:
+            compio_build_zlib_compressor_with_level(&cfg.compressor, level);
+            break;
+        case COMPIO_COMPRESS_LZ4:
+            compio_build_lz4_compressor_with_level(&cfg.compressor, level);
+            break;
+        case COMPIO_COMPRESS_ZSTD:
+            compio_build_zstd_compressor_with_level(&cfg.compressor, level);
+            break;
+        case COMPIO_COMPRESS_BROTLI:
+            compio_build_brotli_compressor_with_level(&cfg.compressor, level);
+            break;
+        default:
+            // Should not happen
+            std::cerr << "Unsupported compression type\n";
+            return 1;
+    }
+
     cfg.block_size = block_size;
     cfg.block_size__minimum = block_size / 4;
     if (cfg.block_size__minimum < 1) cfg.block_size__minimum = 1;
     cfg.block_size__maximum = block_size * 4;
 
-    // Create archive (compio_open_archive will create the file)
+    // Create archive
     std::string archive_path = unique_path();
     compio_archive* arch = compio_open_archive(archive_path.c_str(), "w", &cfg);
     if (!arch) {
@@ -77,7 +102,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Write the whole buffer in one operation
+    // Write the whole buffer
     uint64_t written = compio_write(buffer.data(), N, file);
     if (written != N) {
         std::cerr << "compio_write wrote " << written << " bytes, expected " << N << "\n";
@@ -90,7 +115,7 @@ int main(int argc, char* argv[]) {
     compio_close_file(file);
     compio_close_archive(arch);
 
-    // Get size of the archive file
+    // Get archive file size
     struct stat st;
     if (stat(archive_path.c_str(), &st) != 0) {
         std::perror("stat");
