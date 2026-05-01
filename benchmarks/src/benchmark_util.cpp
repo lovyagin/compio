@@ -57,6 +57,8 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config) 
             } else {
                 goto error_key_value;
             }
+        } else if (key == "compression_level") {
+            config->compressor.level = std::atoi(value.c_str());
         } else if (key == "cache_size__nodes") {
             config->cache_size__nodes = std::atoi(value.c_str());
         } else if (key == "cache_size__blocks") {
