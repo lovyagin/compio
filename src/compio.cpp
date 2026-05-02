@@ -212,33 +212,33 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         return NULL;
     }
 
-    // if w+ passed as mode, we have to clear file contents (using w+)
-    // otherwise we open with a+ mode to read and write
-    char archive_open_mode[5];
-    int mode_idx = 0;
-    
-    // Fix: Force update (+) mode for 'w' and 'a' to allow internal reads (e.g. reading header in 'a' mode)
-    // This matches previous behavior where 'w'/'a' implied 'w+'/'a+' capability for the library.
-    bool force_plus = (mode_b & mode_bit::w) || (mode_b & mode_bit::a);
-
+    // The library manages file positions itself via fseek+fread/fwrite, so the
+    // underlying FILE* must NOT have POSIX O_APPEND semantics (which would force
+    // every write to EOF regardless of fseek). That rules out fopen("a"/"a+").
+    //
+    // Mapping to fopen modes:
+    //   'r'      -> "rb"   (read-only)
+    //   'r+'     -> "rb+"  (read/write, file must exist)
+    //   'w'/'w+' -> "wb+"  (truncate or create, read/write)
+    //   'a'/'a+' -> "rb+"  (read/write, no truncate); create-if-missing
+    //              fallback to "wb+". Append semantics are enforced at the
+    //              logical level by compio_open_file (cursor = file->size).
+    const char *archive_open_mode;
     if (mode_b & mode_bit::w) {
-        archive_open_mode[mode_idx++] = 'w';
+        archive_open_mode = "wb+";
     } else if (mode_b & mode_bit::a) {
-        archive_open_mode[mode_idx++] = 'a';
+        archive_open_mode = "rb+";
+    } else if (mode_b & mode_bit::plus) {
+        archive_open_mode = "rb+";
     } else {
-        archive_open_mode[mode_idx++] = 'r';
+        archive_open_mode = "rb";
     }
-    
-    archive_open_mode[mode_idx++] = 'b';
-    
-    if ((mode_b & mode_bit::plus) || force_plus) {
-        archive_open_mode[mode_idx++] = '+';
-    }
-    
-    archive_open_mode[mode_idx] = '\0';
 
-    FILE *file;
-    file = fopen(fp, archive_open_mode);
+    FILE *file = fopen(fp, archive_open_mode);
+    if (file == nullptr && (mode_b & mode_bit::a)) {
+        // 'a'/'a+' must create the file if it does not exist.
+        file = fopen(fp, "wb+");
+    }
     if (file == nullptr) {
         return NULL;
     }
@@ -258,10 +258,10 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     // Check for recovery (only if we are not creating a new file from scratch with "w")
     if (!(mode_b & mode_bit::w)) {
         if (wal->has_pending_recovery()) {
-            // Need read-write access to file for recovery
-            // We use the derived force_plus logic or explicit plus
-            bool can_write = (mode_b & mode_bit::plus) || (mode_b & mode_bit::a) || force_plus;
-            
+            // Recovery needs read-write access to the archive file. 'r' alone is
+            // read-only; everything else (r+, a, a+, w, w+) can write.
+            bool can_write = !((mode_b & mode_bit::r) && !(mode_b & mode_bit::plus));
+
             if (!can_write) {
                  WARNING_PRINT("error: WAL file exists but opening in read-only mode. Cannot recover pending transactions.\n");
                  fclose(file);
@@ -419,8 +419,16 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_allocator;
     }
 
-    archive->index = new btree(c->b_tree_degree, mode_b & mode_bit::r, archive->header,
+    // is_readonly=true only for pure 'r' (no '+', 'w', or 'a' bits).
+    // 'r+' sets both r and plus bits → it must be read-write so btree nodes are persisted.
+    {
+        bool btree_readonly = (mode_b & mode_bit::r) &&
+                              !(mode_b & mode_bit::plus) &&
+                              !(mode_b & mode_bit::w) &&
+                              !(mode_b & mode_bit::a);
+    archive->index = new btree(c->b_tree_degree, btree_readonly, archive->header,
                                archive->allocator, file, c->cache_size__nodes, &archive->io_mutex, archive->wal.get());
+    }
     if (!archive->index) {
         WARNING_PRINT("warning: failed to allocate memory for btree\n");
         goto no_index;
