@@ -142,7 +142,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     } else if (mode_b & mode_bit::a) {
         archive_open_mode = "ab+";
     } else {
-        archive_open_mode = "rb";
+        if (mode_b & mode_bit::plus) {
+            archive_open_mode = "rb+";
+        } else {
+            archive_open_mode = "rb";
+        }
     }
 
     FILE *file;
@@ -499,7 +503,7 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
 
-    if (archive->mode_b & mode_bit::r) {
+    if ((archive->mode_b & mode_bit::r) && !(archive->mode_b & mode_bit::plus)) {
         WARNING_PRINT("warning: can't compio_write to read-only file\n");
         errno = EROFS;
         return 0;

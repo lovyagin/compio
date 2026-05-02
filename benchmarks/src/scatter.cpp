@@ -209,7 +209,7 @@ static void BM_compio_ScatterWrite(benchmark::State& state) {
             state.SkipWithError("copy file failed");
             break;
         }
-        compio_archive* arch = compio_open_archive(fn.c_str(), "a", &config);
+        compio_archive* arch = compio_open_archive(fn.c_str(), "r+", &config);
         if (!arch) { state.SkipWithError("open archive failed"); break; }
         compio_file* f = compio_open_file("A", arch);
         if (!f) { compio_close_archive(arch); state.SkipWithError("open file failed"); break; }
