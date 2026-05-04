@@ -2,11 +2,11 @@
 
 # Define algorithms and their compression level ranges
 declare -A LEVEL_RANGES
-LEVEL_RANGES["zlib"]="1 2 3 4 5 6 7 8 9"
-LEVEL_RANGES["lz4"]="1 2 3 4 5 6 7 8 9"
-LEVEL_RANGES["zstd"]="-5 -4 -3 -2 -1 0 1 2 3 4 5 6 7 8 9 10"
-LEVEL_RANGES["brotli"]="0 1 2 3 4 5 6 7 8"
-# LEVEL_RANGES["zstd"]="2 3 4 5 6"
+# LEVEL_RANGES["zlib"]="1 2 3 4 5 6 7 8 9"
+# LEVEL_RANGES["lz4"]="1 2 3 4 5 6 7 8 9"
+# LEVEL_RANGES["zstd"]="-5 -4 -3 -2 -1 0 1 2 3 4 5 6 7 8 9 10"
+# LEVEL_RANGES["brotli"]="0 1 2 3 4 5 6 7 8"
+LEVEL_RANGES["dummy"]="0"
 
 # Config file to be rewritten
 CONFIG_FILE="config.conf"
