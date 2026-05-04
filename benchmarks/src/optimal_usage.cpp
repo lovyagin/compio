@@ -219,6 +219,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     const double gamma_scale = state.range(5);
     const double region_size = state.range(6);
     const bool disable_cache = state.range(7);
+    const int block_size = state.range(8);
 
     auto [sample_data, sample_data_size] = load_webster_data();
     if (!sample_data) {
@@ -233,6 +234,9 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 
     std::string template_path = get_temporary_filename();
     std::string template_wal_path = template_path + ".wal";
+    config.block_size = block_size;
+    config.block_size__minimum = block_size / 4;
+    config.block_size__maximum = block_size * 4;
     compio_archive *archive = compio_open_archive(template_path.c_str(), "w+", &config);
     if (!archive) {
         state.SkipWithError("compio_open_archive failed");
@@ -383,8 +387,15 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {false, true}, {1 << 11}, {1 << 25}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
-    {2},           {1 << 12}, {1 << 17}, {false, true},
+    {false, true},
+    {1 << 11},
+    {1 << 25},
+    {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
+    {2},
+    {1 << 12},
+    {1 << 17},
+    {false, true},
+    {1 << 8, 1 << 9, 1 << 10, 1 << 11, 1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16, 1 << 17},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
