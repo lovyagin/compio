@@ -218,6 +218,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     const double gamma_shape = state.range(4);
     const double gamma_scale = state.range(5);
     const double region_size = state.range(6);
+    const bool disable_cache = state.range(7);
 
     auto [sample_data, sample_data_size] = load_webster_data();
     if (!sample_data) {
@@ -332,6 +333,10 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
             }
 
             total_bytes_processed += op.size;
+
+            if (disable_cache) {
+                compio_flush(archive);
+            }
         }
 
         if (failed)
@@ -379,7 +384,7 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 
 const std::vector<std::vector<int64_t>> params_grid = {
     {false, true}, {1 << 11}, {1 << 25}, {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
-    {2},           {1 << 12}, {1 << 17},
+    {2},           {1 << 12}, {1 << 17}, {false, true},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)
