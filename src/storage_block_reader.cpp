@@ -118,7 +118,10 @@ block::~block() {
             // }
 
             // though it would be better to pass this logic to allocator, and allocate memory again
-            context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE);
+            // Disable maintenance during flush: defrag reads the btree index, but the index
+            // is only partially updated while clear_cache() destructors are still running.
+            // Running defrag mid-flush would see stale block addresses and corrupt the archive.
+            context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE, false);
         }
 
         uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
@@ -317,9 +320,9 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 
 void storage_block_reader::clear_cache() {
     DEBUG_PRINT("[SBR][clear_cache]\n");
-    
+
     auto blocks = cache.extract_all();
-    
+
     // Sort blocks by address to optimize reallocation during flush.
     // We prioritize existing blocks (addr != 0) over new blocks (addr == 0).
     // Existing blocks free their old space first, creating holes.
