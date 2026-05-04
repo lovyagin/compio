@@ -30,7 +30,7 @@ using namespace compio;
 namespace fs = std::filesystem;
 
 void compio_build_default_config(compio_config *result) {
-    result->b_tree_degree = 16;
+    result->b_tree_degree = 42;
     compio_build_lz4_compressor(&result->compressor);
 #ifdef NDEBUG
     result->fill_holes_with_zeros = false;
