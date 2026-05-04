@@ -41,7 +41,7 @@ def load_benchmark_data(filepath: str):
     points = []
     for bench in data.get('benchmarks', []):
         name = bench.get('name', '')
-        if not (name.startswith('BM_compio_ScatterWrite/') and name.endswith('/real_time')):
+        if not (name.startswith('BM_compio_OptimalUsage/') and name.endswith('/real_time')):
             continue
         file_size_bytes = bench.get('file_size')
         bytes_per_sec = bench.get('bytes_per_second')
@@ -52,7 +52,7 @@ def load_benchmark_data(filepath: str):
         points.append((file_size_mb, throughput_mb_s))
 
     if not points:
-        raise RuntimeError(f"No valid BM_compio_ScatterWrite entries found in {filepath}")
+        raise RuntimeError(f"No valid BM_compio_OptimalUsage entries found in {filepath}")
 
     points.sort(key=lambda p: p[0])
     return points
@@ -92,7 +92,7 @@ def adjust_brightness(color, brightness):
 
 
 def main():
-    file_pattern = "results/compio_*.json"
+    file_pattern = "results_nocache/compio*.json"
     files = glob.glob(file_pattern)
     if not files:
         print(f"No files matching '{file_pattern}' found.")
