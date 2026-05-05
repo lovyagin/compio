@@ -63,9 +63,9 @@ def get_base_color(algo: str, algo_list: list):
     # Well-separated colors for up to 4 algorithms (colorblind-friendly)
     distinct_colors = [
         '#d62728',
-        '#1f77b4',
         '#ff7f0e',
         '#2ca02c',
+        '#1f77b4',
     ]
     if len(algo_list) <= len(distinct_colors):
         idx = algo_list.index(algo)
@@ -153,7 +153,7 @@ def main():
 
     ax.set_xlabel("File Size (MB)")
     ax.set_ylabel("Throughput (MB/s)")
-    ax.set_title("Scatter Write Performance: Throughput vs File Size")
+    ax.set_title("Write · Throughput vs File Size (no block cache)")
     ax.grid(True, which='both', linestyle=':', alpha=0.7)
 
     ax.legend(handles=legend_handles, bbox_to_anchor=(1.05, 1),
