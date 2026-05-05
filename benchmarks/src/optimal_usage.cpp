@@ -3,8 +3,10 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -210,6 +212,76 @@ static void BM_stdio_OptimalUsage(benchmark::State &state) {
         remove(template_path.c_str());
 }
 
+// Cache for compio template files in /dev/shm, keyed by (file_size, block_size).
+// The template is a compio archive containing file_size bytes of sample data.
+struct CachedTemplate {
+    std::string path;
+    std::string wal_path;
+};
+
+static std::map<std::pair<std::size_t, int>, CachedTemplate>& get_template_cache() {
+    static std::map<std::pair<std::size_t, int>, CachedTemplate> cache;
+    return cache;
+}
+
+static CachedTemplate get_cached_template(std::size_t file_size, int block_size,
+                                           const char *sample_data, std::size_t sample_data_size) {
+    auto &cache = get_template_cache();
+    auto key = std::make_pair(file_size, block_size);
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        return it->second;
+    }
+
+    // Create template in /dev/shm
+    std::string tmpl_path = std::string("/dev/shm/compio_tmpl_") + std::to_string(file_size) +
+                            "_" + std::to_string(block_size);
+    std::string tmpl_wal_path = tmpl_path + ".wal";
+
+    // Remove stale files if they exist (e.g. from a previous crashed run)
+    remove(tmpl_path.c_str());
+    remove(tmpl_wal_path.c_str());
+
+    config.block_size = block_size / 4;
+    config.block_size__minimum = block_size / 4 / 4;
+    config.block_size__maximum = block_size * 4 / 4;
+    config.cache_size__blocks = 1 << 8;
+    compio_archive *archive = compio_open_archive(tmpl_path.c_str(), "w+", &config);
+    if (!archive) {
+        throw std::runtime_error("get_cached_template: compio_open_archive failed");
+    }
+    compio_file *file = compio_open_file("A", archive);
+    if (!file) {
+        compio_close_archive(archive);
+        throw std::runtime_error("get_cached_template: compio_open_file failed");
+    }
+    if (compio_write(sample_data, file_size, file) != file_size) {
+        compio_close_file(file);
+        compio_close_archive(archive);
+        throw std::runtime_error("get_cached_template: compio_write failed");
+    }
+    if (compio_tell(file) != file_size) {
+        compio_close_file(file);
+        compio_close_archive(archive);
+        throw std::runtime_error("get_cached_template: wrong file_size");
+    }
+    compio_close_file(file);
+    compio_close_archive(archive);
+
+    CachedTemplate ct{tmpl_path, tmpl_wal_path};
+    cache[key] = ct;
+    return ct;
+}
+
+void cleanup_cached_templates() {
+    auto &cache = get_template_cache();
+    for (auto &[key, ct] : cache) {
+        remove(ct.path.c_str());
+        remove(ct.wal_path.c_str());
+    }
+    cache.clear();
+}
+
 static void BM_compio_OptimalUsage(benchmark::State &state) {
     const bool is_write = state.range(0);
     const std::size_t n_operations = state.range(1);
@@ -232,36 +304,13 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         return;
     }
 
-    std::string template_path = get_temporary_filename();
-    std::string template_wal_path = template_path + ".wal";
-    config.block_size = block_size;
-    config.block_size__minimum = block_size / 4;
-    config.block_size__maximum = block_size * 4;
-    compio_archive *archive = compio_open_archive(template_path.c_str(), "w+", &config);
-    if (!archive) {
-        state.SkipWithError("compio_open_archive failed");
+    CachedTemplate tmpl;
+    try {
+        tmpl = get_cached_template(file_size, block_size, sample_data, sample_data_size);
+    } catch (const std::exception &e) {
+        state.SkipWithError(e.what());
         return;
     }
-    compio_file *file = compio_open_file("A", archive);
-    if (!file) {
-        compio_close_archive(archive);
-        state.SkipWithError("compio_open_file failed");
-        return;
-    }
-    if (compio_write(sample_data, file_size, file) != file_size) {
-        compio_close_file(file);
-        compio_close_archive(archive);
-        state.SkipWithError("compio_write failed");
-        return;
-    }
-    if (compio_tell(file) != file_size) {
-        compio_close_file(file);
-        compio_close_archive(archive);
-        state.SkipWithError("wrong file_size");
-        return;
-    }
-    compio_close_file(file);
-    compio_close_archive(archive);
 
     UsageStrategy strategy(0, sample_data, sample_data_size, file_size, gamma_shape, gamma_scale,
                            region_size, n_switch);
@@ -281,20 +330,14 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
 #endif
 
     for (auto _ : state) {
-        std::string fn;
-        std::string wal_fn;
-        if (is_write) {
-            state.PauseTiming();
-            fn = get_temporary_filename();
-            wal_fn = fn + ".wal";
-            if (!copy_file(template_path, fn) || !copy_file(template_wal_path, wal_fn)) {
-                state.SkipWithError("copy_file failed");
-                break;
-            }
-            state.ResumeTiming();
-        } else {
-            fn = template_path;
+        state.PauseTiming();
+        std::string fn = get_temporary_filename();
+        std::string wal_fn = fn + ".wal";
+        if (!copy_file(tmpl.path, fn) || !copy_file(tmpl.wal_path, wal_fn)) {
+            state.SkipWithError("copy_file failed");
+            break;
         }
+        state.ResumeTiming();
 
         compio_archive *archive = compio_open_archive(fn.c_str(), is_write ? "r+" : "r", &config);
         if (!archive) {
@@ -352,16 +395,14 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
         compio_close_file(file);
         compio_close_archive(archive);
 
-        if (is_write) {
-            state.PauseTiming();
-            remove(fn.c_str());
-            remove(wal_fn.c_str());
-            state.ResumeTiming();
-        }
+        state.PauseTiming();
+        remove(fn.c_str());
+        remove(wal_fn.c_str());
+        state.ResumeTiming();
     }
 
     state.SetBytesProcessed(total_bytes_processed);
-    state.counters["file_size"] = get_file_size(template_path.c_str());
+    state.counters["file_size"] = get_file_size(tmpl.path.c_str());
     state.counters["node_cache_hit"] = total_node_cache_hit_probability / state.iterations();
     state.counters["block_cache_hit"] = total_block_cache_hit_probability / state.iterations();
 
@@ -380,22 +421,18 @@ static void BM_compio_OptimalUsage(benchmark::State &state) {
     state.counters["n_bytes_read"] =
         static_cast<double>(get_n_read_bytes() - n_bytes_read) / state.iterations();
 #endif
-
-    remove(template_path.c_str());
-    if (is_write)
-        remove(template_wal_path.c_str());
 }
 
 const std::vector<std::vector<int64_t>> params_grid = {
-    {true}, // {false, true},
-    {1 << 8},
+    {false, true},
+    {1 << 14},
     {1 << 25},
-    {1}, // {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
+    {1, 2, 4, 8, 16, 32, 64, 128, 256, 512},
     {2},
     {1 << 12},
     {1 << 17},
-    {true}, // {false, true},
-    {1 << 8, 1 << 9, 1 << 10, 1 << 11, 1 << 12, 1 << 13, 1 << 14, 1 << 15, 1 << 16, 1 << 17},
+    {false}, // {false, true},
+    {1 << 12},
 };
 
 BENCHMARK(BM_stdio_OptimalUsage)

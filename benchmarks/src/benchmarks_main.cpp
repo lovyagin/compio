@@ -33,11 +33,12 @@ void build_config(int argc, char **argv) {
     }
 }
 
-int main(int argc, char **argv) { 
+int main(int argc, char **argv) {
     benchmark::MaybeReenterWithoutASLR(argc, argv);
     build_config(argc, argv);
     benchmark::Initialize(&argc, argv);
     benchmark::RunSpecifiedBenchmarks();
     benchmark::Shutdown();
+    cleanup_cached_templates();
     return 0;
 }
