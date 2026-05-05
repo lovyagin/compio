@@ -38,4 +38,7 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config);
 
 std::pair<const char*, std::size_t> load_webster_data();
 
+// Clean up cached template files in /dev/shm created by BM_compio_OptimalUsage.
+void cleanup_cached_templates();
+
 #endif // BENCHMARK_UTIL_HPP_
