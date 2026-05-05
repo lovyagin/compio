@@ -18,9 +18,10 @@ add_executable(fsize_benchmark custom/fsize_benchmark.cpp)
 target_link_libraries(fsize_benchmark PRIVATE compio)
 target_include_directories(fsize_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-add_executable(blocks_benchmark custom/blocks_benchmark.cpp)
+add_executable(blocks_benchmark custom/blocks_benchmark.cpp src/benchmark_util.cpp)
 target_link_libraries(blocks_benchmark PRIVATE compio)
 target_include_directories(blocks_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(blocks_benchmark PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 add_executable(random_usage custom/random_usage.cpp)
 target_link_libraries(random_usage PRIVATE compio)
