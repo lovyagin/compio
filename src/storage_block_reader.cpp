@@ -393,19 +393,11 @@ void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_mi
         }
     }
 
-    {
-        // manually update block::key for entries in cache
-        // Note: this assumes we have exclusive access (unique_lock on archive),
-        // so accessing cache internals is safe from concurrent access.
-        auto it_start = cache._cache_items_map.lower_bound(key_min);
-        auto it_end = cache._cache_items_map.upper_bound(key_max);
-        for (auto it = it_start; it != it_end; ++it) {
-            it->second->second->shift_key(addition);
-        }
-    }
-
-    // and then update keys themselves
-    cache.add_to_range(addition, key_min, key_max);
+    cache.for_each_in_range(key_min, key_max,
+        [addition](tree_key& new_key, std::shared_ptr<block>& b) {
+            b->shift_key(addition);
+            new_key = b->key();
+        });
 }
 
 void storage_block_reader::rename_block(const tree_key &old_key, const tree_key &new_key, std::shared_ptr<block> b) {
