@@ -39,6 +39,5 @@ int main(int argc, char **argv) {
     benchmark::Initialize(&argc, argv);
     benchmark::RunSpecifiedBenchmarks();
     benchmark::Shutdown();
-    cleanup_cached_templates();
     return 0;
 }

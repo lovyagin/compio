@@ -15,12 +15,10 @@ add_executable(compio_benchmarks
     src/consecutive_write.cpp
     src/random_read.cpp
     src/random_write.cpp
-    src/optimal_usage.cpp
     src/allocator_benchmark.cpp
     src/defragmentation_benchmark.cpp
     src/lookup_benchmark.cpp
     src/checksum_benchmark.cpp
-    src/scatter.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static> ZLIB::ZLIB zran seekable_zstd)
 target_include_directories(compio_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zran ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable)
@@ -93,3 +91,23 @@ target_compile_definitions(locality_access_comparison PRIVATE
     _FILE_OFFSET_BITS=64
 )
 endif()
+
+add_executable(optimal_compio custom/optimal_compio.cpp src/benchmark_util.cpp)
+target_link_libraries(optimal_compio PRIVATE compio)
+target_include_directories(optimal_compio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(optimal_compio PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+add_executable(optimal_stdio custom/optimal_stdio.cpp src/benchmark_util.cpp)
+target_link_libraries(optimal_stdio PRIVATE compio)
+target_include_directories(optimal_stdio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(optimal_stdio PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+add_executable(optimal_seekable_zstd custom/optimal_seekable_zstd.cpp src/benchmark_util.cpp)
+target_link_libraries(optimal_seekable_zstd PRIVATE compio seekable_zstd $<IF:$<TARGET_EXISTS:zstd::libzstd_shared>,zstd::libzstd_shared,zstd::libzstd_static>)
+target_include_directories(optimal_seekable_zstd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd_seekable)
+target_compile_definitions(optimal_seekable_zstd PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+add_executable(optimal_zran custom/optimal_zran.cpp src/benchmark_util.cpp)
+target_link_libraries(optimal_zran PRIVATE compio zran ZLIB::ZLIB)
+target_include_directories(optimal_zran PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zran)
+target_compile_definitions(optimal_zran PRIVATE BENCHMARK_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")

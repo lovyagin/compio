@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
-#include <string>
+#include <sys/stat.h>
+
+#include "compio.h"
 
 std::string lower(std::string &s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -107,14 +110,14 @@ benchmark_context build_config_from_file(std::string fn, compio_config *config) 
     return bc;
 }
 
-std::pair<const char*, std::size_t> load_webster_data() {
+std::pair<const char *, std::size_t> load_webster_data() {
     static std::vector<char> data;
     static bool loaded = false;
     if (loaded) {
         return {data.data(), data.size()};
     }
 
-    const char* webster_path = BENCHMARK_DATA_DIR "/webster";
+    const char *webster_path = BENCHMARK_DATA_DIR "/webster";
     const std::filesystem::path exePath = std::filesystem::canonical(webster_path);
     const std::filesystem::path exeDir = exePath.parent_path();
     const std::filesystem::path dataPath = exeDir / "webster";
@@ -122,7 +125,8 @@ std::pair<const char*, std::size_t> load_webster_data() {
     std::ifstream file;
     file.open(dataPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
-        throw std::runtime_error("could not open benchmark data file at: " + std::string(dataPath.c_str()));
+        throw std::runtime_error("could not open benchmark data file at: " +
+                                 std::string(dataPath.c_str()));
     }
 
     std::streamsize size = file.tellg();
@@ -134,4 +138,64 @@ std::pair<const char*, std::size_t> load_webster_data() {
 
     loaded = true;
     return {data.data(), data.size()};
+}
+
+UsageStrategy::UsageStrategy(int seed, const char *sample_data, std::size_t sample_data_size,
+                             std::size_t file_size, double gamma_shape, double gamma_scale,
+                             std::size_t region_size, std::size_t n_switch)
+    : rng(seed),
+      sample_data(sample_data),
+      sample_data_size(sample_data_size),
+      gamma_shape(gamma_shape),
+      gamma_scale(gamma_scale),
+      gamma_dist(gamma_shape, gamma_scale),
+      region_size(std::min(region_size, file_size)),
+      region_start_dist(0, file_size - region_size),
+      n_ops_until_switch(n_switch),
+      n_switch(n_switch) {
+    region_start = region_start_dist(rng);
+}
+
+UsageStrategy::Operation UsageStrategy::get_op() {
+    if (--n_ops_until_switch == 0) {
+        region_start = region_start_dist(rng);
+        n_ops_until_switch = n_switch;
+    }
+
+    double gamma_sample = gamma_dist(rng);
+    std::size_t max_possible = std::min(region_size, sample_data_size);
+    std::size_t size =
+        static_cast<std::size_t>(std::min(gamma_sample, static_cast<double>(max_possible)));
+    if (size == 0)
+        size = 1;
+
+    std::uniform_int_distribution<std::size_t> offset_dist(0, region_size - size);
+    std::size_t offset = offset_dist(rng);
+
+    std::uniform_int_distribution<std::size_t> data_pos_dist(0, sample_data_size - size);
+    std::size_t data_pos = data_pos_dist(rng);
+
+    return {region_start + offset, size, sample_data + data_pos};
+}
+
+bool copy_file(const std::string &src, const std::string &dst) {
+    FILE *in = fopen(src.c_str(), "rb");
+    if (!in)
+        return false;
+    FILE *out = fopen(dst.c_str(), "wb");
+    if (!out) {
+        fclose(in);
+        return false;
+    }
+    char buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+        if (fwrite(buf, 1, n, out) != n) {
+            fclose(in);
+            fclose(out);
+            return false;
+        }
+    fclose(in);
+    fclose(out);
+    return true;
 }
