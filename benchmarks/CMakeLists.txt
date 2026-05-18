@@ -35,6 +35,10 @@ add_executable(blocks_benchmark custom/blocks_benchmark.cpp)
 target_link_libraries(blocks_benchmark PRIVATE compio)
 target_include_directories(blocks_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+add_executable(compression_overhead custom/compression_overhead.cpp)
+target_link_libraries(compression_overhead PRIVATE compio)
+target_include_directories(compression_overhead PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 add_executable(random_usage custom/random_usage.cpp)
 target_link_libraries(random_usage PRIVATE compio)
 target_include_directories(random_usage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
