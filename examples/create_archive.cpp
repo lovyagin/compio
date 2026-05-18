@@ -9,6 +9,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "compio.h"
+#include "compio/btree.hpp"
+#include "compio/compio_file.hpp"
 
 static std::string unique_path() {
     return "/dev/shm/compio_" + std::to_string(getpid()) + "_" + std::to_string(time(nullptr)) + ".tmp";
@@ -81,10 +83,10 @@ int main(int argc, char* argv[]) {
             return 1;
     }
 
-    cfg.block_size = block_size;
-    cfg.block_size__minimum = block_size / 4;
+    cfg.block_size = block_size / 4;
+    cfg.block_size__minimum = block_size / 4 / 4;
     if (cfg.block_size__minimum < 1) cfg.block_size__minimum = 1;
-    cfg.block_size__maximum = block_size * 4;
+    cfg.block_size__maximum = block_size;
 
     // Create archive
     std::string archive_path = unique_path();
@@ -110,6 +112,20 @@ int main(int argc, char* argv[]) {
         compio_close_archive(arch);
         return 1;
     }
+
+    auto range = arch->index->get_range({0, 0}, {UINT64_MAX, UINT64_MAX});
+    if (!range) {
+        std::perror("get_range");
+        return 1;
+    }
+
+    uint64_t min_bs = UINT64_MAX, max_bs = 0;
+    for (const auto &[key, value] : range.value()) {
+        min_bs = std::min(min_bs, value.size);
+        max_bs = std::max(max_bs, value.size);
+    }
+
+    std::cerr << "block sizes are in [" << min_bs << ", " << max_bs << "]\n";
 
     // Clean up
     compio_close_file(file);
