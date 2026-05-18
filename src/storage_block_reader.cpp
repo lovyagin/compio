@@ -248,9 +248,12 @@ std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key 
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
                 key.pos);
 #ifndef NDEBUG
-    DEBUG_PRINT("[SBR][CACHE]: cache contents:\n");
-    for (const auto &key_val : cache._cache_items_list) {
-        DEBUG_PRINT("\t{%lu, %lu}\n", key_val.first.hash, key_val.first.pos);
+    {
+        auto keys = cache.debug_keys();
+        DEBUG_PRINT("[SBR][CACHE]: cache contents (%zu entries):\n", keys.size());
+        for (const auto &k : keys) {
+            DEBUG_PRINT("\t{%lu, %lu}\n", k.hash, k.pos);
+        }
     }
 #endif
 

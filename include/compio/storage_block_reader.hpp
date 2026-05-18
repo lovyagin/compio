@@ -13,7 +13,7 @@
 #include "compio/btree.hpp"
 #include "compio/tree_types.hpp"
 
-#include "third_party/lrucache.hpp"
+#include "third_party/lru_2q_cache.hpp"
 
 #include <mutex>
 #include <atomic>
@@ -285,7 +285,7 @@ public:
  * - Range operations for key shifting
  */
 class storage_block_reader {
-    cache::lru_cache<tree_key, std::shared_ptr<block>, tree_key_comparator> cache;
+    cache::lru_2q_cache<tree_key, std::shared_ptr<block>, tree_key_comparator> cache;
     context_t context;
 
 public:
