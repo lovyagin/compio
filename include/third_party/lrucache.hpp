@@ -161,8 +161,8 @@ public:
         return _cache_items_map.size(); 
     }
 
-    template <typename addition_t>
-    void add_to_range(addition_t addition, const key_t &key_min, const key_t &key_max) {
+    template <typename Func>
+    void for_each_in_range(const key_t& key_min, const key_t& key_max, Func&& func) {
         std::lock_guard<std::mutex> lock(_mutex);
         auto it_start = _cache_items_map.lower_bound(key_min);
         auto it_end = _cache_items_map.upper_bound(key_max);
@@ -180,10 +180,17 @@ public:
         _cache_items_map.erase(it_start, it_end);
 
         for (auto &[key, list_it] : to_update) {
-            key += addition;
+            func(key, list_it->second);
             list_it->first = key;
             _cache_items_map[key] = list_it;
         }
+    }
+
+    template <typename addition_t>
+    void add_to_range(addition_t addition, const key_t &key_min, const key_t &key_max) {
+        for_each_in_range(key_min, key_max, [addition](key_t& key, value_t&) {
+            key = key + addition;
+        });
     }
 
     double get_hit_probability() const {
