@@ -13,7 +13,7 @@
 #include "compio/btree.hpp"
 #include "compio/tree_types.hpp"
 
-#include "third_party/lru_2q_cache.hpp"
+#include "lru_2q_cache.hpp"
 
 #include <mutex>
 #include <atomic>
