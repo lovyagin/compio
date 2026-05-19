@@ -141,7 +141,10 @@ int main(int argc, char *argv[]) {
     double fs_variance = (file_size_sum_sq / iterations) - (fs_mean * fs_mean);
     double fs_stddev = std::sqrt(fs_variance > 0 ? fs_variance : 0);
 
-    std::cout << mean << "," << stddev << "," << fs_mean << "," << fs_stddev << "\n";
+    std::cout << "mean_throughput,stddev_throughput,mean_file_size,stddev_file_size,n_iterations,"
+                 "max_frame_size\n";
+    std::cout << mean << "," << stddev << "," << fs_mean << "," << fs_stddev << "," << iterations
+              << "," << max_frame_size << "\n";
 
     return 0;
 }

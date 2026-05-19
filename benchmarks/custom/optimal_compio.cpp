@@ -163,8 +163,10 @@ int main(int argc, char *argv[]) {
     double fs_variance = (file_size_sum_sq / iterations) - (fs_mean * fs_mean);
     double fs_stddev = std::sqrt(fs_variance > 0 ? fs_variance : 0);
 
+    std::cout << "mean_throughput,stddev_throughput,avg_block_cache_hit,mean_file_size,stddev_file_"
+                 "size,n_iterations,block_size\n";
     std::cout << mean << "," << stddev << "," << avg_block_hit << "," << fs_mean << "," << fs_stddev
-              << "\n";
+              << "," << iterations << "," << block_size << "\n";
 
     return 0;
 }
