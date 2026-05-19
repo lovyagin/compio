@@ -140,6 +140,44 @@ std::pair<const char *, std::size_t> load_webster_data() {
     return {data.data(), data.size()};
 }
 
+std::pair<const char *, std::size_t> load_custom_sample_data(const char *file_path,
+                                                             std::size_t offset,
+                                                             std::size_t size) {
+    static std::vector<char> data;
+    static bool loaded = false;
+    if (loaded) {
+        return {data.data(), data.size()};
+    }
+
+    std::ifstream file;
+    file.open(file_path, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("could not open custom sample file: " +
+                                 std::string(file_path));
+    }
+
+    file.seekg(0, std::ios::end);
+    std::streamsize file_size = file.tellg();
+    if (offset + size > static_cast<std::size_t>(file_size)) {
+        file.close();
+        throw std::runtime_error("custom sample file too small: need offset=" +
+                                 std::to_string(offset) + " + size=" + std::to_string(size) +
+                                 " but file has " + std::to_string(file_size) + " bytes");
+    }
+
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    data.resize(size);
+    if (!file.read(data.data(), size)) {
+        file.close();
+        throw std::runtime_error("failed to read custom sample data from: " +
+                                 std::string(file_path));
+    }
+
+    file.close();
+    loaded = true;
+    return {data.data(), data.size()};
+}
+
 UsageStrategy::UsageStrategy(int seed, const char *sample_data, std::size_t sample_data_size,
                              std::size_t file_size, double gamma_shape, double gamma_scale,
                              std::size_t region_size, std::size_t n_switch)

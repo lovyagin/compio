@@ -2,6 +2,7 @@
 #define BENCHMARK_UTIL_HPP_
 
 #include <filesystem>
+#include <fstream>
 #include <random>
 #include <string>
 #include <sys/stat.h>
@@ -37,6 +38,9 @@ using benchmark_context = std::vector<std::pair<std::string, std::string>>;
 benchmark_context build_config_from_file(std::string fn, compio_config *config);
 
 std::pair<const char*, std::size_t> load_webster_data();
+std::pair<const char*, std::size_t> load_custom_sample_data(const char *file_path,
+                                                            std::size_t offset,
+                                                            std::size_t size);
 
 struct Timer {
     using clock = std::chrono::high_resolution_clock;

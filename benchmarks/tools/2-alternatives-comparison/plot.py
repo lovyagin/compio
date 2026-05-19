@@ -1,81 +1,79 @@
 import argparse
+import csv
 import glob
-import json
 import os
+import re
 
 import matplotlib.pyplot as plt
 
 
-def load_benchmark_data(filepath: str):
-    try:
-        with open(filepath, "r") as f:
-            data = json.load(f)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"JSON decode error: {e}") from e
-
-    points = []
-    for bench in data.get("benchmarks", []):
-        file_size_bytes = bench.get("file_size")
-        bytes_per_sec = bench.get("bytes_per_second")
-        if file_size_bytes is None or bytes_per_sec is None:
-            continue
-        file_size_mb = file_size_bytes / 1e6
-        throughput_mb_s = bytes_per_sec / 1e6
-        points.append((file_size_mb, throughput_mb_s))
-
-    if not points:
-        raise RuntimeError(
-            f"No valid benchmark entries (with file_size and "
-            f"bytes_per_second) found in {filepath}"
-        )
-
-    return points
+def load_csv(filepath):
+    with open(filepath) as f:
+        row = next(csv.DictReader(f))
+    return (
+        float(row["file_size"]) / 1e6,
+        float(row["throughput_mean"]) / 1e6,
+        float(row["throughput_stddev"]) / 1e6,
+    )
 
 
-def get_label(filepath: str) -> str:
-    stem = os.path.splitext(os.path.basename(filepath))[0]
-    return stem.replace("_", " ")
+def block_size(filepath):
+    return int(
+        re.search(
+            r"_[a-z]{2}(\d+)$", os.path.splitext(os.path.basename(filepath))[0]
+        ).group(1)
+    )
+
+
+def label(filepath):
+    return re.sub(
+        r"_([a-z]{2})\d+$", "", os.path.splitext(os.path.basename(filepath))[0]
+    ).replace("_", " ")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "files",
-        nargs="*",
-        help="JSON result files to plot (if none given, uses results/*.json)",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        default="results.svg",
-        help="Output file path (default: results.svg)",
-    )
+    parser.add_argument("files", nargs="*")
+    parser.add_argument("-o", "--output", default="results.svg")
     args = parser.parse_args()
 
-    if args.files:
-        files = sorted(args.files)
-    else:
-        files = sorted(glob.glob("results/*.json"))
-        if not files:
-            print("No files matching 'results/*.json' found.")
-            return
+    files = sorted(args.files) if args.files else sorted(glob.glob("results/*.csv"))
+    if not files:
+        print("No files found.")
+        return
 
-    cmap = plt.cm.get_cmap("tab10", len(files))
+    groups = {}
+    for fp in files:
+        groups.setdefault(label(fp), []).append((fp, block_size(fp)))
+    for g in groups.values():
+        g.sort(key=lambda x: x[1])
+
+    all_x = []
+    all_y = []
+    for flist in groups.values():
+        for fp, _ in flist:
+            x, y, _ = load_csv(fp)
+            all_x.append(x)
+            all_y.append(y)
+
+    x_min, x_max = min(all_x), max(all_x)
+    y_min, y_max = min(all_y), max(all_y)
+
+    x_left = x_min * 0.8
+    x_right = x_max * 1.2
+    y_bottom = y_min * 0.8
+    y_top = y_max * 1.2
 
     plt.figure(figsize=(10, 7))
     ax = plt.gca()
+    cmap = plt.cm.get_cmap("tab10", len(groups))
 
-    for idx, filepath in enumerate(files):
-        try:
-            points = load_benchmark_data(filepath)
-        except Exception as e:
-            print(f"Error processing {filepath}: {e}")
-            continue
+    ax.set_xlim(left=x_left, right=x_right)
+    ax.set_ylim(bottom=y_bottom, top=y_top)
 
-        label = get_label(filepath)
-        color = cmap(idx)
-
-        xs, ys = zip(*points)
+    for idx, (lbl, flist) in enumerate(sorted(groups.items())):
+        xs, ys, yerrs = zip(*[load_csv(fp) for fp, _ in flist])
+        c = cmap(idx)
         ax.loglog(
             xs,
             ys,
@@ -83,25 +81,22 @@ def main():
             linestyle="-",
             linewidth=2,
             markersize=4,
-            color=color,
+            color=c,
             alpha=0.75,
-            label=label,
+            label=lbl,
         )
+        ax.errorbar(xs, ys, yerr=yerrs, fmt="none", color=c, alpha=0.5, capsize=3)
 
-    if not ax.lines:
-        print("No valid data could be plotted.")
-        return
-
-    ax.set_xlabel("File Size (MB)")
-    ax.set_ylabel("Throughput (MB/s)")
-    ax.set_title("Read · Throughput vs File Size (no block cache)")
+    ax.set(
+        xlabel="File Size (MB)",
+        ylabel="Throughput (MB/s)",
+        title="Read · Throughput vs File Size (no block cache)",
+    )
     ax.grid(True, which="both", linestyle=":", alpha=0.7)
-
     ax.legend(loc="lower right")
-
     plt.tight_layout()
     plt.savefig(args.output, bbox_inches="tight")
-    print(f"Plot saved as {args.output}")
+    print(f"Saved {args.output}")
 
 
 if __name__ == "__main__":
