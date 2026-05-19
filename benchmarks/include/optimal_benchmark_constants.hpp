@@ -11,8 +11,8 @@ static constexpr std::size_t REGION_SIZE = 1 << 17;
 static constexpr bool IS_WRITE = false;
 static constexpr bool DISABLE_CACHE = true;
 
-static constexpr int MIN_ITERATIONS = 3;
-static constexpr double MAX_SECONDS = 40.0;
+static constexpr int MIN_ITERATIONS = 30;
+static constexpr double MAX_SECONDS = 60.0;
 static constexpr int MAX_ITERATIONS = 1000;
 
 static constexpr const char *SAMPLE_FILE = BENCHMARK_DATA_DIR "/enwik9";
