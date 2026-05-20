@@ -50,7 +50,7 @@ struct BenchmarkLoop {
     }
 };
 
-BenchmarkLoop outer_loop(20, 20, 0);
+BenchmarkLoop outer_loop(29, 29, 0);
 BenchmarkLoop inner_loop(15, 15, 0);
 
 inline std::size_t get_sample_file_size() {
