@@ -25,7 +25,7 @@ def load_all_csvs(directory: str, max_seeds: int = 30) -> pd.DataFrame:
     for fp in all_files:
         lib, param = parse_filename(fp)
         df = pd.read_csv(fp)
-        needed = ["seed", "throughput_bytes_per_sec", "file_size"]
+        needed = ["seed", "throughput", "file_size"]
         if not all(c in df.columns for c in needed):
             continue
         df = df[needed].copy()
@@ -36,14 +36,14 @@ def load_all_csvs(directory: str, max_seeds: int = 30) -> pd.DataFrame:
         df["param"] = param
         frames.append(df)
     full = pd.concat(frames, ignore_index=True)
-    for col in ["throughput_bytes_per_sec", "file_size"]:
+    for col in ["throughput", "file_size"]:
         full[col] = pd.to_numeric(full[col], errors="coerce")
-    full = full.dropna(subset=["throughput_bytes_per_sec", "file_size"])
+    full = full.dropna(subset=["throughput", "file_size"])
     return full
 
 
 def compute_loss(data: pd.DataFrame) -> pd.Series:
-    return data["file_size"] / data["throughput_bytes_per_sec"]
+    return data["file_size"] / data["throughput"]
 
 
 def select_optimal_per_seed(data: pd.DataFrame) -> pd.DataFrame:

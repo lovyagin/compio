@@ -49,10 +49,9 @@ int main(int argc, char *argv[]) {
 
     std::minstd_rand rng;
     std::unique_ptr<unsigned char[]> buffer(new unsigned char[FILE_SIZE]);
-    std::cout << "data_seed,usage_seed,throughput_bytes_per_sec,file_size\n";
+    std::cout << "file_offset,throughput,file_size\n";
 
     for (outer_loop.reset(); !outer_loop.done(); ++outer_loop.count) {
-        rng.seed(outer_loop.count + 1);
         auto [sample_data, file_offset] = load_random_sample_data(rng);
 
         UsageStrategy strategy(0, sample_data.data(), sample_data.size(), FILE_SIZE, GAMMA_SHAPE,
@@ -86,8 +85,6 @@ int main(int argc, char *argv[]) {
         }
 
         for (inner_loop.reset(); !inner_loop.done(); ++inner_loop.count) {
-            strategy.seed(inner_loop.count + 1);
-
             Timer iter_timer;
             bool failed = false;
             std::size_t iter_bytes = 0;
@@ -107,8 +104,7 @@ int main(int argc, char *argv[]) {
             double elapsed = iter_timer.elapsed_seconds();
             double tp = static_cast<double>(iter_bytes) / elapsed;
 
-            std::cout << outer_loop.count + 1 << "," << inner_loop.count + 1 << "," << tp << ","
-                      << file_size_stored << "\n";
+            std::cout << file_offset << "," << tp << "," << file_size_stored << "\n";
         }
 
         fclose(file);

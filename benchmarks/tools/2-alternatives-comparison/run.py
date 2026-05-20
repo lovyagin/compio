@@ -5,11 +5,15 @@ import sys
 
 COMPIO_BLOCK_SIZES = [2**i for i in range(9, 17)]
 SEEKABLE_ZSTD_FRAME_SIZES = [2**i for i in range(9, 17)]
-ZRAN_FLUSH_INTERVALS = [2**i for i in range(15, 19)]
+ZRAN_FLUSH_INTERVALS = []
 
 # COMPIO_BLOCK_SIZES = [2**i for i in range(8, 22)]
 # SEEKABLE_ZSTD_FRAME_SIZES = [2**i for i in range(9, 22)]
 # ZRAN_FLUSH_INTERVALS = [2**i for i in range(15, 22)]
+
+# COMPIO_BLOCK_SIZES = [2**13]
+# SEEKABLE_ZSTD_FRAME_SIZES = [2**13]
+# ZRAN_FLUSH_INTERVALS = []
 
 COMPIO_CONFIGS = [
     ("zstd", 1, "zstd1"),

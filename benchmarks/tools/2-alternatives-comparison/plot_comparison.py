@@ -53,9 +53,9 @@ def main():
         for bs in sorted(all_data[lib].keys()):
             df = all_data[lib][bs]
             file_size_mb = df["file_size"].iloc[0] / 1e6
-            for ds in sorted(df["data_seed"].unique()):
-                sub = df[df["data_seed"] == ds]
-                vals = sub["throughput_bytes_per_sec"] / 1e6
+            for ds in sorted(df["file_offset"].unique()):
+                sub = df[df["file_offset"] == ds]
+                vals = sub["throughput"] / 1e6
                 all_x.append(file_size_mb)
                 all_y.append(vals.mean())
 
@@ -75,26 +75,26 @@ def main():
     for li, lib in enumerate(libraries):
         color = colors[li % len(colors)]
         block_sizes = sorted(all_data[lib].keys())
-        data_seeds = sorted(
-            set().union(*[set(all_data[lib][bs]["data_seed"].unique()) for bs in block_sizes])
+        file_offsets = sorted(
+            set().union(*[set(all_data[lib][bs]["file_offset"].unique()) for bs in block_sizes])
         )
 
-        for si, ds in enumerate(data_seeds):
+        for si, ds in enumerate(file_offsets):
             xs = []
             ys = []
             yerrs = []
             for bs in block_sizes:
                 df = all_data[lib][bs]
-                sub = df[df["data_seed"] == ds]
+                sub = df[df["file_offset"] == ds]
                 if sub.empty:
                     continue
                 file_size_mb = df["file_size"].iloc[0] / 1e6
-                vals = sub["throughput_bytes_per_sec"] / 1e6
+                vals = sub["throughput"] / 1e6
                 xs.append(file_size_mb)
                 ys.append(vals.mean())
                 yerrs.append(vals.std())
 
-            label_str = f"{lib} data_seed={ds}"
+            label_str = f"{lib} file_offset={ds}"
             ax.loglog(
                 xs,
                 ys,

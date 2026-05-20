@@ -20,7 +20,7 @@ static constexpr std::size_t REGION_SIZE = 1 << 17;
 static constexpr bool IS_WRITE = false;
 static constexpr bool DISABLE_CACHE = true;
 
-static constexpr const char *SAMPLE_FILE = BENCHMARK_DATA_DIR "/enwik8";
+static constexpr const char *SAMPLE_FILE = BENCHMARK_DATA_DIR "/enwik9";
 
 struct BenchmarkLoop {
     int min_iterations;

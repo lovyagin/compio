@@ -17,7 +17,7 @@ def load_csv(filepath):
         raise ValueError(f"Empty CSV: {filepath}")
 
     file_size = float(rows[0]["file_size"]) / 1e6
-    values = [float(r["throughput_bytes_per_sec"]) / 1e6 for r in rows]
+    values = [float(r["throughput"]) / 1e6 for r in rows]
     n = len(values)
     mean = sum(values) / n
     variance = sum((v - mean) ** 2 for v in values) / n
