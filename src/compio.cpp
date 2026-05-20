@@ -506,7 +506,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     strncpy(file->name, name, COMPIO_FNAME_MAX_SIZE - 1);
     file->name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
 
-    file->hash = fnv1a(name);
+    file->hash = file_table_item->file_id;
 
     // Initialize auto-batching state
     file->auto_batch_count = 0;
@@ -547,7 +547,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
 
     // Get all blocks belonging to this file
     const uint64_t file_size = file_table_item->size;
-    const uint64_t hash = fnv1a(name);
+    const uint64_t hash = file_table_item->file_id;
 
     if (file_size > 0) {
         tree_key key_min = {hash, 0};
@@ -2384,7 +2384,7 @@ int compio_repair(const char *path, const char *output_dir) {
         if (valid_header) {
             for (const auto &file : h.ftable.files) {
                 if (file.name[0] != '\0') {
-                    uint64_t hash = fnv1a(file.name);
+                    uint64_t hash = file.file_id;
                     hash_to_name[hash] = std::string(file.name);
                 }
             }
