@@ -3,13 +3,17 @@ import os
 import subprocess
 import sys
 
-COMPIO_BLOCK_SIZES = [2**i for i in range(11, 17)]
-SEEKABLE_ZSTD_FRAME_SIZES = [2**i for i in range(12, 17)]
+COMPIO_BLOCK_SIZES = [2**i for i in range(9, 17)]
+SEEKABLE_ZSTD_FRAME_SIZES = [2**i for i in range(9, 17)]
 ZRAN_FLUSH_INTERVALS = [2**i for i in range(15, 19)]
+
+# COMPIO_BLOCK_SIZES = [2**i for i in range(8, 22)]
+# SEEKABLE_ZSTD_FRAME_SIZES = [2**i for i in range(9, 22)]
+# ZRAN_FLUSH_INTERVALS = [2**i for i in range(15, 22)]
 
 COMPIO_CONFIGS = [
     ("zstd", 1, "zstd1"),
-    ("zlib", 1, "zlib1"),
+    # ("zlib", 1, "zlib1"),
 ]
 
 
@@ -69,8 +73,8 @@ def main():
     seekable_params = [(f"{fs}", [str(fs)]) for fs in SEEKABLE_ZSTD_FRAME_SIZES]
     run_one("seekable_zstd", args.seekable_zstd_bin, args.output_dir, seekable_params)
 
-    zran_params = [(f"{fi}", [str(fi)]) for fi in ZRAN_FLUSH_INTERVALS]
-    run_one("zran", args.zran_bin, args.output_dir, zran_params)
+    # zran_params = [(f"{fi}", [str(fi)]) for fi in ZRAN_FLUSH_INTERVALS]
+    # run_one("zran", args.zran_bin, args.output_dir, zran_params)
 
     print("\nAll experiments completed.")
 

@@ -1,6 +1,7 @@
 import argparse
 import csv
 import glob
+import math
 import os
 import re
 
@@ -9,25 +10,33 @@ import matplotlib.pyplot as plt
 
 def load_csv(filepath):
     with open(filepath) as f:
-        row = next(csv.DictReader(f))
-    return (
-        float(row["mean_file_size"]) / 1e6,
-        float(row["mean_throughput"]) / 1e6,
-        float(row["stddev_throughput"]) / 1e6,
-        float(row["stddev_file_size"]) / 1e6,
+        lines = [line for line in f if not line.startswith("#")]
+    reader = csv.DictReader(lines)
+    rows = list(reader)
+    if not rows:
+        raise ValueError(f"Empty CSV: {filepath}")
+
+    file_size = float(rows[0]["file_size"]) / 1e6
+    values = [float(r["throughput_bytes_per_sec"]) / 1e6 for r in rows]
+    n = len(values)
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / n
+    stddev = math.sqrt(variance)
+    return file_size, mean, stddev
+
+
+def block_size(filepath):
+    return int(
+        re.search(
+            r"_(\d+)$", os.path.splitext(os.path.basename(filepath))[0]
+        ).group(1)
     )
 
 
-def param_value(filepath):
-    """Extract the numeric parameter value from the filename (block size, frame size, or flush interval)."""
-    basename = os.path.splitext(os.path.basename(filepath))[0]
-    return int(re.search(r"_([a-z]{2})(\d+)$", basename).group(2))
-
-
 def label(filepath):
-    """Extract a human-readable label from the filename, stripping the numeric parameter suffix."""
-    basename = os.path.splitext(os.path.basename(filepath))[0]
-    return re.sub(r"_([a-z]{2})\d+$", "", basename).replace("_", " ")
+    return re.sub(
+        r"_\d+$", "", os.path.splitext(os.path.basename(filepath))[0]
+    ).replace("_", " ")
 
 
 def main():
@@ -36,14 +45,14 @@ def main():
     parser.add_argument("-o", "--output", default="results.svg")
     args = parser.parse_args()
 
-    files = sorted(args.files) if args.files else sorted(glob.glob("results/*.txt"))
+    files = sorted(args.files) if args.files else sorted(glob.glob("results/*.csv"))
     if not files:
         print("No files found.")
         return
 
     groups = {}
     for fp in files:
-        groups.setdefault(label(fp), []).append((fp, param_value(fp)))
+        groups.setdefault(label(fp), []).append((fp, block_size(fp)))
     for g in groups.values():
         g.sort(key=lambda x: x[1])
 
@@ -51,15 +60,15 @@ def main():
     all_y = []
     for flist in groups.values():
         for fp, _ in flist:
-            x, y, _, _ = load_csv(fp)
+            x, y, _ = load_csv(fp)
             all_x.append(x)
             all_y.append(y)
 
     x_min, x_max = min(all_x), max(all_x)
     y_min, y_max = min(all_y), max(all_y)
 
-    x_left = x_min * 0.8
-    x_right = x_max * 1.2
+    x_left = x_min * 0.9
+    x_right = x_max * 1.1
     y_bottom = y_min * 0.8
     y_top = y_max * 1.2
 
@@ -71,7 +80,7 @@ def main():
     ax.set_ylim(bottom=y_bottom, top=y_top)
 
     for idx, (lbl, flist) in enumerate(sorted(groups.items())):
-        xs, ys, yerrs, xerrs = zip(*[load_csv(fp) for fp, _ in flist])
+        xs, ys, yerrs = zip(*[load_csv(fp) for fp, _ in flist])
         c = cmap(idx)
         ax.loglog(
             xs,
@@ -84,7 +93,7 @@ def main():
             alpha=0.75,
             label=lbl,
         )
-        ax.errorbar(xs, ys, xerr=xerrs, yerr=yerrs, fmt="none", color=c, alpha=0.5, capsize=3)
+        ax.errorbar(xs, ys, yerr=yerrs, fmt="none", color=c, alpha=0.5, capsize=3)
 
     ax.set(
         xlabel="File Size (MB)",

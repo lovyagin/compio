@@ -141,8 +141,7 @@ std::pair<const char *, std::size_t> load_webster_data() {
 }
 
 std::pair<const char *, std::size_t> load_custom_sample_data(const char *file_path,
-                                                             std::size_t offset,
-                                                             std::size_t size) {
+                                                             std::size_t offset, std::size_t size) {
     static std::vector<char> data;
     static bool loaded = false;
     if (loaded) {
@@ -152,8 +151,7 @@ std::pair<const char *, std::size_t> load_custom_sample_data(const char *file_pa
     std::ifstream file;
     file.open(file_path, std::ios::binary);
     if (!file.is_open()) {
-        throw std::runtime_error("could not open custom sample file: " +
-                                 std::string(file_path));
+        throw std::runtime_error("could not open custom sample file: " + std::string(file_path));
     }
 
     file.seekg(0, std::ios::end);
@@ -215,6 +213,8 @@ UsageStrategy::Operation UsageStrategy::get_op() {
 
     return {region_start + offset, size, sample_data + data_pos};
 }
+
+void UsageStrategy::seed(int seed) { rng.seed(seed); }
 
 bool copy_file(const std::string &src, const std::string &dst) {
     FILE *in = fopen(src.c_str(), "rb");

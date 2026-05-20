@@ -61,6 +61,7 @@ struct UsageStrategy {
                   std::size_t file_size, double gamma_shape, double gamma_scale,
                   std::size_t region_size, std::size_t n_switch);
     Operation get_op();
+    void seed(int seed);
 
 private:
     std::minstd_rand rng;

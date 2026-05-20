@@ -1,6 +1,15 @@
 #ifndef OPTIMAL_BENCHMARK_CONSTANTS_HPP_
 #define OPTIMAL_BENCHMARK_CONSTANTS_HPP_
 
+#include <chrono>
+#include <cstddef>
+#include <fstream>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
 static constexpr std::size_t N_OPERATIONS = 1 << 13;
 static constexpr std::size_t FILE_SIZE = 1 << 25;
 static constexpr std::size_t N_SWITCH = 1;
@@ -11,11 +20,38 @@ static constexpr std::size_t REGION_SIZE = 1 << 17;
 static constexpr bool IS_WRITE = false;
 static constexpr bool DISABLE_CACHE = true;
 
-static constexpr int MIN_ITERATIONS = 30;
-static constexpr double MAX_SECONDS = 60.0;
-static constexpr int MAX_ITERATIONS = 1000;
+static constexpr const char *SAMPLE_FILE = BENCHMARK_DATA_DIR "/enwik8";
 
-static constexpr const char *SAMPLE_FILE = BENCHMARK_DATA_DIR "/enwik9";
+struct BenchmarkLoop {
+    int min_iterations;
+    int max_iterations;
+    double max_seconds;
+    int count = 0;
+    using clock = std::chrono::high_resolution_clock;
+    clock::time_point start = clock::now();
+
+    BenchmarkLoop(int min_it, int max_it, double max_sec)
+        : min_iterations(min_it),
+          max_iterations(max_it),
+          max_seconds(max_sec) {}
+
+    bool done() const {
+        if (count < min_iterations)
+            return false;
+        if (count >= max_iterations)
+            return true;
+        double elapsed = std::chrono::duration<double>(clock::now() - start).count();
+        return elapsed >= max_seconds;
+    }
+
+    void reset() {
+        count = 0;
+        start = clock::now();
+    }
+};
+
+BenchmarkLoop outer_loop(3, 3, 0);
+BenchmarkLoop inner_loop(30, 100, 20);
 
 inline std::pair<std::vector<char>, std::size_t> load_random_sample_data(std::minstd_rand &rng) {
     std::ifstream sf(SAMPLE_FILE, std::ios::binary | std::ios::ate);

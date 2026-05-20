@@ -48,15 +48,15 @@ int main(int argc, char *argv[]) {
     std::size_t flush_interval = std::stoull(argv[1]);
 
     std::minstd_rand rng;
-    int iterations = 0;
-    Timer total_timer;
+    std::unique_ptr<unsigned char[]> buffer(new unsigned char[FILE_SIZE]);
+    std::cout << "data_seed,usage_seed,throughput_bytes_per_sec,file_size\n";
 
-    std::cout << "seed,throughput_bytes_per_sec,file_size\n";
-
-    while (iterations < MIN_ITERATIONS ||
-           (total_timer.elapsed_seconds() < MAX_SECONDS && iterations < MAX_ITERATIONS)) {
-        rng.seed(static_cast<std::minstd_rand::result_type>(iterations));
+    for (outer_loop.reset(); !outer_loop.done(); ++outer_loop.count) {
+        rng.seed(outer_loop.count + 1);
         auto [sample_data, file_offset] = load_random_sample_data(rng);
+
+        UsageStrategy strategy(0, sample_data.data(), sample_data.size(), FILE_SIZE, GAMMA_SHAPE,
+                               GAMMA_SCALE, REGION_SIZE, N_SWITCH);
 
         std::string file_path = get_temporary_filename() + ".gz";
         write_gzip_with_flush(file_path, sample_data.data(), FILE_SIZE, flush_interval);
@@ -82,43 +82,39 @@ int main(int argc, char *argv[]) {
             std::cerr << "fopen failed\n";
             deflate_index_free(index);
             remove(file_path.c_str());
-            break;
+            return 1;
         }
 
-        UsageStrategy strategy(iterations, sample_data.data(), sample_data.size(), FILE_SIZE,
-                               GAMMA_SHAPE, GAMMA_SCALE, REGION_SIZE, N_SWITCH);
-        std::unique_ptr<unsigned char[]> buffer(new unsigned char[FILE_SIZE]);
+        for (inner_loop.reset(); !inner_loop.done(); ++inner_loop.count) {
+            strategy.seed(inner_loop.count + 1);
 
-        Timer iter_timer;
-        bool failed = false;
-        std::size_t iter_bytes = 0;
-        for (std::size_t i = 0; i < N_OPERATIONS; ++i) {
-            auto op = strategy.get_op();
-            ptrdiff_t n = deflate_index_extract(file, index, op.pos, buffer.get(), op.size);
-            if (n != static_cast<ptrdiff_t>(op.size)) {
-                failed = true;
-                break;
+            Timer iter_timer;
+            bool failed = false;
+            std::size_t iter_bytes = 0;
+            for (std::size_t i = 0; i < N_OPERATIONS; ++i) {
+                auto op = strategy.get_op();
+                ptrdiff_t n = deflate_index_extract(file, index, op.pos, buffer.get(), op.size);
+                if (n != static_cast<ptrdiff_t>(op.size)) {
+                    failed = true;
+                    break;
+                }
+                iter_bytes += op.size;
             }
-            iter_bytes += op.size;
+
+            if (failed)
+                break;
+
+            double elapsed = iter_timer.elapsed_seconds();
+            double tp = static_cast<double>(iter_bytes) / elapsed;
+
+            std::cout << outer_loop.count + 1 << "," << inner_loop.count + 1 << "," << tp << ","
+                      << file_size_stored << "\n";
         }
 
         fclose(file);
         deflate_index_free(index);
         remove(file_path.c_str());
-        if (failed)
-            break;
-
-        double elapsed = iter_timer.elapsed_seconds();
-        double tp = static_cast<double>(iter_bytes) / elapsed;
-
-        std::cout << iterations << "," << tp << "," << file_size_stored << "\n";
-        ++iterations;
     }
-
-    if (iterations == 0)
-        return 1;
-
-    std::cout << "# n_iterations=" << iterations << ",flush_interval=" << flush_interval << "\n";
 
     return 0;
 }

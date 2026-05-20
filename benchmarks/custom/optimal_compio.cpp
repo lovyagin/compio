@@ -70,90 +70,102 @@ int main(int argc, char *argv[]) {
     config.wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
 
     std::minstd_rand rng;
-    int iterations = 0;
-    Timer total_timer;
+    std::unique_ptr<char[]> buffer(new char[FILE_SIZE]);
+    std::cout << "data_seed,usage_seed,throughput_bytes_per_sec,file_size,block_cache_hit\n";
 
-    std::cout << "seed,throughput_bytes_per_sec,file_size,block_cache_hit\n";
-
-    while (iterations < MIN_ITERATIONS ||
-           (total_timer.elapsed_seconds() < MAX_SECONDS && iterations < MAX_ITERATIONS)) {
-        rng.seed(static_cast<std::minstd_rand::result_type>(iterations));
+    for (outer_loop.reset(); !outer_loop.done(); ++outer_loop.count) {
+        rng.seed(outer_loop.count + 1);
         auto [sample_data, file_offset] = load_random_sample_data(rng);
+
+        UsageStrategy strategy(0, sample_data.data(), sample_data.size(), FILE_SIZE, GAMMA_SHAPE,
+                               GAMMA_SCALE, REGION_SIZE, N_SWITCH);
 
         std::string file_path = get_temporary_filename();
         std::string wal_path = file_path + ".wal";
         create_archive(file_path, config, sample_data.data());
-
         unsigned long file_size_stored = get_file_size(file_path.c_str());
 
-        compio_archive *archive =
-            compio_open_archive(file_path.c_str(), IS_WRITE ? "r+" : "r", &config);
-        if (!archive) {
-            std::cerr << "compio_open_archive failed\n";
-            remove(file_path.c_str());
-            remove(wal_path.c_str());
-            break;
-        }
-        compio_file *file = compio_open_file("A", archive);
-        if (!file) {
+        for (inner_loop.reset(); !inner_loop.done(); ++inner_loop.count) {
+            strategy.seed(inner_loop.count + 1);
+
+            std::string work_path = file_path;
+            std::string work_wal_path = wal_path;
+            if constexpr (IS_WRITE) {
+                work_path = file_path + ".copy";
+                work_wal_path = work_path + ".wal";
+                copy_file(file_path.c_str(), work_path.c_str());
+                copy_file(wal_path.c_str(), work_wal_path.c_str());
+            }
+
+            compio_archive *archive =
+                compio_open_archive(work_path.c_str(), IS_WRITE ? "r+" : "r", &config);
+            if (!archive) {
+                std::cerr << "compio_open_archive failed\n";
+                if constexpr (IS_WRITE) {
+                    remove(work_path.c_str());
+                    remove(work_wal_path.c_str());
+                }
+                break;
+            }
+            compio_file *file = compio_open_file("A", archive);
+            if (!file) {
+                compio_close_archive(archive);
+                std::cerr << "compio_open_file failed\n";
+                if constexpr (IS_WRITE) {
+                    remove(work_path.c_str());
+                    remove(work_wal_path.c_str());
+                }
+                break;
+            }
+
+            Timer iter_timer;
+            bool failed = false;
+            std::size_t iter_bytes = 0;
+            for (std::size_t i = 0; i < N_OPERATIONS; ++i) {
+                auto op = strategy.get_op();
+                if (compio_seek(file, op.pos, COMPIO_SEEK_SET) != 0) {
+                    failed = true;
+                    break;
+                }
+                std::size_t bytes = 0;
+                if (IS_WRITE)
+                    bytes = compio_write(op.data, op.size, file);
+                else
+                    bytes = compio_read(buffer.get(), op.size, file);
+
+                if (bytes != op.size) {
+                    failed = true;
+                    break;
+                }
+                iter_bytes += op.size;
+            }
+
+            double block_cache_hit = 0.0;
+            if (!failed) {
+                block_cache_hit = archive->block_reader->get_cache_hit_probability();
+            }
+
+            compio_close_file(file);
             compio_close_archive(archive);
-            remove(file_path.c_str());
-            remove(wal_path.c_str());
-            std::cerr << "compio_open_file failed\n";
-            break;
-        }
 
-        UsageStrategy strategy(iterations, sample_data.data(), sample_data.size(), FILE_SIZE,
-                               GAMMA_SHAPE, GAMMA_SCALE, REGION_SIZE, N_SWITCH);
-        std::unique_ptr<char[]> buffer(new char[FILE_SIZE]);
-
-        Timer iter_timer;
-        bool failed = false;
-        std::size_t iter_bytes = 0;
-        for (std::size_t i = 0; i < N_OPERATIONS; ++i) {
-            auto op = strategy.get_op();
-            if (compio_seek(file, op.pos, COMPIO_SEEK_SET) != 0) {
-                failed = true;
-                break;
+            if constexpr (IS_WRITE) {
+                remove(work_path.c_str());
+                remove(work_wal_path.c_str());
             }
-            std::size_t bytes = 0;
-            if (IS_WRITE)
-                bytes = compio_write(op.data, op.size, file);
-            else
-                bytes = compio_read(buffer.get(), op.size, file);
 
-            if (bytes != op.size) {
-                failed = true;
+            if (failed)
                 break;
-            }
-            iter_bytes += op.size;
+
+            double elapsed = iter_timer.elapsed_seconds();
+            double tp = static_cast<double>(iter_bytes) / elapsed;
+
+            std::cout << outer_loop.count + 1 << "," << inner_loop.count + 1 << "," << tp << ","
+                      << file_size_stored << "," << block_cache_hit << "\n";
         }
 
-        double block_cache_hit = 0.0;
-        if (!failed) {
-            block_cache_hit = archive->block_reader->get_cache_hit_probability();
-        }
-
-        compio_close_file(file);
-        compio_close_archive(archive);
         remove(file_path.c_str());
         remove(wal_path.c_str());
-
-        if (failed)
-            break;
-
-        double elapsed = iter_timer.elapsed_seconds();
-        double tp = static_cast<double>(iter_bytes) / elapsed;
-
-        std::cout << iterations << "," << tp << "," << file_size_stored << "," << block_cache_hit
-                  << "\n";
-        ++iterations;
     }
-
-    if (iterations == 0)
-        return 1;
-
-    std::cout << "# n_iterations=" << iterations << ",block_size=" << block_size << "\n";
 
     return 0;
 }
