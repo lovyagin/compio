@@ -29,9 +29,11 @@ namespace compio {
 struct files_table {
     uint64_t n_files;
     uint32_t max_files;
+    uint64_t next_file_id;
     struct file {
         char name[COMPIO_FNAME_MAX_SIZE];
         uint64_t size;
+        uint64_t file_id;
     };
     std::vector<file> files;
     

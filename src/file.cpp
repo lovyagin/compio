@@ -32,7 +32,7 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64
     this->n_files = n_files_in;
     this->files.resize(capacity);
 
-    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t) + sizeof(uint64_t);
     static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
 
     bool is_be = is_big_endian();
@@ -68,7 +68,9 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64
             size_t offset = i * ENTRY_SIZE;
             std::memcpy(f.name, &buffer[offset], COMPIO_FNAME_MAX_SIZE);
             std::memcpy(&f.size, &buffer[offset + COMPIO_FNAME_MAX_SIZE], sizeof(uint64_t));
+            std::memcpy(&f.file_id, &buffer[offset + COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t)], sizeof(uint64_t));
             if (is_be) swap_uint64(&f.size);
+            if (is_be) swap_uint64(&f.file_id);
         }
         current_idx += count;
         remaining -= count;
@@ -83,7 +85,7 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
         return;
     }
 
-    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t);
+    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t) + sizeof(uint64_t);
     static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
 
     bool is_be = is_big_endian();
@@ -112,8 +114,11 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
             size_t offset = i * ENTRY_SIZE;
             std::memcpy(&buffer[offset], f.name, COMPIO_FNAME_MAX_SIZE);
             uint64_t s = f.size;
+            uint64_t id = f.file_id;
             if (is_be) swap_uint64(&s);
+            if (is_be) swap_uint64(&id);
             std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE], &s, sizeof(uint64_t));
+            std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t)], &id, sizeof(uint64_t));
         }
 
         size_t bytes_to_write = count * ENTRY_SIZE;
@@ -779,15 +784,15 @@ storage_block::storage_block(uint64_t size)
         checksum_type = COMPIO_CHECKSUM_FNV1A;
     }
 
-files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), files(COMPIO_MAX_FILES) {
+files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), next_file_id(1), files(COMPIO_MAX_FILES) {
 }
 
 files_table::files_table(uint32_t max_files)
-    : n_files(0), max_files(max_files), files(max_files) {
+    : n_files(0), max_files(max_files), next_file_id(1), files(max_files) {
 }
 
 files_table::files_table(const files_table& other)
-    : n_files(other.n_files), max_files(other.max_files), files(other.files) {
+    : n_files(other.n_files), max_files(other.max_files), next_file_id(other.next_file_id), files(other.files) {
     // Index map is transient, but we must rebuild it so the new copy is usable for lookups
     rebuild_index();
 }
@@ -796,6 +801,7 @@ files_table& files_table::operator=(const files_table& other) {
     if (this != &other) {
         n_files = other.n_files;
         max_files = other.max_files;
+        next_file_id = other.next_file_id;
         files = other.files;
         // Rebuild index in the target
         rebuild_index();
@@ -804,21 +810,24 @@ files_table& files_table::operator=(const files_table& other) {
 }
 
 files_table::files_table(files_table&& other) noexcept
-    : n_files(other.n_files), max_files(other.max_files),
+    : n_files(other.n_files), max_files(other.max_files), next_file_id(other.next_file_id),
       files(std::move(other.files)), index_map_(std::move(other.index_map_)) {
     other.n_files = 0;
     other.max_files = 0;
+    other.next_file_id = 0;
 }
 
 files_table& files_table::operator=(files_table&& other) noexcept {
     if (this != &other) {
         n_files = other.n_files;
         max_files = other.max_files;
+        next_file_id = other.next_file_id;
         files = std::move(other.files);
         index_map_ = std::move(other.index_map_);
         
         other.n_files = 0;
         other.max_files = 0;
+        other.next_file_id = 0;
     }
     return *this;
 }
@@ -826,6 +835,7 @@ files_table& files_table::operator=(files_table&& other) noexcept {
 void files_table::rebuild_index() {
     index_map_.clear();
     index_map_.reserve(n_files);
+    uint64_t max_id = 0;
     for (uint32_t i = 0; i < n_files; ++i) {
         // Insert if not exists to preserve "first match" semantics for legacy archives
         size_t len = portable_strnlen(files[i].name, COMPIO_FNAME_MAX_SIZE);
@@ -836,6 +846,13 @@ void files_table::rebuild_index() {
         if (!index_map_.find(key)) {
             index_map_.emplace(key, i);
         }
+        if (files[i].file_id > max_id) {
+            max_id = files[i].file_id;
+        }
+    }
+    // Ensure next_file_id is beyond any existing file_id
+    if (next_file_id <= max_id) {
+        next_file_id = max_id + 1;
     }
 }
 
@@ -905,6 +922,7 @@ files_table::file *files_table::add(const char *name, bool allow_resize) {
     strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE - 1);
     files[n_files].name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
     files[n_files].size = 0;
+    files[n_files].file_id = next_file_id++;
     
     // Update index
     std::string_view stored_key(files[n_files].name, key.length());
