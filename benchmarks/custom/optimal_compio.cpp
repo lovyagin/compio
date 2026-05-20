@@ -69,12 +69,15 @@ int main(int argc, char *argv[]) {
         config.cache_size__blocks = 1;
     config.wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
 
-    std::minstd_rand rng;
+    std::size_t sample_file_size = get_sample_file_size();
+    std::size_t file_offset = 0;
+
     std::unique_ptr<char[]> buffer(new char[FILE_SIZE]);
     std::cout << "file_offset,throughput,file_size,block_cache_hit\n";
 
     for (outer_loop.reset(); !outer_loop.done(); ++outer_loop.count) {
-        auto [sample_data, file_offset] = load_random_sample_data(rng);
+        auto sample_data = load_sample_data_by_offset(file_offset);
+        file_offset = (file_offset + FILE_SIZE) % (sample_file_size - FILE_SIZE);
 
         UsageStrategy strategy(0, sample_data.data(), sample_data.size(), FILE_SIZE, GAMMA_SHAPE,
                                GAMMA_SCALE, REGION_SIZE, N_SWITCH);

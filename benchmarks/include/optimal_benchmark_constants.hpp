@@ -50,17 +50,33 @@ struct BenchmarkLoop {
     }
 };
 
-BenchmarkLoop outer_loop(3, 3, 0);
-BenchmarkLoop inner_loop(30, 100, 20);
+BenchmarkLoop outer_loop(20, 20, 0);
+BenchmarkLoop inner_loop(15, 15, 0);
 
-inline std::pair<std::vector<char>, std::size_t> load_random_sample_data(std::minstd_rand &rng) {
+inline std::size_t get_sample_file_size() {
     std::ifstream sf(SAMPLE_FILE, std::ios::binary | std::ios::ate);
     if (!sf.is_open())
         throw std::runtime_error("could not open sample file");
     std::streamsize sample_file_size = sf.tellg();
     sf.close();
 
-    std::size_t max_offset = static_cast<std::size_t>(sample_file_size) - FILE_SIZE;
+    return sample_file_size;
+}
+
+inline std::vector<char> load_sample_data_by_offset(std::size_t offset) {
+    if (offset > get_sample_file_size() - FILE_SIZE)
+        throw std::runtime_error("offset is too big");
+
+    std::ifstream file(SAMPLE_FILE, std::ios::binary);
+    file.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    std::vector<char> data(FILE_SIZE);
+    if (!file.read(data.data(), FILE_SIZE))
+        throw std::runtime_error("failed to read sample data");
+    return data;
+}
+
+inline std::pair<std::vector<char>, std::size_t> load_random_sample_data(std::minstd_rand &rng) {
+    std::size_t max_offset = get_sample_file_size() - FILE_SIZE;
     std::uniform_int_distribution<std::size_t> offset_dist(0, max_offset);
     std::size_t offset = offset_dist(rng);
 
