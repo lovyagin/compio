@@ -52,9 +52,9 @@ def main():
     for lib in libraries:
         for bs in sorted(all_data[lib].keys()):
             df = all_data[lib][bs]
-            file_size_mb = df["file_size"].iloc[0] / 1e6
             for ds in sorted(df["file_offset"].unique()):
                 sub = df[df["file_offset"] == ds]
+                file_size_mb = sub["file_size"].iloc[0] / 1e6
                 vals = sub["throughput"] / 1e6
                 all_x.append(file_size_mb)
                 all_y.append(vals.mean())
@@ -88,7 +88,7 @@ def main():
                 sub = df[df["file_offset"] == ds]
                 if sub.empty:
                     continue
-                file_size_mb = df["file_size"].iloc[0] / 1e6
+                file_size_mb = sub["file_size"].iloc[0] / 1e6
                 vals = sub["throughput"] / 1e6
                 xs.append(file_size_mb)
                 ys.append(vals.mean())
