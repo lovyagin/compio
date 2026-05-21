@@ -1030,13 +1030,13 @@ uint64_t compio_tell(compio_file *file) { return file->cursor; }
 
 uint64_t compio_get_size(compio_file *file) { return file->size; }
 
-static void validate_no_gaps_in_range(const std::vector<std::pair<tree_key, tree_val>> range) {
+static void validate_no_overlap_in_range(const std::vector<std::pair<tree_key, tree_val>> range) {
     for (std::size_t i = 1; i < range.size(); ++i) {
-        // check that there's no gaps between blocks
+        // blocks must be ordered and not overlap; gaps (holes) are allowed
         const auto &[key_prev, val_prev] = range[i - 1];
         const auto &[key, val] = range[i];
         (void)key_prev; (void)val_prev; (void)key; (void)val;
-        assert(key.pos == key_prev.pos + val_prev.size);
+        assert(key.pos >= key_prev.pos + val_prev.size);
     }
 }
 
@@ -1051,17 +1051,26 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
     if (!allow_empty) {
         assert(!file_range.empty());
     }
-    validate_no_gaps_in_range(file_range);
-    for (const auto &[key, val] : file_range) {
+    // blocks must belong to this file and must not overlap; gaps (holes) are
+    // allowed: writing past EOF leaves sparse regions that compio_read
+    // zero-fills on demand, so a file's blocks need not start at 0 or be contiguous
+    for (std::size_t i = 0; i < file_range.size(); ++i) {
+        const auto &[key, val] = file_range[i];
+        (void)key; (void)val;
         assert(key.hash == file->hash);
+        if (i > 0) {
+            const auto &[key_prev, val_prev] = file_range[i - 1];
+            (void)key_prev; (void)val_prev;
+            assert(key.pos >= key_prev.pos + val_prev.size);
+        }
     }
     if (!file_range.empty()) {
-        // check that blocks cover the whole file
-        assert(file_range.front().first.pos == 0);
+        // the last block must not extend past the logical file size; it may end
+        // before it when the file has a trailing hole (e.g. after erase)
 #ifdef COMPIO_DISABLE_INSERT_ERASE
         assert(file_range.back().first.pos + file_range.back().second.size >= file->size);
 #else
-        assert(file_range.back().first.pos + file_range.back().second.size == file->size);
+        assert(file_range.back().first.pos + file_range.back().second.size <= file->size);
 #endif
     }
 #endif
@@ -1979,10 +1988,9 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         return 0;
     }
     const auto& range = *range_opt;
-    assert(!range.empty());
-    assert(range.front().first.pos <= erase_start);
-    assert(range.back().first.pos + range.back().second.size >= erase_end);
-    validate_no_gaps_in_range(range);
+    // range holds the blocks overlapping [erase_start, erase_end); it may be
+    // empty or partial when the erased region falls inside sparse holes
+    validate_no_overlap_in_range(range);
 
     uint64_t bytes_erased = 0;
     std::optional<tree_key> left_to_merge = std::nullopt;
