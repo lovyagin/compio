@@ -7,7 +7,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <vector>
 
 #include "compio/allocator.hpp"
@@ -867,6 +869,113 @@ TEST_F(PerformDefragmentationTest, RepeatedDefragCycles_DataIntact) {
 // ---------------------------------------------------------------------------
 // Test that the free_blocks_manager destructor properly frees all nodes.
 // Implicitly checked by ASAN — this exercises a complex internal state.
+// ---------------------------------------------------------------------------
+// FilesTableNoLeakOnRepeatedFlush
+// sync_files_table() uses copy-on-write across two alternating blocks for the
+// external (v5) files table (mirrors the double-buffered header). It must
+// reclaim the previous table block on each flush instead of leaking a fresh
+// one, so repeated no-op flushes must never leak a whole files-table block.
+// Regression test for the under-allocation bug where the block was sized
+// without the per-entry file_id field, breaking reuse (a full block leaked
+// every flush) and overrunning the allocation on write.
+// ---------------------------------------------------------------------------
+TEST(DefragmentationPhysicalTest, FilesTableNoLeakOnRepeatedFlush) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.fragmentation_threshold = 100; // disable auto-maintenance
+    compio_archive *archive = compio_open_archive(fn, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+
+    const size_t DATA_SIZE = 2048;
+    const int N = 16;
+    for (int i = 0; i < N; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "f%d", i);
+        compio_file *f = compio_open_file(name, archive);
+        ASSERT_NE(f, nullptr);
+        std::vector<uint8_t> data(DATA_SIZE, (uint8_t)i);
+        compio_write(data.data(), DATA_SIZE, f);
+        compio_close_file(f);
+    }
+
+    // Two flushes establish the alternating two-block working set.
+    compio_flush(archive);
+    compio_flush(archive);
+    uint64_t size1 = std::filesystem::file_size(fn);
+
+    const int kFlushes = 10;
+    for (int i = 0; i < kFlushes; i++) compio_flush(archive);
+    uint64_t size2 = std::filesystem::file_size(fn);
+
+    // One full files-table block per slot. If reuse is broken, the file grows
+    // by at least one such block per flush; with reuse it stays nearly flat.
+    const uint64_t table_block =
+        (uint64_t)COMPIO_MAX_FILES * (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
+    EXPECT_LT(size2 - size1, table_block)
+        << "file grew by " << (int64_t)(size2 - size1) << " bytes across "
+        << kFlushes << " no-op flushes; a files-table block (" << table_block
+        << " B) is leaking per flush";
+
+    compio_close_archive(archive);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
+}
+
+// ---------------------------------------------------------------------------
+// DefragmentReclaimsTransientSpace
+// Copy-on-write metadata (files table, allocator state) leaves transient dead
+// regions across flushes. compio_defragment() must reclaim them: after a churn
+// of flushes the file must shrink once defragmented (and not grow).
+// ---------------------------------------------------------------------------
+TEST(DefragmentationPhysicalTest, DefragmentReclaimsTransientSpace) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.fragmentation_threshold = 100; // disable auto-maintenance
+    compio_archive *archive = compio_open_archive(fn, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+
+    const size_t DATA_SIZE = 4096;
+    const int N = 100;
+    for (int i = 0; i < N; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "f%d", i);
+        compio_file *f = compio_open_file(name, archive);
+        ASSERT_NE(f, nullptr);
+        std::vector<uint8_t> data(DATA_SIZE, (uint8_t)i);
+        compio_write(data.data(), DATA_SIZE, f);
+        compio_close_file(f);
+    }
+    // Delete 90% of the files, then churn flushes to accumulate dead regions.
+    for (int i = 0; i < N; i++) {
+        if (i % 10 == 0) continue;
+        char name[32];
+        snprintf(name, sizeof(name), "f%d", i);
+        compio_remove_file(archive, name);
+    }
+    for (int k = 0; k < 30; k++) compio_flush(archive);
+    uint64_t churned = std::filesystem::file_size(fn);
+
+    EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
+    compio_flush(archive);
+    uint64_t defragged = std::filesystem::file_size(fn);
+
+    EXPECT_LT(defragged, churned)
+        << "defragment did not reclaim space: " << churned << " -> " << defragged;
+
+    // Idempotent: a second defragment must not grow the file.
+    EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
+    compio_flush(archive);
+    EXPECT_LE(std::filesystem::file_size(fn), defragged);
+
+    compio_close_archive(archive);
+    remove(fn); remove((std::string(fn) + ".wal").c_str());
+}
+
 // ---------------------------------------------------------------------------
 TEST(DestructorTest, FreeBlocksManagerCleansUpNodes) {
     uint64_t file_size = 100000;
