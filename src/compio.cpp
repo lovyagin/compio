@@ -2185,24 +2185,29 @@ static void sync_files_table(compio_archive *archive) {
     if (archive->header->magic_number != COMPIO_MAGIC_NUMBER) return;
 
     // Copy-on-write for the files table:
-    // Always allocate new space for the table and write into it, then update the
-    // header to point to the new region. We intentionally do NOT deallocate the
-    // old table here, because this function has no way to know when the updated
-    // header has been made durable on disk.
-    //
-    // Note: This intentionally leaks the old table block until a "GC" or full
-    // defragmentation (rebuild from index) is implemented. This is the price for
-    // crash safety with the current double-buffered header design.
+    // Copy-on-write: allocate a fresh block for the table, write into it, then
+    // point the header at the new region. The previous table block is freed
+    // afterwards. This is crash safe: deallocate() only mutates the in-memory
+    // free list, which becomes durable atomically together with the new header
+    // (allocator save_state + double-buffered header + WAL commit happen later
+    // in compio_flush). A crash before that rolls back to the previous header,
+    // whose table block is still marked allocated and intact on disk. The new
+    // block is allocated before the old one is freed, so they never overlap.
 
     uint32_t current_capacity = archive->header->ftable.max_files;
     if (current_capacity == 0) {
         return;
     }
 
-    // Calculate needed size
-    // Each entry is COMPIO_FNAME_MAX_SIZE (256) + sizeof(uint64_t) (8) = 264 bytes.
-    // We allocate for full capacity.
-    uint64_t needed_size = static_cast<uint64_t>(current_capacity) * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
+    const uint64_t old_addr     = archive->header->files_table_addr;
+    const uint64_t old_capacity = archive->header->files_table_capacity;
+
+    // Calculate needed size. Must match files_table::write_to, which serialises
+    // one files_table::file per slot: name[COMPIO_FNAME_MAX_SIZE] + size(u64) +
+    // file_id(u64). Omitting file_id here previously under-allocated the block
+    // by 8 bytes per slot, so write_to overran into the next allocation.
+    constexpr uint64_t kEntrySize = COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t);
+    uint64_t needed_size = static_cast<uint64_t>(current_capacity) * kEntrySize;
 
     // Allocate space using allocator if available
     uint64_t new_addr = 0;
@@ -2222,12 +2227,18 @@ static void sync_files_table(compio_archive *archive) {
     
     if (new_addr != 0 && new_addr != UINT64_MAX) {
         // Update header to point to the newly allocated table.
-        // We do NOT free the old address.
         archive->header->files_table_addr = new_addr;
         archive->header->files_table_capacity = current_capacity;
-        
+
         // Write the table content at the new address.
         archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
+
+        // Reclaim the previous table block (if any). Must run after the new
+        // block is allocated so the two regions never overlap.
+        if (archive->allocator && old_addr != 0 && old_addr != new_addr) {
+            const uint64_t old_size = old_capacity * kEntrySize;
+            archive->allocator->deallocate(old_addr, old_size);
+        }
     } else {
          WARNING_PRINT("warning: failed to allocate space for files table\n");
     }
@@ -2270,7 +2281,7 @@ void compio_flush(compio_archive *archive) {
     if (archive->allocator && can_write) {
          archive->allocator->save_state(archive);
     }
-    
+
     // Double-buffered Header Write
     flush_header_double_buffered(archive);
     
