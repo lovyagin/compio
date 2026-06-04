@@ -12,6 +12,8 @@ add_executable(compio_benchmarks
     src/defragmentation_benchmark.cpp
     src/lookup_benchmark.cpp
     src/checksum_benchmark.cpp
+    src/concurrent_read.cpp
+    src/wal_sync_benchmark.cpp
     src/scatter.cpp
 )
 target_link_libraries(compio_benchmarks PRIVATE compio benchmark::benchmark)
