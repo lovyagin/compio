@@ -31,6 +31,9 @@ add_executable(compio_gtest
     src/test_header_validation.cpp
     src/test_max_files_scalability.cpp
     src/test_crash_protection.cpp
+    src/test_crash_sigkill.cpp
+    src/test_flush_files_table.cpp
+    src/test_flush_durability.cpp
     src/test_wal_recovery.cpp
     src/test_wal_format.cpp
     src/test_auto_checkpoint.cpp
