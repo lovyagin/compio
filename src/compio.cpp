@@ -589,7 +589,8 @@ int compio_remove_file(compio_archive *archive, const char *name) {
                     // Deallocate. Maintenance is suspended globally, so this won't trigger defrag.
                     // Use overloaded deallocate with explicit false for perform_maintenance, although
                     // suspended state also prevents it.
-                    archive->allocator->deallocate(val.addr, STORAGE_BLOCK_METASIZE + sb.size, false);
+                    const uint64_t meta = sb.has_backref ? STORAGE_BLOCK_METASIZE_V2 : STORAGE_BLOCK_METASIZE;
+                    archive->allocator->deallocate(val.addr, meta + sb.size, false);
                 } else {
                     WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
                     if (saved_pos >= 0) {
@@ -2425,6 +2426,14 @@ int compio_repair(const char *path, const char *output_dir) {
         };
         std::map<uint64_t, std::vector<file_part>> index_files;
 
+        // Addresses referenced by surviving index nodes, and back-refs harvested
+        // directly from v2 self-describing blocks. After the scan, any v2 block
+        // whose address no surviving node references is re-attributed via its
+        // own {hash,pos}, recovering data whose index node was lost.
+        std::set<uint64_t> indexed_addrs;
+        struct block_backref { uint64_t hash, pos, addr, size; };
+        std::vector<block_backref> block_backrefs;
+
         constexpr size_t BUFFER_SIZE = 1024 * 1024;
         std::vector<uint8_t> buffer(BUFFER_SIZE);
         
@@ -2445,31 +2454,50 @@ int compio_repair(const char *path, const char *output_dir) {
                          for (size_t k = 0; k < node.keys.size(); ++k) {
                             if (k < node.values.size()) {
                                 index_files[node.keys[k].hash].push_back({
-                                    node.keys[k].pos, 
-                                    node.values[k].addr, 
+                                    node.keys[k].pos,
+                                    node.values[k].addr,
                                     node.values[k].size
                                 });
+                                indexed_addrs.insert(node.values[k].addr);
                             }
                         }
                     }
                     fseek64(f, saved_pos, SEEK_SET);
                 }
-                
-                if (sig == storage_block::signature || sig == storage_block::signature_crc32c) {
+
+                if (sig == storage_block::signature || sig == storage_block::signature_crc32c ||
+                    sig == storage_block::signature_backref || sig == storage_block::signature_backref_crc32c) {
                     uint64_t saved_pos = ftell64(f);
                     storage_block sb;
                     if (sb.read_from(f, current_addr)) {
                         discovered_blocks[current_addr] = {
-                            current_addr, 
-                            sb.size, 
-                            sb.original_size, 
+                            current_addr,
+                            sb.size,
+                            sb.original_size,
                             (bool)sb.is_compressed
                         };
+                        if (sb.has_backref) {
+                            block_backrefs.push_back({sb.src_key.hash, sb.src_key.pos,
+                                                      current_addr, sb.original_size});
+                        }
                     }
                     fseek64(f, saved_pos, SEEK_SET);
                 }
             }
             offset += bytes_read;
+        }
+
+        // Re-attribute v2 blocks whose owning index node was lost: if no surviving
+        // node references the block's address, trust its self-describing back-ref.
+        int reattributed = 0;
+        for (const auto &br : block_backrefs) {
+            if (indexed_addrs.find(br.addr) == indexed_addrs.end()) {
+                index_files[br.hash].push_back({br.pos, br.addr, br.size});
+                ++reattributed;
+            }
+        }
+        if (reattributed > 0) {
+            WARNING_PRINT("info: re-attributed %d orphan block(s) via self-describing back-refs\n", reattributed);
         }
 
         compio_compressor compressor;

@@ -4,13 +4,26 @@
 #include <vector>
 #include <string>
 #include <cinttypes>
+#include <cstring>
+#include <memory>
+#include <algorithm>
 
 #include "compio.h"
 #include "compio/compio_file.hpp"
+#include "compio/file.hpp"
 #include "compio/utils.hpp"
 #include "test_util.hpp"
 
 namespace fs = std::filesystem;
+
+namespace {
+std::vector<uint8_t> pseudo_random(std::size_t n, uint32_t seed) {
+    std::vector<uint8_t> v(n);
+    uint32_t s = seed ? seed : 1;
+    for (auto &b : v) { s = s * 1664525u + 1013904223u; b = static_cast<uint8_t>(s >> 24); }
+    return v;
+}
+} // namespace
 
 class RepairTest : public ::testing::Test {
 protected:
@@ -150,10 +163,173 @@ TEST_F(RepairTest, RecoversWithCorruptedHeader) {
             std::ifstream ifs(entry.path(), std::ios::binary);
             ifs.seekg(0, std::ios::end);
             if (ifs.tellg() == 1000) {
-                any_correct = true; 
+                any_correct = true;
                 break;
             }
          }
          ASSERT_TRUE(any_correct) << "No recovered file has correct size";
     }
+}
+
+// Wipe every readable B-tree index node by zeroing its signature byte,
+// simulating total loss of the index. Returns the number of nodes wiped.
+static int wipe_index_nodes(const std::string &path) {
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return -1;
+    compio::header h;
+    if (!h.load_and_validate(f, 0)) { fclose(f); return -1; }
+    const int degree = h.b_tree_degree;
+
+    compio::fseek64(f, 0, SEEK_END);
+    uint64_t size = compio::ftell64(f);
+    compio::fseek64(f, 0, SEEK_SET);
+    std::vector<uint8_t> bytes(size);
+    if (fread(bytes.data(), 1, size, f) != size) { fclose(f); return -1; }
+
+    std::vector<uint64_t> node_offsets;
+    for (uint64_t off = 0; off < size; ++off) {
+        if (bytes[off] != compio::index_node::signature) continue;
+        compio::index_node node(degree);
+        if (node.read_from(f, off)) node_offsets.push_back(off);
+    }
+    fclose(f);
+
+    FILE *fw = fopen(path.c_str(), "rb+");
+    if (!fw) return -1;
+    const uint8_t zero = 0;
+    for (uint64_t off : node_offsets) {
+        compio::fseek64(fw, off, SEEK_SET);
+        fwrite(&zero, 1, 1, fw);
+    }
+    fclose(fw);
+    return static_cast<int>(node_offsets.size());
+}
+
+// Total index loss: every index node is wiped, so files can only be rebuilt
+// from the self-describing {hash,pos} back-refs carried by v2 storage blocks.
+TEST_F(RepairTest, RecoversOrphanBlocksViaBackref) {
+    const std::size_t SZ = 128 * 1024; // span many blocks across multiple index nodes
+    auto payload = pseudo_random(SZ, 1234);
+    {
+        compio_config config;
+        compio_build_default_config(&config);
+        compio_archive* archive = compio_open_archive(archive_path.c_str(), "w", &config);
+        ASSERT_NE(archive, nullptr);
+        compio_file* f = compio_open_file("big.bin", archive);
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(compio_write(payload.data(), SZ, f), (int)SZ);
+        compio_close_file(f);
+        compio_close_archive(archive);
+    }
+
+    int wiped = wipe_index_nodes(archive_path);
+    ASSERT_GT(wiped, 0) << "test must actually destroy index nodes";
+
+    int count = compio_repair(archive_path.c_str(), recover_dir.c_str());
+    ASSERT_GE(count, 1);
+
+    // File recovered under its real name (header survived) purely via back-refs.
+    fs::path recovered = fs::path(recover_dir) / "big.bin";
+    ASSERT_TRUE(fs::exists(recovered)) << "back-ref re-attribution should rebuild the named file";
+    std::ifstream ifs(recovered, std::ios::binary);
+    std::vector<uint8_t> content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    ASSERT_EQ(content.size(), SZ);
+    ASSERT_EQ(content, payload) << "recovered content must match original byte-for-byte";
+}
+
+// v2 storage blocks round-trip their {hash,pos} back-ref, and the checksum
+// covers it so corruption of the back-ref is detected on read.
+TEST_F(RepairTest, StorageBlockBackrefRoundTripAndChecksum) {
+    std::string blk_path = (fs::path(tmp_dir) / "block.bin").string();
+    const uint64_t addr = 64;
+    const uint64_t N = 256;
+    auto data = pseudo_random(N, 99);
+    const compio::tree_key key{0xABCDEF0123456789ull, 0x1122334455667788ull};
+
+    {
+        compio::storage_block b;
+        b.is_compressed = 0;
+        b.size = N;
+        b.original_size = N;
+        b.data = std::make_unique<uint8_t[]>(N);
+        std::copy(data.begin(), data.end(), b.data.get());
+        b.checksum_type = COMPIO_CHECKSUM_FNV1A;
+        b.src_key = key;
+        FILE *f = fopen(blk_path.c_str(), "wb+");
+        ASSERT_NE(f, nullptr);
+        b.write_to(f, addr, nullptr);
+        fclose(f);
+    }
+
+    {
+        compio::storage_block b;
+        FILE *f = fopen(blk_path.c_str(), "rb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_TRUE(b.read_from(f, addr));
+        fclose(f);
+        EXPECT_TRUE(b.has_backref);
+        EXPECT_EQ(b.src_key.hash, key.hash);
+        EXPECT_EQ(b.src_key.pos, key.pos);
+        ASSERT_EQ(b.size, N);
+        EXPECT_EQ(std::memcmp(b.data.get(), data.data(), N), 0);
+    }
+
+    // Corrupt one byte of the on-disk back-ref (hash starts right after the
+    // 18-byte common prefix). Checksum covers it, so read_from must fail.
+    {
+        FILE *f = fopen(blk_path.c_str(), "rb+");
+        ASSERT_NE(f, nullptr);
+        compio::fseek64(f, addr + 18, SEEK_SET);
+        uint8_t v = 0;
+        ASSERT_EQ(fread(&v, 1, 1, f), 1u);
+        v ^= 0xFF;
+        compio::fseek64(f, addr + 18, SEEK_SET);
+        fwrite(&v, 1, 1, f);
+        fclose(f);
+    }
+    {
+        compio::storage_block b;
+        FILE *f = fopen(blk_path.c_str(), "rb");
+        ASSERT_NE(f, nullptr);
+        EXPECT_FALSE(b.read_from(f, addr)) << "corrupted back-ref must fail checksum";
+        fclose(f);
+    }
+}
+
+// Backward compatibility: a hand-written legacy v1 block (no back-ref, 22-byte
+// meta, checksum over data only) must still read correctly.
+TEST_F(RepairTest, ReadsLegacyV1Block) {
+    std::string blk_path = (fs::path(tmp_dir) / "v1block.bin").string();
+    const uint64_t addr = 8; // non-zero (read_from asserts addr != 0)
+    const uint64_t N = 200;
+    auto data = pseudo_random(N, 7);
+    const uint32_t cksum = compio::fnv1a_32(data.data(), N);
+
+    std::vector<uint8_t> buf(addr, 0); // leading padding so block starts at addr
+    auto put_u8 = [&](uint8_t v) { buf.push_back(v); };
+    auto put_u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) buf.push_back((uint8_t)(v >> (i * 8))); };
+    auto put_u64 = [&](uint64_t v) { for (int i = 0; i < 8; ++i) buf.push_back((uint8_t)(v >> (i * 8))); };
+
+    put_u8(compio::storage_block::signature); // 171, v1 FNV
+    put_u8(0);                                 // is_compressed
+    put_u64(N);                                // size
+    put_u64(N);                                // original_size
+    put_u32(cksum);                            // checksum (data only)
+    buf.insert(buf.end(), data.begin(), data.end());
+
+    {
+        FILE *f = fopen(blk_path.c_str(), "wb");
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(fwrite(buf.data(), 1, buf.size(), f), buf.size());
+        fclose(f);
+    }
+
+    compio::storage_block b;
+    FILE *f = fopen(blk_path.c_str(), "rb");
+    ASSERT_NE(f, nullptr);
+    ASSERT_TRUE(b.read_from(f, addr));
+    fclose(f);
+    EXPECT_FALSE(b.has_backref);
+    ASSERT_EQ(b.size, N);
+    EXPECT_EQ(std::memcmp(b.data.get(), data.data(), N), 0);
 }

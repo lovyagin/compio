@@ -628,9 +628,12 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         return false;
     }
 
-    // Optimization: Read all metadata in one go (22 bytes)
-    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE];
-    if (lendian_fread(meta_buffer, 1, STORAGE_BLOCK_METASIZE, file) != STORAGE_BLOCK_METASIZE) {
+    // Read the common prefix shared by v1 and v2 layouts:
+    // signature(1) + is_compressed(1) + size(8) + original_size(8) = 18 bytes.
+    // The signature then tells us whether a {hash,pos} back-ref follows.
+    constexpr size_t PREFIX_SIZE = sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t) * 2;
+    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE_V2];
+    if (lendian_fread(meta_buffer, 1, PREFIX_SIZE, file) != PREFIX_SIZE) {
         return false;
     }
 
@@ -650,8 +653,16 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
     uint8_t signature = read_u8();
     if (signature == storage_block::signature) {
         checksum_type = COMPIO_CHECKSUM_FNV1A;
+        has_backref = false;
     } else if (signature == storage_block::signature_crc32c) {
         checksum_type = COMPIO_CHECKSUM_CRC32C;
+        has_backref = false;
+    } else if (signature == storage_block::signature_backref) {
+        checksum_type = COMPIO_CHECKSUM_FNV1A;
+        has_backref = true;
+    } else if (signature == storage_block::signature_backref_crc32c) {
+        checksum_type = COMPIO_CHECKSUM_CRC32C;
+        has_backref = true;
     } else {
         WARNING_PRINT("warning: storage_block signature does not match (got %d)\n", signature);
         return false;
@@ -672,16 +683,26 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
     // Cap block size to prevent OOM on corrupted files
     static constexpr uint64_t MAX_BLOCK_SIZE = 256ULL * 1024 * 1024; // 256 MB
     if (size > MAX_BLOCK_SIZE) {
-        WARNING_PRINT("warning: storage_block size %llu exceeds limit at addr=%llu\n", 
+        WARNING_PRINT("warning: storage_block size %llu exceeds limit at addr=%llu\n",
                       (unsigned long long)size, (unsigned long long)addr);
         size = 0;
         return false;
     }
 
     original_size = read_u64();
+
+    // Read the variable tail: [hash, pos] for v2, then the checksum.
+    const size_t tail = (has_backref ? sizeof(uint64_t) * 2 : 0) + sizeof(uint32_t);
+    if (lendian_fread(meta_buffer + PREFIX_SIZE, 1, tail, file) != tail) {
+        return false;
+    }
+    if (has_backref) {
+        src_key.hash = read_u64();
+        src_key.pos = read_u64();
+    }
     checksum = read_u32();
 
-    assert(meta_idx == STORAGE_BLOCK_METASIZE);
+    assert(meta_idx == PREFIX_SIZE + tail);
 
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     if (lendian_fread(data.get(), 1, size, file) != size) {
@@ -696,45 +717,51 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
 }
 
 void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
-    DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE + size);
+    DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE_V2 + size);
     assert(addr != 0);
     assert(size > 0);
     assert(original_size > 0);
     assert(is_compressed || size == original_size);
 
+    // New blocks are always written in v2 (self-describing) layout.
+    const_cast<storage_block*>(this)->has_backref = true;
+
     // Calculate checksum before writing (non-const, so we cast)
     const_cast<storage_block*>(this)->calculate_checksum();
 
     // Prepare metadata buffer
-    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE];
+    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE_V2];
     size_t meta_idx = 0;
 
     auto push_u8 = [&](uint8_t v) { meta_buffer[meta_idx++] = v; };
-    auto push_u32 = [&](uint32_t v) { 
-        for(int i=0; i<4; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8)); 
+    auto push_u32 = [&](uint32_t v) {
+        for(int i=0; i<4; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8));
     };
-    auto push_u64 = [&](uint64_t v) { 
-        for(int i=0; i<8; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8)); 
+    auto push_u64 = [&](uint64_t v) {
+        for(int i=0; i<8; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8));
     };
 
-    uint8_t sig = (checksum_type == COMPIO_CHECKSUM_CRC32C) ? storage_block::signature_crc32c : storage_block::signature;
+    uint8_t sig = (checksum_type == COMPIO_CHECKSUM_CRC32C) ? storage_block::signature_backref_crc32c
+                                                            : storage_block::signature_backref;
     push_u8(sig);
     push_u8(is_compressed);
     push_u64(size);
     push_u64(original_size);
+    push_u64(src_key.hash);
+    push_u64(src_key.pos);
     push_u32(checksum);
-    
-    assert(meta_idx == STORAGE_BLOCK_METASIZE);
+
+    assert(meta_idx == STORAGE_BLOCK_METASIZE_V2);
 
     if (wal_manager) {
         wal_manager->begin_transaction();
-        
+
         std::vector<compio::WalManager::iovec_buf> buffers;
-        buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE});
+        buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE_V2});
         if (size > 0 && data) {
             buffers.push_back({data.get(), size});
         }
-        
+
         if (!wal_manager->log_write_vectored(WalRecordType::BLOCK, addr, buffers)) {
             WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
         }
@@ -745,8 +772,8 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
 
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
-        
-    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE, file) != STORAGE_BLOCK_METASIZE) {
+
+    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2) {
         DEBUG_PRINT("warning: fwrite failed for metadata\n");
     }
     if (size > 0 && data) {
@@ -768,6 +795,19 @@ index_node::index_node(int tree_degree)
     values.clear();
     children.clear();
     key_additions.clear();
+}
+
+uint64_t storage_block::meta_size_for(uint8_t sig) {
+    switch (sig) {
+        case storage_block::signature:
+        case storage_block::signature_crc32c:
+            return STORAGE_BLOCK_METASIZE;
+        case storage_block::signature_backref:
+        case storage_block::signature_backref_crc32c:
+            return STORAGE_BLOCK_METASIZE_V2;
+        default:
+            return 0;
+    }
 }
 
 storage_block::storage_block() : data(nullptr), checksum_type(COMPIO_CHECKSUM_FNV1A) {}
@@ -993,29 +1033,45 @@ int files_table::remove(const char *name) {
     return 0;
 }
 
+// Serialize the back-ref key to a little-endian byte buffer, so the checksum
+// is computed over the same bytes that hit the disk (portable across endianness).
+static void backref_key_bytes(const tree_key &key, uint8_t out[16]) {
+    for (int i = 0; i < 8; ++i) out[i] = static_cast<uint8_t>(key.hash >> (i * 8));
+    for (int i = 0; i < 8; ++i) out[8 + i] = static_cast<uint8_t>(key.pos >> (i * 8));
+}
+
+uint32_t storage_block::compute_checksum() const {
+    // v2 blocks fold {hash,pos} into the checksum so back-ref corruption is caught.
+    if (checksum_type == COMPIO_CHECKSUM_CRC32C) {
+        uint32_t c = 0;
+        if (has_backref) {
+            uint8_t kb[16];
+            backref_key_bytes(src_key, kb);
+            c = crc32c(kb, sizeof(kb));
+        }
+        return crc32c_continue(c, data.get(), size);
+    } else {
+        uint32_t h = 0x811c9dc5;
+        if (has_backref) {
+            uint8_t kb[16];
+            backref_key_bytes(src_key, kb);
+            h = fnv1a_32_continue(h, kb, sizeof(kb));
+        }
+        return fnv1a_32_continue(h, data.get(), size);
+    }
+}
+
 void storage_block::calculate_checksum() {
     if (!data || size == 0) {
         checksum = 0;
         return;
     }
-
-    if (checksum_type == COMPIO_CHECKSUM_CRC32C) {
-        checksum = crc32c(data.get(), size);
-    } else {
-        checksum = fnv1a_32(data.get(), size);
-    }
+    checksum = compute_checksum();
 }
 
 bool storage_block::verify_checksum() const {
     if (!data || size == 0) {
         return checksum == 0;
     }
-
-    uint32_t computed;
-    if (checksum_type == COMPIO_CHECKSUM_CRC32C) {
-        computed = crc32c(data.get(), size);
-    } else {
-        computed = fnv1a_32(data.get(), size);
-    }
-    return checksum == computed;
+    return checksum == compute_checksum();
 }

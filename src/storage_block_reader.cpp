@@ -48,6 +48,21 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
         }
     }
 
+    _disk_meta_size = b.has_backref ? STORAGE_BLOCK_METASIZE_V2 : STORAGE_BLOCK_METASIZE;
+
+    // Verify-on-read: a v2 block carries its owning {hash,pos}. Only the hash
+    // (file identity) is checked: pos legitimately drifts when add_to_range/shift
+    // moves keys without rewriting on-disk blocks, so a pos mismatch is expected.
+    // A hash mismatch means the index points at a block of a different file —
+    // genuine corruption, reject it.
+    if (b.has_backref && b.src_key.hash != key.hash) {
+        WARNING_PRINT("warning: storage block at addr %" PRIu64 " hash mismatch: "
+                      "index {%" PRIu64 ",%" PRIu64 "} != block {%" PRIu64 ",%" PRIu64 "}\n",
+                      addr, key.hash, key.pos, b.src_key.hash, b.src_key.pos);
+        _is_valid = false;
+        return;
+    }
+
     _c_size = b.size;
     _size = b.original_size;
 
@@ -93,6 +108,7 @@ block::~block() {
         storage_block b(context.compressor->get_bufsize(context.compressor, _size));
         b.original_size = _size;
         b.checksum_type = context.checksum_type;
+        b.src_key = _key; // v2 self-describing back-ref
 
         int ret = context.compressor->compress(context.compressor, b.data.get(), &b.size, _data.get(), _size);
         if (ret != 0 || b.size > _size) {
@@ -121,10 +137,10 @@ block::~block() {
             // Disable maintenance during flush: defrag reads the btree index, but the index
             // is only partially updated while clear_cache() destructors are still running.
             // Running defrag mid-flush would see stale block addresses and corrupt the archive.
-            context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE, false);
+            context.allocator->deallocate(_addr, _c_size + _disk_meta_size, false);
         }
 
-        uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE + b.size);
+        uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE_V2 + b.size);
         DEBUG_PRINT(
             "[B][destructor]: writing to file "
             "(new_addr=%" PRIu64 ",addr=%" PRIu64 ",original_size=%" PRIu64 ",size=%" PRIu64 ",is_compressed=%d,key.pos=%" PRIu64 ")\n",
@@ -236,6 +252,8 @@ uint64_t block::size() const { return _size; }
 uint64_t block::addr() const { return _addr; }
 
 uint64_t block::c_size() const { return _c_size; }
+
+uint64_t block::disk_meta_size() const { return _disk_meta_size; }
 
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            const compio_compressor *compressor, int max_size,
@@ -443,7 +461,7 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
     }
     context.index->remove(key);
     if (b->addr() != 0) {
-        context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
+        context.allocator->deallocate(b->addr(), b->c_size() + b->disk_meta_size());
     }
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
     --bm_n_blocks;

@@ -113,6 +113,9 @@ class block {
     bool _is_modified;
     bool _is_removed;
     bool _is_valid;
+    /** @brief On-disk metadata size of the block as read (v1=22, v2=38), so
+     * deallocation frees the exact on-disk footprint. */
+    uint64_t _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
 
 public:
     /**
@@ -259,6 +262,13 @@ public:
      * @return Size of the block in bytes when compressed (0 if not yet compressed)
      */
     uint64_t c_size() const;
+
+    /**
+     * @brief Get the on-disk metadata size of this block (v1=22, v2=38)
+     *
+     * @return Byte size of the block's on-disk metadata header
+     */
+    uint64_t disk_meta_size() const;
 };
 
 /**
