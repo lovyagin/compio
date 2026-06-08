@@ -444,8 +444,20 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     if (!is_new_file && !archive->allocator->load_state(archive)) {
-        WARNING_PRINT("warning: failed to load allocator state from archive\n");
-        goto no_allocator_state;
+        // The allocator state (free-block list) is an optimization that points
+        // at a region an interrupted flush may have left beyond the durable end
+        // of the file. The data blocks, B-Tree index and files table are all
+        // intact and independently durable, so a crash must never make the
+        // archive unopenable. Fall back to an empty free list anchored at the
+        // physical end of the file: all data stays readable and the freed space
+        // is reclaimed on the next defragmentation.
+        WARNING_PRINT("warning: allocator state unreadable (interrupted flush?); "
+                      "reconstructing free list from end of file\n");
+        if (fseek64(file, 0, SEEK_END) == 0) {
+            archive->header->file_size = static_cast<uint64_t>(ftell64(file));
+        }
+        archive->header->allocator_state_offset = 0;
+        archive->header->allocator_state_size = 0;
     }
 
     return archive;
