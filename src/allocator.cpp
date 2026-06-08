@@ -1013,11 +1013,12 @@ void block_allocator::perform_defragmentation() {
         const auto &hdr = readonly(archive_->header, header);
         if (hdr->magic_number == COMPIO_MAGIC_NUMBER) {
              ft_addr = hdr->files_table_addr;
-             // Capacity is header->files_table_capacity. Entry size is COMPIO_FNAME_MAX_SIZE + 8.
-             // We use a safe estimate or exact size.
-             // sync_files_table uses: capacity * (COMPIO_FNAME_MAX_SIZE + 8)
-             // We must match that size exactly or conservatively larger.
-             ft_size = (uint64_t)hdr->files_table_capacity * (COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t));
+             // Must match the on-disk entry size used by files_table::write_to and
+             // sync_files_table: name + size(u64) + file_id(u64). Undercounting here
+             // makes the truncation guard below slice the tail off a files table that
+             // sits after the data, corrupting both header copies on reopen.
+             ft_size = (uint64_t)hdr->files_table_capacity *
+                       (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
         }
     }
 
