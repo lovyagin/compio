@@ -2423,6 +2423,7 @@ int compio_repair(const char *path, const char *output_dir) {
             uint64_t pos;
             uint64_t addr;
             uint64_t size;
+            bool from_backref;
         };
         std::map<uint64_t, std::vector<file_part>> index_files;
 
@@ -2456,7 +2457,8 @@ int compio_repair(const char *path, const char *output_dir) {
                                 index_files[node.keys[k].hash].push_back({
                                     node.keys[k].pos,
                                     node.values[k].addr,
-                                    node.values[k].size
+                                    node.values[k].size,
+                                    false
                                 });
                                 indexed_addrs.insert(node.values[k].addr);
                             }
@@ -2492,7 +2494,7 @@ int compio_repair(const char *path, const char *output_dir) {
         int reattributed = 0;
         for (const auto &br : block_backrefs) {
             if (indexed_addrs.find(br.addr) == indexed_addrs.end()) {
-                index_files[br.hash].push_back({br.pos, br.addr, br.size});
+                index_files[br.hash].push_back({br.pos, br.addr, br.size, true});
                 ++reattributed;
             }
         }
@@ -2534,6 +2536,24 @@ int compio_repair(const char *path, const char *output_dir) {
             std::sort(parts.begin(), parts.end(), [](const auto& a, const auto& b) {
                 return a.pos < b.pos;
             });
+
+            // Files rebuilt entirely from self-describing back-refs may carry stale
+            // absolute positions (lazy add_to_range shifts don't rewrite evicted
+            // blocks). The logical stream is densely tiled, so the correct offset of
+            // each block is the running sum of preceding block sizes; sort order is
+            // preserved by every shift, so re-deriving positions this way recovers
+            // the file regardless of drift. Only applied when no surviving index
+            // node anchors any part (a partial index would still hold true offsets).
+            const bool all_from_backref = !parts.empty() &&
+                std::all_of(parts.begin(), parts.end(),
+                            [](const auto& p) { return p.from_backref; });
+            if (all_from_backref) {
+                uint64_t running = 0;
+                for (auto& part : parts) {
+                    part.pos = running;
+                    running += part.size;
+                }
+            }
 
             std::string filename;
             if (hash_to_name.count(hash)) {

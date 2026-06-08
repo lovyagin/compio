@@ -205,6 +205,73 @@ static int wipe_index_nodes(const std::string &path) {
     return static_cast<int>(node_offsets.size());
 }
 
+// Uniformly shift the on-disk back-ref `pos` of every v2 block by `delta`,
+// rewriting a valid checksum each time. Simulates stale back-refs after lazy
+// add_to_range shifts (order preserved, absolute pos drifted). Returns count.
+static int drift_block_backrefs(const std::string &path, int64_t delta) {
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return -1;
+    compio::fseek64(f, 0, SEEK_END);
+    uint64_t size = compio::ftell64(f);
+    compio::fseek64(f, 0, SEEK_SET);
+    std::vector<uint8_t> bytes(size);
+    if (fread(bytes.data(), 1, size, f) != size) { fclose(f); return -1; }
+    fclose(f);
+
+    FILE *fw = fopen(path.c_str(), "rb+");
+    if (!fw) return -1;
+    int drifted = 0;
+    for (uint64_t off = 1; off < size; ++off) {
+        const uint8_t sig = bytes[off];
+        if (sig != compio::storage_block::signature_backref &&
+            sig != compio::storage_block::signature_backref_crc32c) continue;
+        compio::storage_block b;
+        if (!b.read_from(fw, off)) continue;
+        if (!b.has_backref) continue;
+        b.src_key.pos = static_cast<uint64_t>(static_cast<int64_t>(b.src_key.pos) + delta);
+        b.write_to(fw, off, nullptr);
+        ++drifted;
+    }
+    fclose(fw);
+    return drifted;
+}
+
+// Total index loss AND uniformly drifted back-ref pos: order is preserved but
+// absolute positions are stale. Repair must re-derive positions by contiguous
+// tiling of block sizes, recovering the file byte-for-byte regardless of drift.
+TEST_F(RepairTest, RecoversDriftedOrphanPosViaTiling) {
+    const std::size_t SZ = 128 * 1024;
+    auto payload = pseudo_random(SZ, 4321);
+    {
+        compio_config config;
+        compio_build_default_config(&config);
+        config.block_size = 4096; // force many blocks so tiling order is exercised
+        config.block_size__maximum = 8192;
+        compio_archive* archive = compio_open_archive(archive_path.c_str(), "w", &config);
+        ASSERT_NE(archive, nullptr);
+        compio_file* f = compio_open_file("drift.bin", archive);
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(compio_write(payload.data(), SZ, f), (int)SZ);
+        compio_close_file(f);
+        compio_close_archive(archive);
+    }
+
+    int drifted = drift_block_backrefs(archive_path, 777777);
+    ASSERT_GT(drifted, 0) << "test must actually drift back-ref positions";
+    int wiped = wipe_index_nodes(archive_path);
+    ASSERT_GT(wiped, 0) << "test must actually destroy index nodes";
+
+    int count = compio_repair(archive_path.c_str(), recover_dir.c_str());
+    ASSERT_GE(count, 1);
+
+    fs::path recovered = fs::path(recover_dir) / "drift.bin";
+    ASSERT_TRUE(fs::exists(recovered)) << "tiling re-derivation should rebuild the named file";
+    std::ifstream ifs(recovered, std::ios::binary);
+    std::vector<uint8_t> content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    ASSERT_EQ(content.size(), SZ) << "drifted pos must not bloat the file with leading gap";
+    ASSERT_EQ(content, payload) << "recovered content must match original byte-for-byte";
+}
+
 // Total index loss: every index node is wiped, so files can only be rebuilt
 // from the self-describing {hash,pos} back-refs carried by v2 storage blocks.
 TEST_F(RepairTest, RecoversOrphanBlocksViaBackref) {
