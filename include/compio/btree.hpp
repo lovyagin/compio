@@ -135,6 +135,17 @@ struct btree {
           block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex, compio::WalManager *wal = nullptr);
 
     /**
+     * @brief Re-point the B-Tree at a new header storage.
+     *
+     * The double-buffered header write replaces the archive's header smart
+     * pointer with a fresh storage object. The B-Tree caches its own copy that
+     * shares the header storage (it reads/writes index_root through it), so it
+     * must be re-synced to the new storage or the two diverge and index updates
+     * are lost. Caller must hold the archive lock.
+     */
+    void set_header(smart_infile_object<header> new_header) { archive_header = std::move(new_header); }
+
+    /**
      * @brief Insert a key-value pair into the B-Tree
      *
      * Inserts the specified key and value into the B-Tree. If the key

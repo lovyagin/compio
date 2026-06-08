@@ -643,6 +643,22 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 
 // Forward declarations
 static void end_auto_batch_if_active(compio_file *file);
+static void flush_header_double_buffered(compio_archive *archive);
+// Commit a batch and publish the header. Caller must hold archive->mutex.
+static bool end_batch_impl(compio_archive *archive);
+
+// Flush stdio buffers and fsync the archive to disk. Used to force the data a
+// header is about to reference onto stable storage BEFORE the header is
+// published, so a crash can never leave a durable header pointing at data that
+// has not yet hit the disk.
+static bool fsync_archive(FILE *file) {
+    if (fflush(file) != 0) return false;
+#ifdef _WIN32
+    return _commit(_fileno(file)) == 0;
+#else
+    return fsync(fileno(file)) == 0;
+#endif
+}
 
 /**
  * Check if current operation is sequential and should be auto-batched
@@ -691,9 +707,9 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
  * End auto-batch if active and threshold reached
  */
 static void end_auto_batch_if_needed(compio_file *file) {
-    if (file->is_auto_batching && 
+    if (file->is_auto_batching &&
         file->auto_batch_count >= file->archive->config.auto_batch_size) {
-        compio_end_batch(file->archive); // Ignore return value - best effort
+        end_batch_impl(file->archive); // Best effort - lock already held
         file->is_auto_batching = false;
         file->auto_batch_count = 0;
     }
@@ -704,7 +720,7 @@ static void end_auto_batch_if_needed(compio_file *file) {
  */
 static void end_auto_batch_if_active(compio_file *file) {
     if (file->is_auto_batching) {
-        compio_end_batch(file->archive); // Best effort - ignore errors
+        end_batch_impl(file->archive); // Best effort - lock already held
         file->is_auto_batching = false;
         file->auto_batch_count = 0;
     }
@@ -810,6 +826,31 @@ int compio_begin_batch(compio_archive *archive) {
     return COMPIO_SUCCESS;
 }
 
+// Commit a batch and, once the outermost batch closes, publish the header over
+// the now-durable data. Caller must hold archive->mutex (auto-batch ends are
+// already under it; the public wrapper takes it). Header publication is safe
+// here because flush_header_double_buffered re-syncs the btree's header copy.
+static bool end_batch_impl(compio_archive *archive) {
+    bool success = archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes);
+    if (!success) {
+        if (errno == 0) {
+            errno = EIO;
+        }
+        return false;
+    }
+
+    if (archive->wal->get_batch_depth() == 0) {
+        // fsync the batch's data to disk BEFORE publishing the header, so the
+        // header is never durable ahead of the data it references; then fsync
+        // again to make the header itself durable.
+        if (fsync_archive(archive->file)) {
+            flush_header_double_buffered(archive);
+            fsync_archive(archive->file);
+        }
+    }
+    return true;
+}
+
 int compio_end_batch(compio_archive *archive) {
     if (archive == nullptr) {
         WARNING_PRINT("warning: passed nullptr into compio_end_batch\n");
@@ -823,17 +864,8 @@ int compio_end_batch(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
-    // No need for external lock - WalManager has its own mutex
-    bool success = archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes);
-    
-    if (!success) {
-        if (errno == 0) {
-            errno = EIO;
-        }
-        return COMPIO_ERROR;
-    }
-    
-    return COMPIO_SUCCESS;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    return end_batch_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
 }
 
 int compio_defragment(compio_archive *archive) {
@@ -865,8 +897,14 @@ int compio_defragment(compio_archive *archive) {
 static void flush_header_double_buffered(compio_archive *archive) {
     if (!archive || !archive->header) return;
 
-    // Double-buffered Header Write
-    if (!(archive->mode_b & mode_bit::r)) {
+    // Double-buffered Header Write. Persist whenever the archive is writable.
+    // Read-only is pure 'r' (r bit set, no '+'); 'r+' also sets the r bit but
+    // must still write the header, otherwise compio_flush() never persists
+    // metadata in r+ mode and a crash before close loses it.
+    bool can_write_header = (archive->mode_b & mode_bit::w) ||
+                            (archive->mode_b & mode_bit::a) ||
+                            (archive->mode_b & mode_bit::plus);
+    if (can_write_header) {
         int target_slot = 1 - archive->current_header_slot;
         uint64_t target_addr = (target_slot == 0) ? 0 : archive->header->reserved_size() / 2;
 
@@ -891,6 +929,12 @@ static void flush_header_double_buffered(compio_archive *archive) {
         // Update allocator's file_size pointer since header object moved
         if (archive->allocator) {
              archive->allocator->update_file_size_ptr(&archive->header->file_size);
+        }
+        // Re-sync the B-Tree, which caches a copy sharing the header storage and
+        // writes index_root through it. Without this the btree keeps the old
+        // storage and its index updates never reach the durable header.
+        if (archive->index) {
+             archive->index->set_header(archive->header);
         }
     }
 }
@@ -2282,10 +2326,11 @@ void compio_flush(compio_archive *archive) {
          archive->allocator->save_state(archive);
     }
 
-    // Double-buffered Header Write
-    flush_header_double_buffered(archive);
-    
-    // Commit transaction (this performs WAL write/flush and optionally fsync based on sync mode)
+    // Commit the transaction FIRST, so the data, allocator state and files table
+    // are durably recoverable before the header is published. The double-buffered
+    // header is written directly to the archive (outside the WAL): writing it
+    // before the commit risks a crash that leaves a durable header referencing
+    // writes the WAL later rolls back (header valid but pointing past EOF).
     if (wal_active && wal_ptr->get_batch_depth() == 0) {
         if (!wal_ptr->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
@@ -2297,7 +2342,28 @@ void compio_flush(compio_archive *archive) {
         WARNING_PRINT("warning: fflush failed\n");
         durable = false;
     }
-    
+
+    // Publish the double-buffered header now that the committed data it
+    // references is durable. Deferred inside a batch (commit is deferred to
+    // compio_end_batch, which publishes the header there). Skipped on a
+    // durability failure so we never publish over un-committed state.
+    bool in_batch = wal_active && wal_ptr->get_batch_depth() > 0;
+    if (durable && !in_batch) {
+        // fsync the data the header will reference BEFORE writing the header, so
+        // a crash can never land the (low-offset) header on disk while the
+        // (high-offset) allocator state / data it points at is still buffered.
+        if (!fsync_archive(archive->file)) {
+            WARNING_PRINT("warning: data fsync failed before header write\n");
+            durable = false;
+        } else {
+            flush_header_double_buffered(archive);
+            if (fflush(archive->file)) {
+                WARNING_PRINT("warning: fflush failed after header write\n");
+                durable = false;
+            }
+        }
+    }
+
     // Now that everything is flushed to the OS buffer for the main file,
     // and the WAL transaction is committed and synced (via commit_transaction),
     // we can safely checkpoint, but only if all durability steps have succeeded.
@@ -2306,7 +2372,7 @@ void compio_flush(compio_archive *archive) {
     // 1. fsync the main archive file (ensure data is durable).
     // 2. Truncate the WAL (it is no longer needed since main file is up to date).
     
-    if (wal_active && durable) {
+    if (wal_active && durable && wal_ptr->get_batch_depth() == 0) {
         bool main_file_synced = true;
 #ifdef _WIN32
         if (_commit(_fileno(archive->file)) != 0) {
