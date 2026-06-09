@@ -375,17 +375,24 @@ void storage_block_reader::set_maintenance_mode(bool enabled) {
 double storage_block_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
 
 void storage_block_reader::enable_temporary_index() {
-    std::lock_guard<std::mutex> lock(context.temp_index_mutex);
-    context.temp_index_refcount++;
+    // Lock-free on the hot read path: refcount is atomic and the map is only
+    // touched (under temp_index_mutex) when refcount transitions to 0.
+    context.temp_index_refcount.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void storage_block_reader::disable_temporary_index() {
-    std::lock_guard<std::mutex> lock(context.temp_index_mutex);
-    if (context.temp_index_refcount > 0) {
-        context.temp_index_refcount--;
+    // Decrement, flooring at 0 (matches the previous guarded behaviour).
+    int cur = context.temp_index_refcount.load(std::memory_order_relaxed);
+    while (cur > 0 && !context.temp_index_refcount.compare_exchange_weak(
+                          cur, cur - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
     }
-    if (context.temp_index_refcount == 0) {
-        context.temporary_index.clear();
+    if (cur == 1) {
+        // We performed the 1->0 transition; clear the map unless another thread
+        // has re-enabled it in the meantime.
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount.load(std::memory_order_acquire) == 0) {
+            context.temporary_index.clear();
+        }
     }
 }
 
