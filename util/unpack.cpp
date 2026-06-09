@@ -37,9 +37,29 @@ fs::path safe_join(const fs::path& base, const std::string& part) {
     return target;
 }
 
-int main(int argc, char **argv) {
+static void print_usage(const char *prog_name) {
+    printf("Usage: %s <archive_path> <output>\n", prog_name);
+    printf("Extract all files from a compio archive (streaming, low memory).\n\n");
+    printf("Arguments:\n");
+    printf("  archive_path  Path to the compio archive to read\n");
+    printf("  output        Destination for extracted files. Interpreted as:\n");
+    printf("                  - a directory, if it ends with a path separator\n");
+    printf("                    (e.g. 'out/'); files keep their archived names;\n");
+    printf("                  - a filename prefix otherwise (e.g. 'out_'); each\n");
+    printf("                    file is written as <prefix><name>.\n\n");
+    printf("Options:\n");
+    printf("  -h, --help    Show this help and exit\n\n");
+    printf("Notes:\n");
+    printf("  Reads in 1 MiB chunks, so memory use is independent of file size.\n");
+    printf("  Paths containing '..' or absolute names are rejected (traversal guard).\n");
+    printf("  For recovering a corrupted archive whose metadata is damaged, use\n");
+    printf("  compio_repair instead.\n");
+}
+
+int unpack(int argc, char **argv) {
     if (argc != 3) {
-        throw std::runtime_error("usage: ./compio_unpack <file> <output_prefix>");
+        print_usage(argv[0]);
+        return 1;
     }
 
     const std::string out_prefix_str = argv[2];
@@ -161,4 +181,21 @@ int main(int argc, char **argv) {
     compio_close_archive(archive);
 
     return 0;
+}
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-h" || arg == "--help") {
+            print_usage(argv[0]);
+            return 0;
+        }
+    }
+
+    try {
+        return unpack(argc, argv);
+    } catch (const std::exception &e) {
+        fprintf(stderr, "error: %s\n", e.what());
+        return 1;
+    }
 }
