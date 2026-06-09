@@ -1032,9 +1032,16 @@ void block_allocator::perform_defragmentation() {
             continue;
         }
 
-        // Read actual compressed size from on-disk metadata (signature + is_compressed + size).
+        // Read signature + compressed size from on-disk metadata. The signature
+        // determines the metadata footprint (v1=22, v2=38 with {hash,pos} back-ref).
         uint64_t compressed_size = 0;
+        uint8_t sig = 0;
         {
+            if (fseek64(archive_->file, static_cast<int64_t>(src), SEEK_SET) != 0 ||
+                fread(&sig, 1, 1, archive_->file) != 1) {
+                WARNING_PRINT("warning: perform_defragmentation: failed to read signature at %" PRIu64 "\n", src);
+                continue;
+            }
             const int64_t meta_offset = static_cast<int64_t>(src) + 2;
             if (fseek64(archive_->file, meta_offset, SEEK_SET) != 0 ||
                 lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
@@ -1043,7 +1050,12 @@ void block_allocator::perform_defragmentation() {
                 continue;
             }
         }
-        const uint64_t block_size = STORAGE_BLOCK_METASIZE + compressed_size;
+        const uint64_t meta_size = storage_block::meta_size_for(sig);
+        if (meta_size == 0) {
+            WARNING_PRINT("warning: perform_defragmentation: bad signature %u at %" PRIu64 "\n", sig, src);
+            continue;
+        }
+        const uint64_t block_size = meta_size + compressed_size;
 
         // Ensure write_pos doesn't overlap with ANY reserved region (Files Table or B-tree nodes)
         while (true) {
