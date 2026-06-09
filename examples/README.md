@@ -46,6 +46,24 @@ Demonstrates the C++ wrapper API: RAII archive/file management, stream operators
 ./cpp_wrapper_example
 ```
 
+### `compio_repair.cpp`
+Minimal recovery example: calls `compio_repair()` to salvage files from a corrupted archive into an output directory.
+
+**Usage:**
+```bash
+./repair_example <archive_path> <output_dir>
+```
+
+### `compio_unpack.cpp`
+Minimal extraction example: opens a healthy archive and streams every file into an output directory in fixed-size chunks (memory use independent of file size).
+
+**Usage:**
+```bash
+./unpack_example <archive_path> <output_dir>
+```
+
+> These are stripped-down demos. The full-featured command-line tools — with `--help`, prefix/directory modes, `--force`, and path-traversal guards — live in [`util/`](../util/README.md).
+
 ## Available Compression Algorithms
 
 | Algorithm | Speed | Ratio | Use Case |

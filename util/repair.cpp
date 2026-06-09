@@ -8,34 +8,46 @@
 struct Args {
     std::string archive_path;
     std::string output_dir;
-    bool help = false;
+    bool help = false;          // explicit -h/--help
+    bool bad_usage = false;      // missing/invalid arguments
     bool force = false;
 };
 
-void print_usage(const char* prog_name) {
-    printf("Usage: %s <archive_path> <output_dir> [--force]\n", prog_name);
-    printf("Recover files from a corrupted compio archive.\n\n");
-    printf("Arguments:\n");
-    printf("  archive_path  Path to the corrupted archive file\n");
-    printf("  output_dir    Directory where recovered files will be saved\n");
-    printf("  --force       Overwrite existing files in output directory if present\n");
+void print_usage(FILE* out, const char* prog_name) {
+    fprintf(out, "Usage: %s <archive_path> <output_dir> [--force]\n", prog_name);
+    fprintf(out, "Recover files from a corrupted compio archive.\n\n");
+    fprintf(out, "Scans the archive sequentially by block/index signatures and extracts\n");
+    fprintf(out, "whatever intact data it finds, bypassing damaged metadata. Best-effort:\n");
+    fprintf(out, "inline-only small files and the directory structure are not recovered.\n\n");
+    fprintf(out, "Arguments:\n");
+    fprintf(out, "  archive_path  Path to the corrupted archive file\n");
+    fprintf(out, "  output_dir    Directory where recovered files are written\n");
+    fprintf(out, "                (created if missing; must be empty unless --force)\n\n");
+    fprintf(out, "Options:\n");
+    fprintf(out, "  -f, --force   Write into a non-empty output directory\n");
+    fprintf(out, "  -h, --help    Show this help and exit\n");
 }
 
 Args parse_args(int argc, char** argv) {
     Args args;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            args.help = true;
+            return args;
+        }
+    }
     if (argc < 3) {
-        args.help = true;
+        args.bad_usage = true;
         return args;
     }
     args.archive_path = argv[1];
     args.output_dir = argv[2];
-    
+
     for (int i = 3; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--force" || arg == "-f") {
             args.force = true;
-        } else if (arg == "--help" || arg == "-h") {
-            args.help = true;
         }
     }
     return args;
@@ -43,9 +55,13 @@ Args parse_args(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     Args args = parse_args(argc, argv);
-    
+
     if (args.help) {
-        print_usage(argv[0]);
+        print_usage(stdout, argv[0]);
+        return 0;
+    }
+    if (args.bad_usage) {
+        print_usage(stderr, argv[0]);
         return 1;
     }
 

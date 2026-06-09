@@ -23,3 +23,8 @@ set_target_properties(cpp_wrapper_example PROPERTIES
 add_executable(repair_example compio_repair.cpp)
 target_link_libraries(repair_example PRIVATE compio)
 target_include_directories(repair_example PRIVATE ${CMAKE_SOURCE_DIR})
+
+# Extraction example
+add_executable(unpack_example compio_unpack.cpp)
+target_link_libraries(unpack_example PRIVATE compio)
+target_include_directories(unpack_example PRIVATE ${CMAKE_SOURCE_DIR})

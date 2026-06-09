@@ -135,6 +135,15 @@ file << data;  // Stream-style I/O
 
 See [`docs/cpp_wrapper.md`](docs/cpp_wrapper.md) for full API reference and [`examples/`](examples/) for code examples.
 
+### Command-line tools
+
+Two standalone executables (built into `build/util/`) extract data from an archive:
+
+- **`compio_unpack`** — extract all files from a healthy archive.
+- **`compio_repair`** — salvage intact data from a corrupted archive.
+
+Both support `-h` / `--help`. See [`util/README.md`](util/README.md) for full documentation.
+
 ## Notes
 
 - Ensure the path `C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake` is adjusted to match your actual directory structure on Windows.
