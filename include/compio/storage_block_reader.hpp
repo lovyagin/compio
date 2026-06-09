@@ -14,6 +14,7 @@
 #include "compio/tree_types.hpp"
 
 #include "lru_2q_cache.hpp"
+#include "sharded_lru_2q_cache.hpp"
 
 #include <mutex>
 #include <atomic>
@@ -295,7 +296,15 @@ public:
  * - Range operations for key shifting
  */
 class storage_block_reader {
-    cache::lru_2q_cache<tree_key, std::shared_ptr<block>, tree_key_comparator> cache;
+    // Shard the block cache by file identity (tree_key::hash) so concurrent
+    // reads of different files hit independent shards instead of serializing on
+    // one cache mutex. Position shifts keep the same hash, so entries never
+    // migrate shards.
+    struct shard_by_hash {
+        size_t operator()(const tree_key &k) const { return static_cast<size_t>(k.hash); }
+    };
+    cache::sharded_lru_2q_cache<tree_key, std::shared_ptr<block>, tree_key_comparator, shard_by_hash>
+        cache;
     context_t context;
 
 public:

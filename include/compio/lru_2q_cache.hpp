@@ -138,6 +138,16 @@ public:
         return static_cast<double>(_hit_count) / _total_count;
     }
 
+    // Raw counters (used to aggregate hit-rate across sharded caches).
+    size_t hit_count() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _hit_count;
+    }
+    size_t access_count() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _total_count;
+    }
+
     template <typename Func>
     void for_each_in_range(const key_t& key_min, const key_t& key_max, Func&& func) {
         std::lock_guard<std::mutex> lock(_mutex);
