@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 #include "compio.h"
 #include "compio/wal.hpp"
 #include "test_util.hpp"
@@ -128,6 +129,42 @@ TEST_F(WalSyncModeTest, ModeOffWorks) {
     compio_read(buffer, strlen(data), file);
     EXPECT_STREQ(buffer, data);
     
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+// enable_wal=false: no journal is maintained, yet a cleanly closed archive must
+// still round-trip its data (writes go straight to the archive, header published
+// on batch end / close). Also verifies no .wal file is left behind.
+TEST_F(WalSyncModeTest, JournalDisabledRoundTrips) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.enable_wal = false;
+
+    // Enough data to span several blocks and trigger multiple auto-batch ends.
+    std::string data(64 * 1024, '\0');
+    for (size_t i = 0; i < data.size(); ++i)
+        data[i] = static_cast<char>('A' + (i % 26));
+
+    compio_archive* archive = compio_open_archive(test_file.c_str(), "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file* file = compio_open_file("test", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    compio_close_file(file);
+    compio_close_archive(archive);
+
+    // No journal should exist for a disabled-WAL archive.
+    struct stat st;
+    EXPECT_NE(stat(test_wal.c_str(), &st), 0);
+
+    archive = compio_open_archive(test_file.c_str(), "r", &config);
+    ASSERT_NE(archive, nullptr);
+    file = compio_open_file("test", archive);
+    ASSERT_NE(file, nullptr);
+    std::string buffer(data.size(), '\0');
+    ASSERT_EQ(compio_read(&buffer[0], buffer.size(), file), data.size());
+    EXPECT_EQ(buffer, data);
     compio_close_file(file);
     compio_close_archive(archive);
 }

@@ -12,8 +12,10 @@ extern compio_config config;
 // Same write workload under each WAL sync mode, exposing the cost of durability:
 //   ALWAYS  fsyncs after every committed op (strict crash safety),
 //   NORMAL  defers fsync to checkpoint/flush/close,
-//   OFF     never fsyncs the WAL on commit.
-// Throughput per mode quantifies the price paid for durability guarantees.
+//   OFF     never fsyncs the WAL on commit (journal still written, just not synced),
+//   NO-WAL  journaling disabled entirely (no double-write) -> cost of journaling itself.
+// Comparing OFF vs NO-WAL isolates the price of maintaining the journal from the
+// price of fsync (ALWAYS vs the rest).
 
 static void BM_WalSyncWrite(benchmark::State& state) {
     const int mode     = static_cast<int>(state.range(0));
@@ -22,7 +24,11 @@ static void BM_WalSyncWrite(benchmark::State& state) {
     const size_t span  = sizeof(html_data) - 1 - block;
 
     compio_config cfg = config;
-    cfg.wal_sync_mode = static_cast<compio_wal_sync_mode>(mode);
+    if (mode == 3) {
+        cfg.enable_wal = false;
+    } else {
+        cfg.wal_sync_mode = static_cast<compio_wal_sync_mode>(mode);
+    }
 
     for (auto _ : state) {
         std::string path = get_temporary_filename();
@@ -46,13 +52,14 @@ static void BM_WalSyncWrite(benchmark::State& state) {
     }
 
     state.SetBytesProcessed(state.iterations() * static_cast<int64_t>(n_ops) * block);
-    state.counters["sync_mode"] = mode; // 0=ALWAYS 1=NORMAL 2=OFF
+    state.counters["sync_mode"] = mode; // 0=ALWAYS 1=NORMAL 2=OFF 3=NO-WAL
 }
 
 BENCHMARK(BM_WalSyncWrite)
     ->Arg(0)
     ->Arg(1)
     ->Arg(2)
+    ->Arg(3)
     ->Unit(benchmark::kMillisecond)
     ->MinTime(0.5)
     ->UseRealTime();
