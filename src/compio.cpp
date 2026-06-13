@@ -49,6 +49,7 @@ void compio_build_default_config(compio_config *result) {
     result->checksum_type = COMPIO_CHECKSUM_CRC32C;
     result->wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;
     result->auto_batch_size = 8; // Conservative default for performance
+    result->enable_wal = true;
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
@@ -249,55 +250,59 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         WARNING_PRINT("warning: failed to set stdio buffer size\n");
     }
 
-    // Initialize WAL Manager
-    auto wal = std::make_unique<compio::WalManager>(fp);
-    if (c) {
-        wal->set_sync_mode(c->wal_sync_mode);
-    }
-    
-    // Check for recovery (only if we are not creating a new file from scratch with "w")
-    if (!(mode_b & mode_bit::w)) {
-        if (wal->has_pending_recovery()) {
-            // Recovery needs read-write access to the archive file. 'r' alone is
-            // read-only; everything else (r+, a, a+, w, w+) can write.
-            bool can_write = !((mode_b & mode_bit::r) && !(mode_b & mode_bit::plus));
+    // Initialize WAL Manager. When journaling is disabled the archive carries no
+    // WalManager at all: writers receive a null wal pointer and skip logging.
+    std::unique_ptr<compio::WalManager> wal;
+    if (!c || c->enable_wal) {
+        wal = std::make_unique<compio::WalManager>(fp);
+        if (c) {
+            wal->set_sync_mode(c->wal_sync_mode);
+        }
 
-            if (!can_write) {
-                 WARNING_PRINT("error: WAL file exists but opening in read-only mode. Cannot recover pending transactions.\n");
-                 fclose(file);
-                 errno = EROFS; // Read-only file system (or similar)
-                 return NULL;
-            } else {
-                if (!wal->recover(file)) {
-                    WARNING_PRINT("warning: WAL recovery failed\n");
-                    // Continue anyway? Or fail? 
-                    // Fail seems safer.
-                    fclose(file);
-                    errno = EIO;
-                    return NULL;
+        // Check for recovery (only if we are not creating a new file from scratch with "w")
+        if (!(mode_b & mode_bit::w)) {
+            if (wal->has_pending_recovery()) {
+                // Recovery needs read-write access to the archive file. 'r' alone is
+                // read-only; everything else (r+, a, a+, w, w+) can write.
+                bool can_write = !((mode_b & mode_bit::r) && !(mode_b & mode_bit::plus));
+
+                if (!can_write) {
+                     WARNING_PRINT("error: WAL file exists but opening in read-only mode. Cannot recover pending transactions.\n");
+                     fclose(file);
+                     errno = EROFS; // Read-only file system (or similar)
+                     return NULL;
+                } else {
+                    if (!wal->recover(file)) {
+                        WARNING_PRINT("warning: WAL recovery failed\n");
+                        // Continue anyway? Or fail?
+                        // Fail seems safer.
+                        fclose(file);
+                        errno = EIO;
+                        return NULL;
+                    }
                 }
             }
+        } else {
+            // "w" mode: truncate file. We should also clear any existing WAL.
+            if (!wal->clear()) {
+                WARNING_PRINT("warning: failed to clear existing WAL file in 'w' mode\n");
+                fclose(file);
+                errno = EIO;
+                return NULL;
+            }
         }
-    } else {
-        // "w" mode: truncate file. We should also clear any existing WAL.
-        if (!wal->clear()) {
-            WARNING_PRINT("warning: failed to clear existing WAL file in 'w' mode\n");
-            fclose(file);
-            errno = EIO;
-            return NULL;
-        }
-    }
-    
-    // Open WAL for writing if we are in write mode
-    // We can write if w, a, or + is set.
-    bool can_write_archive = (mode_b & mode_bit::w) || (mode_b & mode_bit::a) || (mode_b & mode_bit::plus);
-    if (can_write_archive) {
-        if (!wal->open()) {
-             WARNING_PRINT("warning: failed to open WAL file\n");
-             // Fail?
-             fclose(file);
-             errno = EIO;
-             return NULL;
+
+        // Open WAL for writing if we are in write mode
+        // We can write if w, a, or + is set.
+        bool can_write_archive = (mode_b & mode_bit::w) || (mode_b & mode_bit::a) || (mode_b & mode_bit::plus);
+        if (can_write_archive) {
+            if (!wal->open()) {
+                 WARNING_PRINT("warning: failed to open WAL file\n");
+                 // Fail?
+                 fclose(file);
+                 errno = EIO;
+                 return NULL;
+            }
         }
     }
 
@@ -835,7 +840,9 @@ int compio_begin_batch(compio_archive *archive) {
     }
 
     // No need for external lock - WalManager has its own mutex
-    archive->wal->begin_batch();
+    if (archive->wal) {
+        archive->wal->begin_batch();
+    }
     return COMPIO_SUCCESS;
 }
 
@@ -844,6 +851,16 @@ int compio_begin_batch(compio_archive *archive) {
 // already under it; the public wrapper takes it). Header publication is safe
 // here because flush_header_double_buffered re-syncs the btree's header copy.
 static bool end_batch_impl(compio_archive *archive) {
+    if (!archive->wal) {
+        // No journal: block data is already written straight to the archive.
+        // Mirror the journaled path's batch boundary by syncing the data and
+        // publishing the header so on-disk metadata stays consistent.
+        if (fsync_archive(archive->file)) {
+            flush_header_double_buffered(archive);
+            fsync_archive(archive->file);
+        }
+        return true;
+    }
     bool success = archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes);
     if (!success) {
         if (errno == 0) {

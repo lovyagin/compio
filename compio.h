@@ -258,6 +258,10 @@ typedef struct {
     compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
     compio_wal_sync_mode wal_sync_mode; /**< WAL synchronization mode */
     int auto_batch_size; /**< Number of sequential operations to auto-batch (0 = disabled, default: 8) */
+    bool enable_wal; /**< Maintain the write-ahead log (default: true). When false, writes go
+                          straight to the archive with no journaling: maximum write throughput, but
+                          NO crash safety and NO recovery on reopen. Intended for scratch/throwaway
+                          archives or benchmarking the cost of journaling itself. */
 } compio_config;
 
 /**
