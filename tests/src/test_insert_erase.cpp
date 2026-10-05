@@ -570,6 +570,46 @@ TEST_F(FragmentationReuseTest, InsertInMiddleRepacksBlockWhenExceedingMaximum) {
     ASSERT_EQ(GetBlockCount(), 2u);
 }
 
+// An insert on a block boundary used to create a block of its own, however
+// small; repeated small inserts at one position produced one block each.
+TEST_F(FragmentationReuseTest, InsertOnBlockBoundaryJoinsTheFollowingBlock) {
+    std::vector<unsigned char> initial = {1, 2, 3, 4, 5, 6, 7, 8};
+    ASSERT_EQ(compio_write(initial.data(), initial.size(), file), initial.size());
+    ASSERT_EQ(GetBlockCount(), 2u);
+
+    // Position 4 is the first byte of the second block.
+    compio_seek(file, 4, COMPIO_SEEK_SET);
+    std::vector<unsigned char> insert_data = {9};
+    ASSERT_EQ(compio_insert(insert_data.data(), insert_data.size(), file), insert_data.size());
+
+    VerifyFileContent({1, 2, 3, 4, 9, 5, 6, 7, 8});
+    ASSERT_EQ(GetBlockCount(), 2u);
+}
+
+TEST_F(FragmentationReuseTest, RepeatedSmallInsertsAtStartKeepBlocksAboveMinimum) {
+    std::vector<unsigned char> expected = {100, 101, 102, 103};
+    ASSERT_EQ(compio_write(expected.data(), expected.size(), file), expected.size());
+
+    for (int i = 0; i < 200; i++) {
+        const unsigned char byte = static_cast<unsigned char>(i);
+        compio_seek(file, 0, COMPIO_SEEK_SET);
+        ASSERT_EQ(compio_insert(&byte, 1, file), 1u);
+        expected.insert(expected.begin(), byte);
+    }
+    VerifyFileContent(expected);
+
+    const compio::tree_key min_key{file->hash, 0};
+    const compio::tree_key max_key{file->hash, UINT64_MAX};
+    auto range = archive->index->get_range(min_key, max_key);
+    ASSERT_TRUE(range.has_value());
+    for (const auto &[key, val] : *range) {
+        EXPECT_GE(val.size, static_cast<uint64_t>(config.block_size__minimum)) << "block at " << key.pos;
+        EXPECT_LE(val.size, static_cast<uint64_t>(config.block_size__maximum)) << "block at " << key.pos;
+    }
+    // 204 bytes in blocks of 2..8 bytes; one block per inserted byte would be 201.
+    EXPECT_LE(range->size(), 102u);
+}
+
 // Parameterized tests for different data sizes
 TEST_P(InsertEraseParamTest, ParametrizedInsertTest) {
     auto [initial_size, insert_pos, insert_size] = GetParam();

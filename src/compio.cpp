@@ -1859,7 +1859,14 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     WalTransactionGuard wal_tx_guard(wal_ptr);
 
     const tree_key cursor_key = {file->hash, file->cursor};
-    const auto key_val = archive->index->get_block(cursor_key);
+    auto key_val = archive->index->get_block(cursor_key);
+    if (!key_val.has_value()) {
+        // get_block only reports a block the cursor is strictly inside of; a
+        // block that starts at the cursor is looked up by its exact key.
+        if (const auto at_cursor = archive->index->get(cursor_key)) {
+            key_val = std::make_pair(cursor_key, *at_cursor);
+        }
+    }
     const uint64_t block_size = archive->config.block_size;
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
@@ -1880,7 +1887,10 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         const uint64_t left_size = file->cursor - left_key.pos;
         const uint64_t old_size = left_b->size();
         const uint64_t right_size = old_size - left_size;
-        const bool is_inside_block = (left_size > 0 && left_size < old_size);
+        // A cursor on the first byte of the block counts as inside it: the data is
+        // prepended to that block. Creating a separate block for an insert that
+        // lands on a block boundary would leave arbitrarily small blocks behind.
+        const bool is_inside_block = (left_size < old_size);
 
         if (is_inside_block && old_size + size <= block_size__maximum) {
             const tree_key old_block_end_key{file->hash, left_key.pos + old_size};
