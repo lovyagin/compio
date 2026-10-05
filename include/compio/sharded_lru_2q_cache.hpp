@@ -2,7 +2,9 @@
 #define _SHARDED_LRU_2Q_CACHE_HPP_INCLUDED_
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -20,6 +22,10 @@ namespace cache {
 // shard_selector maps a key to a size_t; the shard is selector(key) % nshards.
 // Choose a selector that spreads the workload (e.g. file identity) so that
 // independent streams land on distinct shards.
+//
+// max_size is one budget shared by all shards: a workload that lands in a single
+// shard can use the whole cache. When the budget is exceeded, an entry is taken
+// from the least recently used shard.
 template <typename key_t, typename value_t, typename comparator = std::less<key_t>,
           typename shard_selector = std::hash<key_t>>
 class sharded_lru_2q_cache {
@@ -34,15 +40,30 @@ class sharded_lru_2q_cache {
 
 public:
     explicit sharded_lru_2q_cache(size_t max_size, shard_selector selector = shard_selector())
-        : _nshards(pick_shards(max_size)), _selector(selector) {
-        const size_t per_shard = (max_size == 0) ? 0 : std::max<size_t>(1, max_size / _nshards);
+        : _nshards(pick_shards(max_size)),
+          _max_size(max_size),
+          _selector(selector),
+          _last_use(std::make_unique<std::atomic<uint64_t>[]>(_nshards)) {
         _shards.reserve(_nshards);
-        for (size_t i = 0; i < _nshards; ++i)
-            _shards.push_back(std::make_unique<shard_t>(per_shard));
+        for (size_t i = 0; i < _nshards; ++i) {
+            _shards.push_back(std::make_unique<shard_t>(max_size));
+            _last_use[i].store(0, std::memory_order_relaxed);
+        }
     }
 
-    void put(const key_t &key, const value_t &value) { shard(key).put(key, value); }
-    std::optional<value_t> get(const key_t &key) { return shard(key).get(key); }
+    void put(const key_t &key, const value_t &value) {
+        const size_t index = shard_index(key);
+        touch(index);
+        _shards[index]->put(key, value);
+        enforce_budget();
+    }
+
+    std::optional<value_t> get(const key_t &key) {
+        const size_t index = shard_index(key);
+        touch(index);
+        return _shards[index]->get(key);
+    }
+
     bool exists(const key_t &key) const { return shard(key).exists(key); }
     void remove(const key_t &key) { shard(key).remove(key); }
 
@@ -101,12 +122,41 @@ public:
 #endif
 
 private:
-    shard_t &shard(const key_t &key) { return *_shards[_selector(key) % _nshards]; }
-    const shard_t &shard(const key_t &key) const { return *_shards[_selector(key) % _nshards]; }
+    size_t shard_index(const key_t &key) const { return _selector(key) % _nshards; }
+    shard_t &shard(const key_t &key) { return *_shards[shard_index(key)]; }
+    const shard_t &shard(const key_t &key) const { return *_shards[shard_index(key)]; }
+
+    void touch(size_t index) {
+        _last_use[index].store(_clock.fetch_add(1, std::memory_order_relaxed) + 1,
+                               std::memory_order_relaxed);
+    }
+
+    void enforce_budget() {
+        while (true) {
+            size_t total = 0;
+            size_t victim = _nshards;
+            uint64_t oldest_use = UINT64_MAX;
+            for (size_t i = 0; i < _nshards; ++i) {
+                const size_t n = _shards[i]->approx_size();
+                total += n;
+                const uint64_t used = _last_use[i].load(std::memory_order_relaxed);
+                if (n != 0 && used < oldest_use) {
+                    oldest_use = used;
+                    victim = i;
+                }
+            }
+            if (total <= _max_size || victim == _nshards || !_shards[victim]->evict_one()) {
+                return;
+            }
+        }
+    }
 
     size_t _nshards;
+    size_t _max_size;
     shard_selector _selector;
     std::vector<std::unique_ptr<shard_t>> _shards;
+    std::unique_ptr<std::atomic<uint64_t>[]> _last_use;
+    std::atomic<uint64_t> _clock{0};
 };
 
 } // namespace cache

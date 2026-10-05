@@ -35,19 +35,24 @@ This ensures data integrity regardless of the config passed when opening an exis
 ### 3. Storage System
 
 #### Block-based Storage
-Files are split into fixed-size blocks (default 4KB). Each block is:
+Files are split into blocks of variable size: `block_size` (default 16 KiB) is the
+target used when incoming data is cut into blocks, and inserts and erases keep
+every block between `block_size__minimum` and `block_size__maximum`. Each block is:
 - Compressed independently
-- Stored with metadata (original size, compression flag)
-- Indexed in B-Tree by (file_hash, position)
+- Stored with metadata (stored size, original size, compression flag, owner back-reference, checksum)
+- Indexed in B-Tree by (file id, position)
 
 #### Block Allocator
 Manages free space in the archive file with strategies:
 - **First-fit** - Use first suitable block
-- **Best-fit** - Use smallest suitable block  
+- **Best-fit** - Use smallest suitable block (default)
 - **Worst-fit** - Use largest suitable block
 - **Next-fit** - Continue from last position
 
-The allocator state is persisted in the archive file for fragmentation tracking.
+The list of free regions is kept in memory and saved in the archive on flush and close.
+Fragmentation is the share of the archive taken by free regions; when it exceeds
+`fragmentation_threshold`, the archive is compacted. With `fill_holes_with_zeros`
+freed regions are returned to the filesystem by hole punching (Linux).
 
 ### 4. Indexing (B-Tree)
 

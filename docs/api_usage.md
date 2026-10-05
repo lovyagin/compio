@@ -91,26 +91,32 @@ compio_close_archive(archive);
 compio_config config;
 compio_build_default_config(&config);       // Initialize with defaults first!
 
+// The values below are the defaults set by compio_build_default_config.
 config.b_tree_degree = 16;                          // B-Tree degree
-config.block_size = 4096;                           // Block size in bytes
+config.block_size = 16384;                          // Target block size in bytes
 config.block_size__minimum = 512;                   // Minimum block size in bytes
-config.block_size__maximum = 16384;                 // Maximum block size in bytes
-config.cache_size__nodes = 1024;                    // B-tree node cache
-config.cache_size__blocks = 8192;                   // Storage block cache
-config.allocation_strategy = COMPIO_ALLOC_FIRST_FIT; // Allocation strategy
-config.fragmentation_threshold = 30;                // Defrag threshold (%)
-config.fill_holes_with_zeros = false;               // Zero-fill freed blocks
-config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;      // WAL synchronization mode (ALWAYS, NORMAL, OFF)
+config.block_size__maximum = 262144;                // Maximum block size in bytes (>= 2 * block_size)
+config.cache_size__nodes = 1024;                    // B-tree node cache, in nodes
+config.cache_size__blocks = 8192;                   // Block cache, in blocks, shared by all files
+config.allocation_strategy = COMPIO_ALLOC_BEST_FIT; // Allocation strategy
+config.fragmentation_threshold = 30;                // Compact when free regions exceed this share (%) of the archive
+config.fill_holes_with_zeros = false;               // Return freed regions to the filesystem (hole punching on Linux)
+config.wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;      // WAL synchronization mode (ALWAYS, NORMAL, OFF)
 config.wal_max_size_bytes = 64 * 1024 * 1024;       // Max WAL size before checkpoint
 config.max_files = 4096;                            // Initial file table capacity (grows dynamically)
 config.checksum_type = COMPIO_CHECKSUM_CRC32C;      // Checksum algorithm (FNV1A or CRC32C)
 config.auto_batch_size = 8;                         // Auto-batch sequential ops (0 = disabled)
+config.enable_wal = true;                           // Maintain the write-ahead log
 ```
+
+Archive open modes are `"r"`, `"r+"`, `"w"`, `"w+"`, `"a"`, `"a+"` (an optional `b` is
+ignored); any other string is rejected with `EINVAL`. File names are limited to
+`COMPIO_FNAME_MAX_SIZE - 1` (31) characters.
 
 ### Allocation Strategies
 
 - `COMPIO_ALLOC_FIRST_FIT` - Use first suitable free block
-- `COMPIO_ALLOC_BEST_FIT` - Use smallest suitable free block
+- `COMPIO_ALLOC_BEST_FIT` - Use smallest suitable free block (default)
 - `COMPIO_ALLOC_WORST_FIT` - Use largest suitable free block
 - `COMPIO_ALLOC_NEXT_FIT` - Continue from last allocation position
 

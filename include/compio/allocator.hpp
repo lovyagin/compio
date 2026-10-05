@@ -84,8 +84,11 @@ public:
      * @brief Add new free block to the storage
      * @param offset Block start offset
      * @param size Block size
+     * @param merged_offset If not null, receives the start of the free region the block became part of
+     * @param merged_size If not null, receives the size of that region
      */
-    void add_free_block(uint64_t offset, uint64_t size);
+    void add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset = nullptr,
+                        uint64_t *merged_size = nullptr);
 
     /**
      * @brief Find and allocate suitable block
@@ -159,6 +162,11 @@ public:
      * @param file_size New pointer to file size
      */
     void update_file_size_ptr(const uint64_t *file_size) { file_size_ = file_size; }
+
+    /**
+     * @brief Number of entries in the free list
+     */
+    size_t free_region_count() const;
 
     /**
      * @brief Serialize manager state to buffer
@@ -305,6 +313,8 @@ private:
     const uint64_t *file_size_;                  /**< Reference to total file size */
     mutable uint8_t cached_fragmentation_;       /**< Cached fragmentation level */
     mutable bool fragmentation_dirty_;           /**< True when cache needs recalculation */
+    uint64_t spare_slot_offset_ = 0;             /**< Alternate slot of the saved state (0 = none) */
+    uint64_t spare_slot_size_ = 0;               /**< Size of the alternate slot */
 
     /**
      * @brief Find the first suitable block for allocation
@@ -417,8 +427,10 @@ public:
 
     /**
      * @brief Perform maintenance operations if needed
+     * @param at_checkpoint True if the caller publishes a header right after the
+     *        call; only then may a compaction relocate the files table
      */
-    void maintenance();
+    void maintenance(bool at_checkpoint = false);
 
     /**
      * @brief Suspend automatic maintenance operations (e.g. during file removal)
@@ -464,8 +476,26 @@ private:
     WalManager *wal_;                    /**< WAL manager for ensuring durability */
     free_blocks_manager blocks_manager_; /**< Free blocks manager */
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
+    uint8_t compaction_floor_ = 0;       /**< Fragmentation left after the last compaction */
     uint64_t deallocate_count_ = 0;      /**< Counter to throttle maintenance checks */
     std::atomic<int> maintenance_suspended_{0};      /**< Maintenance suspension counter */
+    uint64_t fs_block_size_ = 0;         /**< Filesystem block size, read on first use */
+    bool hole_punching_supported_ = true; /**< Cleared after the first failed attempt */
+
+    /**
+     * @brief Give the storage under a freed region back to the filesystem
+     *
+     * Punches a hole where the platform supports it and falls back to
+     * overwriting the region with zeros.
+     */
+    void release_to_filesystem(uint64_t offset, uint64_t size, uint64_t merged_offset,
+                               uint64_t merged_size);
+
+    /**
+     * @brief Punch a hole over a freed region
+     * @return False if hole punching is unavailable or failed
+     */
+    bool punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset, uint64_t merged_size);
 
     /**
      * @brief Check if defragmentation is needed
@@ -476,7 +506,7 @@ private:
     /**
      * @brief Perform defragmentation of the storage
      */
-    void perform_defragmentation();
+    void perform_defragmentation(bool relocate_files_table);
 
     friend class TestAllocatorAccess;
 };

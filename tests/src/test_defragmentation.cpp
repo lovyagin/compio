@@ -33,7 +33,7 @@ static compio_archive *open_test_archive(const char *fn,
 
 // ---------------------------------------------------------------------------
 // CalculateFragmentationTest
-// Verifies the new external-fragmentation metric behaviour.
+// Fragmentation is the share of the container taken by free regions.
 // ---------------------------------------------------------------------------
 class CalculateFragmentationTest : public ::testing::Test {
 protected:
@@ -58,20 +58,29 @@ TEST_F(CalculateFragmentationTest, NoFreeBlocks) {
     EXPECT_EQ(f, 0);
 }
 
-// Single free block → 0 % (all free space is contiguous).
-TEST_F(CalculateFragmentationTest, SingleFreeBlock_ZeroFragmentation) {
+// The metric is the free share of the container, whatever the shape of the
+// free space: one region counts the same as many.
+TEST_F(CalculateFragmentationTest, SingleFreeBlock_CountsByItsShare) {
     uint64_t off = archive->allocator->allocate(1024);
     ASSERT_NE(off, (uint64_t)UINT64_MAX);
     archive->allocator->deallocate(off, 1024);
 
-    (void)archive->allocator->get_fragmentation_stats(); // triggers recalc
-    uint8_t f = archive->allocator->get_fragmentation();
-    EXPECT_EQ(f, 0);
+    const uint64_t container = archive->header->file_size;
+    EXPECT_EQ(archive->allocator->get_fragmentation(), 1024 * 100 / container);
 }
 
-// Two equal-sized free blocks, all free space split 50/50 → ~40 %.
-// external_frag = 1 - 0.5 = 0.5, count_score = 1/99 ≈ 0.01
-// result ≈ 0.8*0.5 + 0.2*0.01 ≈ 40 %
+TEST_F(CalculateFragmentationTest, HalfFreeContainerIsFiftyPercent) {
+    const uint64_t used = archive->header->file_size;
+    uint64_t off = archive->allocator->allocate(used);
+    ASSERT_NE(off, (uint64_t)UINT64_MAX);
+    archive->allocator->allocate(64); // keeps the region away from the container end
+    archive->allocator->deallocate(off, used);
+
+    const uint8_t f = archive->allocator->get_fragmentation();
+    EXPECT_GE(f, 49);
+    EXPECT_LE(f, 50);
+}
+
 TEST_F(CalculateFragmentationTest, TwoEqualFragments_NonZero) {
     // Allocate three, free first and third to leave two gaps.
     uint64_t a = archive->allocator->allocate(512);
@@ -87,13 +96,13 @@ TEST_F(CalculateFragmentationTest, TwoEqualFragments_NonZero) {
 
     auto stats = archive->allocator->get_fragmentation_stats();
     EXPECT_EQ(stats.num_free_regions, 2u);
-    // Both fragments equal → ext_frag = 0.5 → fragmentation should be ~40
-    EXPECT_GT(stats.fragmentation_percent, 0u);
-    EXPECT_LE(stats.fragmentation_percent, 100u);
+    EXPECT_EQ(stats.total_free_bytes, 1024u);
+    EXPECT_EQ(stats.fragmentation_percent, 1024 * 100 / archive->header->file_size);
 }
 
-// Large + many tiny → high fragmentation (> 50 %).
-TEST_F(CalculateFragmentationTest, ManyTinyVsOneLarge_HighFragmentation) {
+// Many tiny free regions next to a large allocation: little space is lost, so
+// fragmentation stays low however scattered the free space is.
+TEST_F(CalculateFragmentationTest, ManyTinyVsOneLarge_LowFragmentation) {
     // Allocate 1 large + 20 tiny blocks interleaved, free all tiny ones.
     uint64_t large = archive->allocator->allocate(16384);
     ASSERT_NE(large, (uint64_t)UINT64_MAX);
@@ -112,7 +121,8 @@ TEST_F(CalculateFragmentationTest, ManyTinyVsOneLarge_HighFragmentation) {
 
     auto stats = archive->allocator->get_fragmentation_stats();
     EXPECT_GT(stats.num_free_regions, 1u);
-    EXPECT_GT(stats.fragmentation_percent, 0u);
+    EXPECT_EQ(stats.total_free_bytes, 640u);
+    EXPECT_EQ(stats.fragmentation_percent, 640 * 100 / archive->header->file_size);
 }
 
 // ---------------------------------------------------------------------------

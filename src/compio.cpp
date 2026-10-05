@@ -32,17 +32,13 @@ namespace fs = std::filesystem;
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_lz4_compressor(&result->compressor);
-#ifdef NDEBUG
     result->fill_holes_with_zeros = false;
-#else
-    result->fill_holes_with_zeros = true;
-#endif
     result->block_size = 1 << 14;        // 16KB - balanced for performance and fragmentation
     result->block_size__minimum = 1 << 9;   // 512B min (compatible with test overrides)
     result->block_size__maximum = 1 << 18;  // 256KB max
     result->cache_size__nodes = 1024;
     result->cache_size__blocks = 8192;
-    result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+    result->allocation_strategy = COMPIO_ALLOC_BEST_FIT;
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
@@ -79,6 +75,10 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     fclose(file);
     return 0;
 }
+
+static uint32_t files_table_checksum(const compio::files_table &table);
+static bool fsync_archive(FILE *file);
+static void flush_header_double_buffered(compio_archive *archive);
 
 static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
     if (is_file_empty(file)) {
@@ -244,12 +244,6 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         return NULL;
     }
 
-    // Optimize stdio buffering for sequential access (64KB buffer)
-    // This reduces syscalls significantly for sequential reads/writes
-    if (setvbuf(file, nullptr, _IOFBF, 64 * 1024) != 0) {
-        WARNING_PRINT("warning: failed to set stdio buffer size\n");
-    }
-
     // Initialize WAL Manager. When journaling is disabled the archive carries no
     // WalManager at all: writers receive a null wal pointer and skip logging.
     std::unique_ptr<compio::WalManager> wal;
@@ -328,6 +322,12 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         WARNING_PRINT("warning: failed to allocate memory for compio_archive\n");
         goto no_archive;
     }
+
+    archive->publish_header = [archive]() {
+        if (!fsync_archive(archive->file)) return false;
+        flush_header_double_buffered(archive);
+        return fsync_archive(archive->file);
+    };
 
     // is_new_file already computed above
 
@@ -448,6 +448,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_block_reader;
     }
 
+    if (!is_new_file && readonly(archive->header, header)->files_table_addr != 0) {
+        archive->files_table_checksum = files_table_checksum(readonly(archive->header, header)->ftable);
+        archive->files_table_checksum_valid = true;
+    }
+
     if (!is_new_file && !archive->allocator->load_state(archive)) {
         // The allocator state (free-block list) is an optimization that points
         // at a region an interrupted flush may have left beyond the durable end
@@ -467,8 +472,6 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     return archive;
 
-no_allocator_state:
-    delete archive->block_reader;
 no_block_reader:
     delete archive->index;
 no_index:
@@ -489,8 +492,10 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
         return NULL;
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    // The on-disk name field holds COMPIO_FNAME_MAX_SIZE bytes including the
+    // terminator; a longer name would be cut and could alias another file.
     size_t name_len = strlen(name);
-    if (name_len > COMPIO_FNAME_MAX_SIZE) {
+    if (name_len >= COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return NULL;
     }
@@ -550,7 +555,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     size_t name_len = strlen(name);
-    if (name_len > COMPIO_FNAME_MAX_SIZE) {
+    if (name_len >= COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return -2;
     }
@@ -662,6 +667,7 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 // Forward declarations
 static void end_auto_batch_if_active(compio_file *file);
 static void flush_header_double_buffered(compio_archive *archive);
+static void flush_impl(compio_archive *archive);
 // Commit a batch and publish the header. Caller must hold archive->mutex.
 static bool end_batch_impl(compio_archive *archive);
 
@@ -676,6 +682,25 @@ static bool fsync_archive(FILE *file) {
 #else
     return fsync(fileno(file)) == 0;
 #endif
+}
+
+// A compaction leaves the physical file longer than the container. The tail is
+// cut only once a header describing the compacted layout is durable: until then
+// the previous header may still reference data in it.
+static void truncate_after_header_publish(compio_archive *archive) {
+    if (!archive->truncate_after_publish) return;
+    if (!fsync_archive(archive->file)) return;
+
+    const uint64_t container_end = readonly(archive->header, header)->file_size;
+#ifdef _WIN32
+    const bool ok = _chsize_s(_fileno(archive->file), static_cast<__int64>(container_end)) == 0;
+#else
+    const bool ok = ftruncate(fileno(archive->file), static_cast<off_t>(container_end)) == 0;
+#endif
+    if (!ok) {
+        WARNING_PRINT("warning: failed to truncate archive after compaction\n");
+    }
+    archive->truncate_after_publish = false;
 }
 
 /**
@@ -858,6 +883,7 @@ static bool end_batch_impl(compio_archive *archive) {
         if (fsync_archive(archive->file)) {
             flush_header_double_buffered(archive);
             fsync_archive(archive->file);
+            truncate_after_header_publish(archive);
         }
         return true;
     }
@@ -876,6 +902,7 @@ static bool end_batch_impl(compio_archive *archive) {
         if (fsync_archive(archive->file)) {
             flush_header_double_buffered(archive);
             fsync_archive(archive->file);
+            truncate_after_header_publish(archive);
         }
     }
     return true;
@@ -905,7 +932,7 @@ int compio_defragment(compio_archive *archive) {
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
 
-    if (archive->mode_b & mode_bit::r) {
+    if (archive->is_readonly()) {
         WARNING_PRINT("warning: compio_defragment called on read-only archive\n");
         return COMPIO_ERROR;
     }
@@ -920,7 +947,13 @@ int compio_defragment(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
+    // Write out pending changes first, so that the compaction works on the
+    // final layout and the files table is not rewritten behind it afterwards.
+    flush_impl(archive);
     archive->allocator->force_defragmentation();
+    // Publish the compacted layout right away: the file is only cut down to
+    // its new size once a header describing that layout is durable.
+    flush_impl(archive);
     return COMPIO_SUCCESS;
 }
 
@@ -998,8 +1031,8 @@ int compio_close_archive(compio_archive *archive) {
 
     // 2) run maintenance (defragmentation) before saving allocator state.
     //    Must happen while block_reader and index are still alive.
-    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
-        archive->allocator->maintenance();
+    if (!archive->is_readonly() && archive->allocator) {
+        archive->allocator->maintenance(true);
     }
 
     // 3) now safe to delete block_reader
@@ -1007,7 +1040,7 @@ int compio_close_archive(compio_archive *archive) {
     archive->block_reader = nullptr;
 
     // 4) save allocator state to the end of the file, if not read-only mode
-    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
+    if (!archive->is_readonly() && archive->allocator) {
         if (!archive->allocator->save_state(archive)) {
             WARNING_PRINT("warning: failed to save allocator state\n");
             return -3;
@@ -1043,6 +1076,7 @@ int compio_close_archive(compio_archive *archive) {
         WARNING_PRINT("warning: fsync failed in compio_close_archive\n");
     }
 #endif
+    truncate_after_header_publish(archive);
 
     // If WAL is enabled and we are closing cleanly, we should clear the WAL.
     // At this point, all data is synced to the archive file (via flush and header update).
@@ -1330,13 +1364,15 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 #ifndef COMPIO_DISABLE_INSERT_ERASE
             // When appending at EOF, try to extend the current tail block instead of creating a
             // new one. This reduces internal fragmentation caused by many small appends.
+            // The tail grows up to the target block size only: growing it to the maximum
+            // would make every sequentially written block maximum-sized.
             if (current_pos == file->size && current_pos > 0) {
                 const tree_key tail_probe{file->hash, current_pos - 1};
                 const auto tail_kv = archive->index->get_block(tail_probe);
                 if (tail_kv.has_value()) {
                     const auto &[tail_key, tail_val] = tail_kv.value();
                     if (tail_key.hash == file->hash && tail_key.pos + tail_val.size == current_pos &&
-                        tail_val.size < block_size__maximum) {
+                        tail_val.size < block_size) {
                         const auto tail_block = block_reader->read_block(tail_val.addr, tail_key);
                         if (!tail_block) {
                             WARNING_PRINT(
@@ -1347,7 +1383,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                         }
 
                         const uint64_t append_size =
-                            std::min<uint64_t>(remaining_write, block_size__maximum - tail_block->size());
+                            std::min<uint64_t>(remaining_write, block_size - tail_block->size());
                         if (append_size > 0) {
                             const uint64_t old_tail_size = tail_block->size();
                             tail_block->grow(old_tail_size + append_size);
@@ -1815,7 +1851,14 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     WalTransactionGuard wal_tx_guard(wal_ptr);
 
     const tree_key cursor_key = {file->hash, file->cursor};
-    const auto key_val = archive->index->get_block(cursor_key);
+    auto key_val = archive->index->get_block(cursor_key);
+    if (!key_val.has_value()) {
+        // get_block only reports a block the cursor is strictly inside of; a
+        // block that starts at the cursor is looked up by its exact key.
+        if (const auto at_cursor = archive->index->get(cursor_key)) {
+            key_val = std::make_pair(cursor_key, *at_cursor);
+        }
+    }
     const uint64_t block_size = archive->config.block_size;
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
@@ -1836,7 +1879,10 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         const uint64_t left_size = file->cursor - left_key.pos;
         const uint64_t old_size = left_b->size();
         const uint64_t right_size = old_size - left_size;
-        const bool is_inside_block = (left_size > 0 && left_size < old_size);
+        // A cursor on the first byte of the block counts as inside it: the data is
+        // prepended to that block. Creating a separate block for an insert that
+        // lands on a block boundary would leave arbitrarily small blocks behind.
+        const bool is_inside_block = (left_size < old_size);
 
         if (is_inside_block && old_size + size <= block_size__maximum) {
             const tree_key old_block_end_key{file->hash, left_key.pos + old_size};
@@ -2252,11 +2298,26 @@ after_merge:
     return size;
 }
 
+static uint32_t files_table_checksum(const compio::files_table &table) {
+    return crc32c(reinterpret_cast<const uint8_t *>(table.files.data()),
+                  static_cast<size_t>(table.max_files) * sizeof(compio::files_table::file));
+}
+
 static void sync_files_table(compio_archive *archive) {
     if (!archive || !archive->header) return;
 
     // Only applies to v5 format
-    if (archive->header->magic_number != COMPIO_MAGIC_NUMBER) return;
+    if (readonly(archive->header, header)->magic_number != COMPIO_MAGIC_NUMBER) return;
+
+    // The table is rewritten as a whole, so skip it when nothing in it changed
+    // since it was last written.
+    const uint32_t checksum = files_table_checksum(readonly(archive->header, header)->ftable);
+    if (archive->files_table_checksum_valid && archive->files_table_checksum == checksum &&
+        readonly(archive->header, header)->files_table_addr != 0 &&
+        readonly(archive->header, header)->files_table_capacity ==
+            readonly(archive->header, header)->ftable.max_files) {
+        return;
+    }
 
     // Copy-on-write for the files table:
     // Copy-on-write: allocate a fresh block for the table, write into it, then
@@ -2306,22 +2367,24 @@ static void sync_files_table(compio_archive *archive) {
 
         // Write the table content at the new address.
         archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
+        archive->files_table_checksum = checksum;
+        archive->files_table_checksum_valid = true;
 
         // Reclaim the previous table block (if any). Must run after the new
         // block is allocated so the two regions never overlap.
         if (archive->allocator && old_addr != 0 && old_addr != new_addr) {
             const uint64_t old_size = old_capacity * kEntrySize;
-            archive->allocator->deallocate(old_addr, old_size);
+            // No maintenance here: a compaction must not start in the middle
+            // of a flush, between the table write and the header publish.
+            archive->allocator->deallocate(old_addr, old_size, false);
         }
     } else {
          WARNING_PRINT("warning: failed to allocate space for files table\n");
     }
 }
 
-void compio_flush(compio_archive *archive) {
-    if (!archive) return;
-    std::unique_lock<std::shared_mutex> lock(archive->mutex);
-    
+// Caller must hold archive->mutex.
+static void flush_impl(compio_archive *archive) {
     // Check if we have write permission (w, a, or + modes)
     // mode_bit::r is set for 'r' and 'r+'. 'w'/'a' don't set 'r'.
     // So we need explicit check for write capability.
@@ -2390,6 +2453,8 @@ void compio_flush(compio_archive *archive) {
             if (fflush(archive->file)) {
                 WARNING_PRINT("warning: fflush failed after header write\n");
                 durable = false;
+            } else {
+                truncate_after_header_publish(archive);
             }
         }
     }
@@ -2427,6 +2492,12 @@ void compio_flush(compio_archive *archive) {
         // do not truncate the WAL so that recovery remains possible.
         WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
     }
+}
+
+void compio_flush(compio_archive *archive) {
+    if (!archive) return;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    flush_impl(archive);
 }
 
 int compio_repair(const char *path, const char *output_dir) {

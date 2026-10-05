@@ -335,7 +335,8 @@ TEST_F(StrategyStatisticsTest, StatsAfterCoalescing) {
     EXPECT_EQ(stats.total_free_bytes, 384u);
     EXPECT_EQ(stats.largest_free_region, 384u);
     EXPECT_EQ(stats.smallest_free_region, 384u);
-    EXPECT_EQ(stats.fragmentation_percent, 0u) << "Single free region → 0% fragmentation";
+    EXPECT_EQ(stats.fragmentation_percent, 384 * 100 / archive->header->file_size)
+        << "fragmentation is the free share of the container";
 }
 
 TEST_F(StrategyStatisticsTest, NullArchiveReturnsError) {

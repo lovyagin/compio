@@ -49,8 +49,8 @@
 #include <stdio.h>
 
 #define COMPIO_MAX_FILES 4096        /**< Default maximum number of files in archive */
-#define COMPIO_MAX_FILES_LIMIT 10000000 /**< Hard upper bound accepted when reading an archive header (10M) */
-#define COMPIO_FNAME_MAX_SIZE 32   /**< File name maximum length */
+#define COMPIO_MAX_FILES_LIMIT 10000000 /**< Hard upper bound on the number of files in an archive (10M) */
+#define COMPIO_FNAME_MAX_SIZE 32   /**< Size of the file name field, including the terminating null byte */
 
 #define COMPIO_ERROR (-1)
 #define COMPIO_SUCCESS 0
@@ -244,10 +244,17 @@ typedef struct {
     int cache_size__nodes;  /**< Maximum B-tree nodes kept in memory */
     int cache_size__blocks; /**< Maximum storage blocks kept in memory */
 
-    compio_allocation_strategy allocation_strategy; /**< Free block selection strategy */
-    bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */
-    uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
-                                        percentage (1-100) */
+    compio_allocation_strategy allocation_strategy; /**< Free block selection strategy (default: best fit) */
+    bool fill_holes_with_zeros;      /**< Give the storage under freed regions back to the filesystem
+                                          (default: false). On Linux a hole is punched, which makes
+                                          the container a sparse file: its size stays the same while
+                                          its disk usage shrinks. Where hole punching is unavailable
+                                          the region is overwritten with zeros instead. */
+    uint8_t fragmentation_threshold; /**< Compact the archive when free regions take more than this
+                                        percentage of the container (default: 30; 100 disables
+                                        automatic compaction). Checked after a file is removed,
+                                        on every 64th release of a removed block or index node,
+                                        and when the archive is closed. */
     int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).
                         The table grows dynamically, so this is not a hard limit.
                         For archives using the v5 dynamic files table, this capacity may grow
@@ -345,7 +352,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
  * Opens or creates a file with the given name within the archive.
  * Returns a file handle for subsequent read/write operations.
  *
- * @param[in] name Internal filename (max COMPIO_FNAME_MAX_SIZE characters)
+ * @param[in] name Internal filename (at most COMPIO_FNAME_MAX_SIZE - 1 characters;
+ *                 longer names fail with errno = ENAMETOOLONG)
  * @param[in] archive Opened archive handle
  * @return Pointer to compio_file on success, NULL on error
  *
@@ -617,15 +625,16 @@ typedef struct compio_fragmentation_stats {
     size_t largest_free_region;    /**< Size of largest contiguous free block */
     size_t smallest_free_region;   /**< Size of smallest free block */
     double avg_free_region_size;   /**< Average size of free regions */
-    uint8_t fragmentation_percent; /**< Overall fragmentation percentage (0-100) */
+    uint8_t fragmentation_percent; /**< Share of the container taken by free regions, in percent
+                                        (0-100): the space a compaction would give back */
 } compio_fragmentation_stats;
 
 /**
  * @brief Get detailed fragmentation statistics from archive allocator
  *
- * This function provides insight into the internal state of the block allocator,
- * showing how fragmented the free space is. High fragmentation (many small free
- * regions) can impact allocation performance and space efficiency.
+ * This function provides insight into the internal state of the block allocator:
+ * how much of the container is free and how that space is split into regions.
+ * fragmentation_percent is the value compared with fragmentation_threshold.
  *
  * @param archive opened archive
  * @param stats pointer to structure to fill with statistics
@@ -636,8 +645,10 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 /**
  * @brief Defragment the archive, compacting data blocks and reclaiming free space.
  *
- * Runs the allocator maintenance pass immediately (regardless of the configured
- * fragmentation threshold).  The archive must be opened in write mode.
+ * Runs a full compaction immediately (regardless of the configured fragmentation
+ * threshold): data blocks and the files table are moved towards the start of the
+ * container and the file is truncated. Index nodes stay in place, so small gaps
+ * in front of them may remain. All files of the archive must be closed.
  *
  * @param archive opened archive (write mode)
  * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure

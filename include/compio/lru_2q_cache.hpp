@@ -1,6 +1,7 @@
 #ifndef _LRU_2Q_CACHE_HPP_INCLUDED_
 #define _LRU_2Q_CACHE_HPP_INCLUDED_
 
+#include <atomic>
 #include <cstddef>
 #include <list>
 #include <map>
@@ -51,7 +52,35 @@ public:
             _main_queue.pop_back();
             _items_map.erase(oldest_key);
         }
+        _approx_size.store(_items_map.size(), std::memory_order_relaxed);
     }
+
+    // Drop one entry, following the 2Q rule: entries seen only once go first
+    // while they take more than their quarter of the cache. Returns false if
+    // the cache is empty. The entry is destroyed under the cache lock, so a
+    // lookup for it waits until its destructor has run.
+    bool evict_one() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_items_map.empty()) {
+            return false;
+        }
+        const bool from_in_queue =
+            _main_queue.empty() || _in_queue.size() * 4 > _items_map.size();
+        if (from_in_queue) {
+            auto oldest_key = _in_queue.front();
+            _in_queue.pop_front();
+            _items_map.erase(oldest_key);
+        } else {
+            auto oldest_key = _main_queue.back();
+            _main_queue.pop_back();
+            _items_map.erase(oldest_key);
+        }
+        _approx_size.store(_items_map.size(), std::memory_order_relaxed);
+        return true;
+    }
+
+    // Size as of the last change, readable without taking the cache lock.
+    size_t approx_size() const { return _approx_size.load(std::memory_order_relaxed); }
 
     std::optional<value_t> get(const key_t &key) {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -94,6 +123,7 @@ public:
             _in_queue.erase(it->second.queue_iter);
         }
         _items_map.erase(it);
+        _approx_size.store(_items_map.size(), std::memory_order_relaxed);
     }
 
     void clear() {
@@ -101,6 +131,7 @@ public:
         _items_map.clear();
         _in_queue.clear();
         _main_queue.clear();
+        _approx_size.store(0, std::memory_order_relaxed);
     }
 
     std::vector<value_t> extract_all() {
@@ -124,6 +155,7 @@ public:
         _items_map.clear();
         _in_queue.clear();
         _main_queue.clear();
+        _approx_size.store(0, std::memory_order_relaxed);
         return result;
     }
 
@@ -217,6 +249,7 @@ private:
     size_t _main_max_size;
     size_t _hit_count;
     size_t _total_count;
+    std::atomic<size_t> _approx_size{0};
     mutable std::mutex _mutex;
 };
 

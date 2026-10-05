@@ -1,6 +1,7 @@
 #ifndef COMPIO_FILE_HEADER_
 #define COMPIO_FILE_HEADER_
 
+#include <functional>
 #include <memory>
 #include <shared_mutex>
 #include <mutex>
@@ -36,6 +37,16 @@ struct compio_archive {
     std::string path;
     uint8_t mode_b;
     uint32_t open_files_count;
+    // Makes the in-memory header durable (data is synced first). Lets the
+    // allocator checkpoint in the middle of a compaction.
+    std::function<bool()> publish_header;
+    // Set by a compaction: the physical file is cut down to header->file_size
+    // once the next header is durable.
+    bool truncate_after_publish = false;
+    // Checksum of the files table as last written to disk; lets a flush skip
+    // rewriting a table that has not changed.
+    uint32_t files_table_checksum = 0;
+    bool files_table_checksum_valid = false;
 
     compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;
