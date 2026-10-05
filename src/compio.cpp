@@ -489,8 +489,10 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
         return NULL;
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    // The on-disk name field holds COMPIO_FNAME_MAX_SIZE bytes including the
+    // terminator; a longer name would be cut and could alias another file.
     size_t name_len = strlen(name);
-    if (name_len > COMPIO_FNAME_MAX_SIZE) {
+    if (name_len >= COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return NULL;
     }
@@ -550,7 +552,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
     size_t name_len = strlen(name);
-    if (name_len > COMPIO_FNAME_MAX_SIZE) {
+    if (name_len >= COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
         return -2;
     }
@@ -905,7 +907,7 @@ int compio_defragment(compio_archive *archive) {
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
 
-    if (archive->mode_b & mode_bit::r) {
+    if (archive->is_readonly()) {
         WARNING_PRINT("warning: compio_defragment called on read-only archive\n");
         return COMPIO_ERROR;
     }
@@ -998,7 +1000,7 @@ int compio_close_archive(compio_archive *archive) {
 
     // 2) run maintenance (defragmentation) before saving allocator state.
     //    Must happen while block_reader and index are still alive.
-    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
+    if (!archive->is_readonly() && archive->allocator) {
         archive->allocator->maintenance();
     }
 
@@ -1007,7 +1009,7 @@ int compio_close_archive(compio_archive *archive) {
     archive->block_reader = nullptr;
 
     // 4) save allocator state to the end of the file, if not read-only mode
-    if (!(archive->mode_b & mode_bit::r) && archive->allocator) {
+    if (!archive->is_readonly() && archive->allocator) {
         if (!archive->allocator->save_state(archive)) {
             WARNING_PRINT("warning: failed to save allocator state\n");
             return -3;

@@ -928,14 +928,16 @@ files_table::file *files_table::add(const char *name, bool allow_resize) {
     if (n_files >= max_files) {
         if (!allow_resize) return NULL;
         
-        // Dynamically resize the files table
-        uint32_t new_max = (max_files == 0) ? 16 : max_files * 2;
-        // Cap at some reasonable limit if needed, e.g. 1M files?
-        // But for now let it grow.
-        
+        // A capacity above COMPIO_MAX_FILES_LIMIT is rejected when the header is
+        // read back, so growing past it would produce an archive that cannot be
+        // reopened.
+        if (max_files >= COMPIO_MAX_FILES_LIMIT) return NULL;
+        uint64_t new_max = (max_files == 0) ? 16 : static_cast<uint64_t>(max_files) * 2;
+        if (new_max > COMPIO_MAX_FILES_LIMIT) new_max = COMPIO_MAX_FILES_LIMIT;
+
         // Resize vector. This invalidates all pointers and string_views in index_map_.
         files.resize(new_max);
-        max_files = new_max;
+        max_files = static_cast<uint32_t>(new_max);
         
         // Rebuild the index map from scratch with new pointers
         rebuild_index();

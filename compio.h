@@ -49,8 +49,8 @@
 #include <stdio.h>
 
 #define COMPIO_MAX_FILES 4096        /**< Default maximum number of files in archive */
-#define COMPIO_MAX_FILES_LIMIT 10000000 /**< Hard upper bound accepted when reading an archive header (10M) */
-#define COMPIO_FNAME_MAX_SIZE 32   /**< File name maximum length */
+#define COMPIO_MAX_FILES_LIMIT 10000000 /**< Hard upper bound on the number of files in an archive (10M) */
+#define COMPIO_FNAME_MAX_SIZE 32   /**< Size of the file name field, including the terminating null byte */
 
 #define COMPIO_ERROR (-1)
 #define COMPIO_SUCCESS 0
@@ -345,7 +345,8 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
  * Opens or creates a file with the given name within the archive.
  * Returns a file handle for subsequent read/write operations.
  *
- * @param[in] name Internal filename (max COMPIO_FNAME_MAX_SIZE characters)
+ * @param[in] name Internal filename (at most COMPIO_FNAME_MAX_SIZE - 1 characters;
+ *                 longer names fail with errno = ENAMETOOLONG)
  * @param[in] archive Opened archive handle
  * @return Pointer to compio_file on success, NULL on error
  *
