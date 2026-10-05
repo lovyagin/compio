@@ -23,11 +23,13 @@ void put_and_touch(test_cache &c, int shard, int item) {
     ASSERT_TRUE(c.get({shard, item}).has_value());
 }
 
+std::atomic<uint64_t> compress_calls{0};
 std::atomic<uint64_t> decompress_calls{0};
 compio_compressor inner;
 
 int counting_compress(const compio_compressor *, void *dst, uint64_t *dst_size, const void *src,
                       uint64_t src_size) {
+    ++compress_calls;
     return inner.compress(&inner, dst, dst_size, src, src_size);
 }
 int counting_decompress(const compio_compressor *, void *dst, uint64_t *dst_size, const void *src,
@@ -37,6 +39,23 @@ int counting_decompress(const compio_compressor *, void *dst, uint64_t *dst_size
 }
 uint64_t counting_bufsize(const compio_compressor *, uint64_t src_size) {
     return inner.get_bufsize(&inner, src_size);
+}
+
+compio_config counting_config() {
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    compio_build_lz4_compressor(&inner);
+    cfg.compressor.compress = counting_compress;
+    cfg.compressor.decompress = counting_decompress;
+    cfg.compressor.get_bufsize = counting_bufsize;
+    cfg.compressor.compression_type = COMPIO_COMPRESS_CUSTOM;
+    cfg.max_files = 16;
+    cfg.block_size = 4096;
+    cfg.block_size__minimum = 1024;
+    cfg.block_size__maximum = 8192;
+    cfg.cache_size__blocks = 1024;
+    cfg.fragmentation_threshold = 100;
+    return cfg;
 }
 
 } // namespace
@@ -78,19 +97,7 @@ TEST(BlockCacheTest, SingleFileUsesWholeBlockCache) {
     char fn[256];
     generate_tmp_fn(fn, sizeof(fn));
 
-    compio_config cfg;
-    compio_build_default_config(&cfg);
-    compio_build_lz4_compressor(&inner);
-    cfg.compressor.compress = counting_compress;
-    cfg.compressor.decompress = counting_decompress;
-    cfg.compressor.get_bufsize = counting_bufsize;
-    cfg.compressor.compression_type = COMPIO_COMPRESS_CUSTOM;
-    cfg.max_files = 16;
-    cfg.block_size = 4096;
-    cfg.block_size__minimum = 1024;
-    cfg.block_size__maximum = 8192;
-    cfg.cache_size__blocks = 1024;
-    cfg.fragmentation_threshold = 100;
+    const compio_config cfg = counting_config();
 
     constexpr size_t TOTAL = 600 * 4096;
     std::vector<uint8_t> data(TOTAL);
@@ -124,6 +131,60 @@ TEST(BlockCacheTest, SingleFileUsesWholeBlockCache) {
 
     compio_close_file(f);
     compio_close_archive(ar);
+    remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
+}
+
+// An insert shifts the positions of all following blocks. The cached ones used
+// to be marked modified by that and were compressed and rewritten again,
+// although their data had not changed.
+TEST(BlockCacheTest, InsertDoesNotRewriteShiftedBlocks) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+    const compio_config cfg = counting_config();
+
+    constexpr size_t BLOCKS = 100;
+    constexpr size_t TOTAL = BLOCKS * 4096;
+    std::vector<uint8_t> data(TOTAL);
+    for (size_t i = 0; i < TOTAL; i++) data[i] = static_cast<uint8_t>((i / 5) ^ (i >> 8));
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
+    compio_flush(ar);
+
+    // Bring every block into the cache.
+    std::vector<uint8_t> back(TOTAL);
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_read(back.data(), TOTAL, f), TOTAL);
+
+    compress_calls = 0;
+    const uint8_t byte = 0xEE;
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_insert(&byte, 1, f), 1u);
+    compio_flush(ar);
+    EXPECT_LE(compress_calls, 2u) << "only the block that received the byte has new data";
+
+    data.insert(data.begin(), byte);
+    back.resize(data.size());
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_read(back.data(), back.size(), f), back.size());
+    EXPECT_EQ(back, data);
+    compio_close_file(f);
+    compio_close_archive(ar);
+
+    // The shifted blocks must also be readable from a cold start.
+    ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_read(back.data(), back.size(), f), back.size());
+    EXPECT_EQ(back, data);
+    compio_close_file(f);
+    compio_close_archive(ar);
+
     remove(fn);
     remove((std::string(fn) + ".wal").c_str());
 }

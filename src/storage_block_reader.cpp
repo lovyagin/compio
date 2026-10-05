@@ -233,7 +233,10 @@ void block::remove() { _is_removed = true; }
 
 void block::shift_key(int64_t addition) {
     assert(addition != 0);
-    _is_modified = true;
+    // A shift moves the block within its file without touching its data, so the
+    // copy on disk stays valid: the index carries the new position, and the
+    // position stored inside the block is allowed to lag behind (blocks that are
+    // not cached are never rewritten on a shift either).
     DEBUG_PRINT("[B][shift_key]: key.pos=%" PRIu64 ", shifting with addition=%" PRId64 "\n", _key.pos, addition);
     _key += addition;
 }
