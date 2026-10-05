@@ -244,12 +244,6 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         return NULL;
     }
 
-    // Optimize stdio buffering for sequential access (64KB buffer)
-    // This reduces syscalls significantly for sequential reads/writes
-    if (setvbuf(file, nullptr, _IOFBF, 64 * 1024) != 0) {
-        WARNING_PRINT("warning: failed to set stdio buffer size\n");
-    }
-
     // Initialize WAL Manager. When journaling is disabled the archive carries no
     // WalManager at all: writers receive a null wal pointer and skip logging.
     std::unique_ptr<compio::WalManager> wal;
@@ -478,8 +472,6 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     return archive;
 
-no_allocator_state:
-    delete archive->block_reader;
 no_block_reader:
     delete archive->index;
 no_index:
