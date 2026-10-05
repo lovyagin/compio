@@ -71,6 +71,8 @@ free_blocks_manager &free_blocks_manager::operator=(free_blocks_manager &&other)
         cached_fragmentation_ = other.cached_fragmentation_;
         fragmentation_dirty_ = other.fragmentation_dirty_;
         size_idx_ = other.size_idx_;
+        spare_slot_offset_ = other.spare_slot_offset_;
+        spare_slot_size_ = other.spare_slot_size_;
         // Nullify source
         other.head_ = other.tail_ = other.last_alloc_ = nullptr;
         other.total_free_ = 0;
@@ -442,29 +444,56 @@ uint8_t free_blocks_manager::calculate_fragmentation() const {
     return static_cast<uint8_t>(fragmentation * 100);
 }
 
-uint32_t free_blocks_manager::serialize(std::vector<uint8_t> &buffer) {
-    // Count the number of blocks in the linked list
-    size_t block_count = 0;
+// On-disk layout of the allocator state, all fields little-endian:
+//   count u64, count x (offset u64, size u64),
+//   spare slot offset u64, spare slot size u64, crc32c u32 over the bytes before it.
+// States written before the trailer was introduced end right after the pairs.
+static constexpr size_t STATE_ENTRY_SIZE = 2 * sizeof(uint64_t);
+static constexpr size_t STATE_TRAILER_SIZE = 2 * sizeof(uint64_t) + sizeof(uint32_t);
+static constexpr uint64_t MIN_STATE_SLOT_SIZE = 64;
+
+static void put_le64(uint8_t *dst, uint64_t v) {
+    if (is_big_endian()) swap_uint64(&v);
+    memcpy(dst, &v, sizeof(v));
+}
+
+static uint64_t get_le64(const uint8_t *src) {
+    uint64_t v;
+    memcpy(&v, src, sizeof(v));
+    if (is_big_endian()) swap_uint64(&v);
+    return v;
+}
+
+size_t free_blocks_manager::free_region_count() const {
+    size_t count = 0;
     for (free_block *current = head_; current; current = current->next) {
-        block_count++;
+        count++;
     }
+    return count;
+}
 
-    // Calculate required buffer size: count of blocks + (offset,size) pairs
-    uint32_t size_needed = sizeof(uint64_t) + block_count * 2 * sizeof(uint64_t);
+uint32_t free_blocks_manager::serialize(std::vector<uint8_t> &buffer) {
+    const size_t block_count = free_region_count();
+    const size_t list_size = sizeof(uint64_t) + block_count * STATE_ENTRY_SIZE;
+    const uint32_t size_needed = static_cast<uint32_t>(list_size + STATE_TRAILER_SIZE);
 
-    // Resize buffer to fit all data
     buffer.resize(size_needed);
 
-    // Write number of blocks first
-    uint64_t count = block_count;
-    memcpy(buffer.data(), &count, sizeof(uint64_t));
-
-    // Write each block's offset and size
-    uint64_t *data_ptr = reinterpret_cast<uint64_t *>(buffer.data() + sizeof(uint64_t));
+    uint8_t *out = buffer.data();
+    put_le64(out, block_count);
+    out += sizeof(uint64_t);
     for (free_block *current = head_; current; current = current->next) {
-        *data_ptr++ = current->offset;
-        *data_ptr++ = current->size;
+        put_le64(out, current->offset);
+        put_le64(out + sizeof(uint64_t), current->size);
+        out += STATE_ENTRY_SIZE;
     }
+    put_le64(out, spare_slot_offset_);
+    put_le64(out + sizeof(uint64_t), spare_slot_size_);
+    out += 2 * sizeof(uint64_t);
+
+    uint32_t checksum = crc32c(buffer.data(), static_cast<size_t>(out - buffer.data()));
+    if (is_big_endian()) swap_uint32(&checksum);
+    memcpy(out, &checksum, sizeof(checksum));
 
     return size_needed;
 }
@@ -474,16 +503,33 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
         return false;
     }
 
-    uint64_t count;
-    memcpy(&count, buffer, sizeof(uint64_t));
+    const uint64_t count = get_le64(buffer);
 
     // Guard against integer overflow: count * 16 could wrap
-    if (count > (UINT32_MAX - sizeof(uint64_t)) / (2 * sizeof(uint64_t))) {
+    if (count > (UINT32_MAX - sizeof(uint64_t) - STATE_TRAILER_SIZE) / STATE_ENTRY_SIZE) {
         return false;
     }
-    uint32_t expected_size = sizeof(uint64_t) + static_cast<uint32_t>(count) * 2 * sizeof(uint64_t);
-    if (size < expected_size) {
+    const uint32_t list_size = static_cast<uint32_t>(sizeof(uint64_t) + count * STATE_ENTRY_SIZE);
+    if (size < list_size) {
         return false;
+    }
+
+    // A legacy state is exactly list_size long; anything longer carries the trailer.
+    uint64_t spare_offset = 0;
+    uint64_t spare_size = 0;
+    if (size != list_size) {
+        if (size < list_size + STATE_TRAILER_SIZE) {
+            return false;
+        }
+        const uint8_t *trailer = buffer + list_size;
+        uint32_t stored;
+        memcpy(&stored, trailer + 2 * sizeof(uint64_t), sizeof(stored));
+        if (is_big_endian()) swap_uint32(&stored);
+        if (stored != crc32c(buffer, list_size + 2 * sizeof(uint64_t))) {
+            return false;
+        }
+        spare_offset = get_le64(trailer);
+        spare_size = get_le64(trailer + sizeof(uint64_t));
     }
 
     // Clear existing blocks
@@ -495,11 +541,13 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
     head_ = tail_ = last_alloc_ = nullptr;
     total_free_ = 0;
     size_idx_.clear();
+    spare_slot_offset_ = spare_offset;
+    spare_slot_size_ = spare_size;
 
-    const uint64_t *data_ptr = reinterpret_cast<const uint64_t *>(buffer + sizeof(uint64_t));
-    for (uint64_t i = 0; i < count; i++) {
-        uint64_t offset = *data_ptr++;
-        uint64_t block_size = *data_ptr++;
+    const uint8_t *in = buffer + sizeof(uint64_t);
+    for (uint64_t i = 0; i < count; i++, in += STATE_ENTRY_SIZE) {
+        const uint64_t offset = get_le64(in);
+        const uint64_t block_size = get_le64(in + sizeof(uint64_t));
 
         // Skip invalid entries
         if (block_size == 0) continue;
@@ -521,6 +569,7 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
             head_ = tail_ = last_alloc_ = nullptr;
             total_free_ = 0;
             size_idx_.clear();
+            spare_slot_offset_ = spare_slot_size_ = 0;
             fragmentation_dirty_ = true;
             return false;
         }
@@ -534,17 +583,58 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
-    std::vector<uint8_t> buffer;
-    uint32_t size = serialize(buffer);
+    const uint64_t reserved_end = readonly(archive->header, header)->reserved_size();
+    const uint64_t logical_end = readonly(archive->header, header)->file_size;
+    auto is_slot = [&](uint64_t offset, uint64_t size) {
+        return offset >= reserved_end && size != 0 && size <= UINT64_MAX - offset &&
+               offset + size <= logical_end;
+    };
 
-    // Write allocator state at the current logical end of the file.
-    // This ensures the region is accounted for in file_size and won't
-    // be overwritten by future allocations.
-    int64_t pos = static_cast<int64_t>(readonly(archive->header, header)->file_size);
-    const auto hdr_size = static_cast<int64_t>(readonly(archive->header, header)->disk_size());
-    if (pos < hdr_size) {
-        pos = hdr_size;
+    uint64_t current_offset = readonly(archive->header, header)->allocator_state_offset;
+    uint64_t current_size = readonly(archive->header, header)->allocator_state_size;
+    if (!is_slot(current_offset, current_size)) {
+        current_offset = current_size = 0;
     }
+    if (!is_slot(spare_slot_offset_, spare_slot_size_)) {
+        spare_slot_offset_ = spare_slot_size_ = 0;
+    }
+
+    // Sized for the list as it will be if the spare slot has to be released
+    // below, which adds at most one entry.
+    const uint64_t needed = sizeof(uint64_t) +
+                            (static_cast<uint64_t>(free_region_count()) + 1) * STATE_ENTRY_SIZE +
+                            STATE_TRAILER_SIZE;
+    if (needed > UINT32_MAX / 2) {
+        WARNING_PRINT("warning: allocator state is too large to save\n");
+        return false;
+    }
+
+    // The state alternates between two slots, like the double-buffered header:
+    // the durable header references the current slot until the next header is
+    // published, so the new copy goes to the spare one. Both slots stay
+    // allocated, which keeps repeated saves from growing the archive.
+    uint64_t pos = spare_slot_offset_;
+    uint64_t slot_size = spare_slot_size_;
+    bool appended = false;
+    if (slot_size < needed) {
+        if (slot_size != 0) {
+            add_free_block(spare_slot_offset_, spare_slot_size_);
+        }
+        slot_size = MIN_STATE_SLOT_SIZE;
+        while (slot_size < needed) {
+            slot_size *= 2;
+        }
+        pos = std::max(logical_end, reserved_end);
+        appended = true;
+    }
+    spare_slot_offset_ = current_offset;
+    spare_slot_size_ = current_size;
+
+    std::vector<uint8_t> buffer;
+    serialize(buffer);
+    assert(buffer.size() <= slot_size);
+    buffer.resize(slot_size, 0);
+    const uint32_t size = static_cast<uint32_t>(slot_size);
 
     bool in_batch = archive->wal && archive->wal->get_batch_depth() > 0;
     
@@ -562,7 +652,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         }
     }
 
-    if (fseek64(archive->file, pos, SEEK_SET) != 0) {
+    if (fseek64(archive->file, static_cast<int64_t>(pos), SEEK_SET) != 0) {
         WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
         if (!in_batch && archive->wal) {
             archive->wal->rollback_transaction();
@@ -571,7 +661,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     }
 
     // Write to archive file (buffered) - after WAL commit (Write-Ahead)
-    DEBUG_PRINT("[W][allocator]addr=%" PRId64 ";size=%" PRIu32 "\n", pos, size);
+    DEBUG_PRINT("[W][allocator]addr=%" PRIu64 ";size=%" PRIu32 "\n", pos, size);
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
         WARNING_PRINT(
@@ -581,9 +671,11 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         }
         return false;
     }
-    archive->header->allocator_state_offset = static_cast<uint64_t>(pos);
+    archive->header->allocator_state_offset = pos;
     archive->header->allocator_state_size = size;
-    archive->header->file_size = static_cast<uint64_t>(pos) + size;
+    if (appended) {
+        archive->header->file_size = pos + size;
+    }
 
     fflush(archive->file);
 
@@ -1221,6 +1313,10 @@ void block_allocator::perform_defragmentation() {
 
     // Update logical file_size in header and rebuild free-block manager.
     archive_->header->file_size = truncate_pos;
+    // The saved allocator state is not an obstacle for compaction, so its slots
+    // are gone now; the next save starts with fresh ones.
+    archive_->header->allocator_state_offset = 0;
+    archive_->header->allocator_state_size = 0;
 
     blocks_manager_ = free_blocks_manager(&archive_->header->file_size);
 

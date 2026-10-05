@@ -161,6 +161,11 @@ public:
     void update_file_size_ptr(const uint64_t *file_size) { file_size_ = file_size; }
 
     /**
+     * @brief Number of entries in the free list
+     */
+    size_t free_region_count() const;
+
+    /**
      * @brief Serialize manager state to buffer
      * @param buffer Vector to store serialized data
      * @return Size of serialized data
@@ -305,6 +310,8 @@ private:
     const uint64_t *file_size_;                  /**< Reference to total file size */
     mutable uint8_t cached_fragmentation_;       /**< Cached fragmentation level */
     mutable bool fragmentation_dirty_;           /**< True when cache needs recalculation */
+    uint64_t spare_slot_offset_ = 0;             /**< Alternate slot of the saved state (0 = none) */
+    uint64_t spare_slot_size_ = 0;               /**< Size of the alternate slot */
 
     /**
      * @brief Find the first suitable block for allocation
