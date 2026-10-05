@@ -1,7 +1,6 @@
-# Copy of the vcpkg port with two changes: the stray -Werror=old-style-cast
+# Copy of the vcpkg port with one change: the stray -Werror=old-style-cast
 # argument is dropped (it is passed to CMake itself, and CMake 4 rejects the
-# unknown warning category), and the pkg-config files are removed instead of
-# being fixed up (see below).
+# unknown warning category).
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO google/benchmark
@@ -22,10 +21,7 @@ vcpkg_copy_pdbs()
 
 vcpkg_cmake_config_fixup(CONFIG_PATH lib/cmake/benchmark)
 
-# The pkg-config files are not used (the package is consumed through its CMake
-# config). Fixing them up needs an msys2 download on Windows, and the package
-# this vcpkg revision pins is no longer on the mirrors.
-file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/lib/pkgconfig" "${CURRENT_PACKAGES_DIR}/debug/lib/pkgconfig")
+vcpkg_fixup_pkgconfig()
 
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/share")
