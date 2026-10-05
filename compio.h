@@ -250,8 +250,11 @@ typedef struct {
                                           the container a sparse file: its size stays the same while
                                           its disk usage shrinks. Where hole punching is unavailable
                                           the region is overwritten with zeros instead. */
-    uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
-                                        percentage (1-100) */
+    uint8_t fragmentation_threshold; /**< Compact the archive when free regions take more than this
+                                        percentage of the container (default: 30; 100 disables
+                                        automatic compaction). Checked after a file is removed,
+                                        on every 64th release of a removed block or index node,
+                                        and when the archive is closed. */
     int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).
                         The table grows dynamically, so this is not a hard limit.
                         For archives using the v5 dynamic files table, this capacity may grow
@@ -622,15 +625,16 @@ typedef struct compio_fragmentation_stats {
     size_t largest_free_region;    /**< Size of largest contiguous free block */
     size_t smallest_free_region;   /**< Size of smallest free block */
     double avg_free_region_size;   /**< Average size of free regions */
-    uint8_t fragmentation_percent; /**< Overall fragmentation percentage (0-100) */
+    uint8_t fragmentation_percent; /**< Share of the container taken by free regions, in percent
+                                        (0-100): the space a compaction would give back */
 } compio_fragmentation_stats;
 
 /**
  * @brief Get detailed fragmentation statistics from archive allocator
  *
- * This function provides insight into the internal state of the block allocator,
- * showing how fragmented the free space is. High fragmentation (many small free
- * regions) can impact allocation performance and space efficiency.
+ * This function provides insight into the internal state of the block allocator:
+ * how much of the container is free and how that space is split into regions.
+ * fragmentation_percent is the value compared with fragmentation_threshold.
  *
  * @param archive opened archive
  * @param stats pointer to structure to fill with statistics
@@ -641,8 +645,10 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 /**
  * @brief Defragment the archive, compacting data blocks and reclaiming free space.
  *
- * Runs the allocator maintenance pass immediately (regardless of the configured
- * fragmentation threshold).  The archive must be opened in write mode.
+ * Runs a full compaction immediately (regardless of the configured fragmentation
+ * threshold): data blocks and the files table are moved towards the start of the
+ * container and the file is truncated. Index nodes stay in place, so small gaps
+ * in front of them may remain. All files of the archive must be closed.
  *
  * @param archive opened archive (write mode)
  * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure

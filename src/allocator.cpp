@@ -364,10 +364,10 @@ void free_blocks_manager::print_list() const {
 }
 
 uint8_t free_blocks_manager::get_cached_fragmentation() const {
-    if (fragmentation_dirty_) {
-        cached_fragmentation_ = calculate_fragmentation();
-        fragmentation_dirty_ = false;
-    }
+    // The value depends on the container size as well, which changes without
+    // touching the free list, so it is recomputed on every call (it is O(1)).
+    cached_fragmentation_ = calculate_fragmentation();
+    fragmentation_dirty_ = false;
     return cached_fragmentation_;
 }
 
@@ -395,16 +395,7 @@ free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_
     stats.avg_free_region_size = (block_count > 0) ?
         static_cast<double>(total_free_) / block_count : 0.0;
 
-    // Compute fragmentation inline from already-gathered values (avoids second list traversal).
-    if (block_count <= 1 || total_free_ == 0) {
-        stats.fragmentation_percent = 0;
-    } else {
-        double ext_frag = 1.0 - static_cast<double>(largest_block) /
-                                    static_cast<double>(total_free_);
-        double count_score = std::min(1.0, static_cast<double>(block_count - 1) / 99.0);
-        stats.fragmentation_percent =
-            static_cast<uint8_t>((0.8 * ext_frag + 0.2 * count_score) * 100);
-    }
+    stats.fragmentation_percent = calculate_fragmentation();
 
     return stats;
 }
@@ -428,34 +419,15 @@ bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
 }
 
 uint8_t free_blocks_manager::calculate_fragmentation() const {
-    if (!head_) {
+    // External fragmentation as the share of the container taken by free
+    // regions: the space a compaction would give back. How scattered the free
+    // space is does not matter here, only how much of it there is.
+    const uint64_t container_size = file_size_ ? *file_size_ : 0;
+    if (container_size == 0 || total_free_ == 0) {
         return 0;
     }
-
-    size_t block_count = 0;
-    uint64_t largest_block = 0;
-    uint64_t total_free_space = 0;
-
-    for (free_block *cur = head_; cur; cur = cur->next) {
-        block_count++;
-        total_free_space += cur->size;
-        if (cur->size > largest_block) largest_block = cur->size;
-    }
-
-    if (block_count == 1 || total_free_space == 0) {
-        return 0;
-    }
-
-    // External fragmentation: 0 = all free space is one contiguous block,
-    // 1 = all free space is scattered in tiny fragments.
-    double ext_frag = 1.0 - static_cast<double>(largest_block) /
-                                static_cast<double>(total_free_space);
-
-    // Secondary: normalised block count (100 blocks ≈ max penalty).
-    double count_score = std::min(1.0, static_cast<double>(block_count - 1) / 99.0);
-
-    double fragmentation = 0.8 * ext_frag + 0.2 * count_score;
-    return static_cast<uint8_t>(fragmentation * 100);
+    const double share = static_cast<double>(total_free_) / static_cast<double>(container_size);
+    return static_cast<uint8_t>(std::min(100.0, share * 100.0));
 }
 
 // On-disk layout of the allocator state, all fields little-endian:
@@ -1008,7 +980,8 @@ void block_allocator::force_defragmentation() {
 
     blocks_manager_.defragment();
     if (archive_->file && archive_->index) {
-        perform_defragmentation();
+        perform_defragmentation(true);
+        compaction_floor_ = blocks_manager_.get_cached_fragmentation();
     }
     last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
 
@@ -1017,7 +990,7 @@ void block_allocator::force_defragmentation() {
     }
 }
 
-void block_allocator::maintenance() {
+void block_allocator::maintenance(bool at_checkpoint) {
     if (maintenance_suspended_ > 0) {
         return;
     }
@@ -1025,7 +998,16 @@ void block_allocator::maintenance() {
     uint8_t current_fragmentation = get_fragmentation();
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
-    if (current_fragmentation > threshold) {
+    // Free space that the last compaction could not remove (regions pinned in
+    // front of index nodes or of the files table) must not trigger another full
+    // pass on its own. A checkpoint compaction can also move the files table, so
+    // it is always worth a try.
+    if (current_fragmentation < compaction_floor_) {
+        compaction_floor_ = current_fragmentation;
+    }
+
+    if (current_fragmentation > threshold &&
+        (at_checkpoint || current_fragmentation > compaction_floor_)) {
         auto index_lock = archive_->index->try_get_lock();
         if (!index_lock.owns_lock()) {
              // If we can't lock the index, we skip defragmentation for now.
@@ -1055,7 +1037,8 @@ void block_allocator::maintenance() {
 
             if (blocks_manager_.get_cached_fragmentation() > threshold) {
                 if (archive_->file && archive_->index) {
-                    perform_defragmentation();
+                    perform_defragmentation(at_checkpoint);
+                    compaction_floor_ = blocks_manager_.get_cached_fragmentation();
                 }
             }
         }
@@ -1119,7 +1102,15 @@ bool block_allocator::needs_defragmentation() const {
     return blocks_manager_.get_cached_fragmentation() > archive_->config.fragmentation_threshold;
 }
 
-void block_allocator::perform_defragmentation() {
+static bool sync_file(FILE *file) {
+#ifdef _WIN32
+    return _commit(_fileno(file)) == 0;
+#else
+    return fsync(fileno(file)) == 0;
+#endif
+}
+
+void block_allocator::perform_defragmentation(bool relocate_files_table) {
     // Flush all cached/dirty blocks to disk first so that every index entry
     // has a real physical address before we start moving data.
     // NOTE: This must be done by the caller (maintenance/force_defragmentation)
@@ -1338,23 +1329,57 @@ void block_allocator::perform_defragmentation() {
     // If we crash after truncation but before index write, we lose data.
     archive_->index->_clear_cache();
 
-    if (fflush(archive_->file) != 0) {
-        WARNING_PRINT("warning: perform_defragmentation: fflush failed\n");
+    if (fflush(archive_->file) != 0 || !sync_file(archive_->file)) {
+        WARNING_PRINT("warning: perform_defragmentation: failed to sync moved blocks\n");
         return;
     }
-    #ifdef _WIN32
-    if (_commit(_fileno(archive_->file)) != 0) {
-        WARNING_PRINT("warning: perform_defragmentation: _commit failed\n");
-        return;
-    }
-    #else
-    if (fsync(fileno(archive_->file)) != 0) {
-        WARNING_PRINT("warning: perform_defragmentation: fsync failed\n");
-        return;
-    }
-    #endif
 
-    // Compute safe truncation point: max of write_pos and end of last B-tree node.
+    // The files table is an obstacle while blocks are being moved, so a table
+    // that sits behind the data keeps a hole in front of it. Move it down to the
+    // first position after the compacted blocks. This is only done when the
+    // caller publishes a header right away: the durable header must never
+    // reference a table copy that later writes can reuse.
+    if (relocate_files_table && ft_addr != 0 && ft_size != 0) {
+        uint64_t table_pos = write_pos;
+        while (overlaps_btree_node(table_pos, ft_size)) {
+            auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), table_pos);
+            if (it != node_addrs.begin() && *std::prev(it) + btree_node_size > table_pos) {
+                table_pos = *std::prev(it) + btree_node_size;
+            } else {
+                table_pos = *it + btree_node_size;
+            }
+        }
+
+        auto write_table = [&](uint64_t pos) {
+            readonly(archive_->header, header)->ftable.write_to(archive_->file, pos);
+            return fflush(archive_->file) == 0 && sync_file(archive_->file);
+        };
+
+        if (table_pos < ft_addr) {
+            bool movable = true;
+            if (table_pos + ft_size > ft_addr) {
+                // The target overlaps the copy the durable header references.
+                // Park the table behind everything and make that copy durable
+                // first, so the overlapping write below cannot lose the table.
+                const uint64_t park_pos = readonly(archive_->header, header)->file_size;
+                movable = write_table(park_pos);
+                if (movable) {
+                    archive_->header->files_table_addr = park_pos;
+                    archive_->header->file_size = park_pos + ft_size;
+                    archive_->header->allocator_state_offset = 0;
+                    archive_->header->allocator_state_size = 0;
+                    ft_addr = park_pos;
+                    movable = archive_->publish_header && archive_->publish_header();
+                }
+            }
+            if (movable && write_table(table_pos)) {
+                archive_->header->files_table_addr = table_pos;
+                ft_addr = table_pos;
+            }
+        }
+    }
+
+    // Compute the new end of the container: max of write_pos and end of last B-tree node.
     uint64_t truncate_pos = write_pos;
     if (!node_addrs.empty()) {
         uint64_t last_node_end = node_addrs.back() + btree_node_size;
@@ -1363,22 +1388,15 @@ void block_allocator::perform_defragmentation() {
         }
     }
     
-    // v5: Ensure we don't truncate the files table if it's located after data/nodes.
+    // v5: The files table may be located after data/nodes.
     if (ft_addr != 0 && ft_addr + ft_size > truncate_pos) {
         truncate_pos = ft_addr + ft_size;
     }
 
-    // Physically truncate the file to the new (smaller) size so that the
-    // freed tail space is actually returned to the OS.
-#ifdef _WIN32
-    if (_chsize_s(_fileno(archive_->file), static_cast<__int64>(truncate_pos)) != 0) {
-        WARNING_PRINT("warning: perform_defragmentation: _chsize_s failed\n");
-    }
-#else
-    if (ftruncate(fileno(archive_->file), static_cast<off_t>(truncate_pos)) != 0) {
-        WARNING_PRINT("warning: perform_defragmentation: ftruncate failed\n");
-    }
-#endif
+    // The physical file is cut later, once a header describing the compacted
+    // layout is durable: until then the previous header still references the
+    // tail (files table, allocator state).
+    archive_->truncate_after_publish = true;
 
     // Update logical file_size in header and rebuild free-block manager.
     archive_->header->file_size = truncate_pos;

@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <random>
 #include <vector>
 
@@ -295,12 +296,11 @@ TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
     compio_archive *ar = open_defrag_archive(fn, 99);
     ASSERT_NE(ar, nullptr);
 
-    // Use incompressible random data of different sizes for "a" and "c" so
-    // the two resulting free regions have different sizes, giving variance > 0
-    // and thus fragmentation_percent > 0. File "b" is a live sentinel between them.
-    auto data_a = make_random_bytes(256, 7);
+    // Incompressible data, large enough for the freed space to be a visible
+    // share of the container. File "b" is a live sentinel between the holes.
+    auto data_a = make_random_bytes(64 * 1024, 7);
     auto data_b = make_random_bytes(256, 8);  // sentinel — stays live
-    auto data_c = make_random_bytes(512, 9);  // different size → unequal free regions
+    auto data_c = make_random_bytes(64 * 1024, 9);
 
     auto write_file = [&](const char *name, const std::vector<uint8_t> &data) {
         compio_file *f = compio_open_file(name, ar);
@@ -321,8 +321,8 @@ TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
 
     uint8_t frag_before = ar->allocator->get_fragmentation();
     EXPECT_GT(frag_before, 0u)
-        << "Fragmentation must be non-zero: 'a' and 'c' create two differently-sized "
-           "free regions around 'b', giving non-zero variance (precondition for this test)";
+        << "Fragmentation must be non-zero: removing 'a' and 'c' frees a visible "
+           "share of the container (precondition for this test)";
 
     // maintenance() should NOT defrag (threshold not exceeded).
     ar->allocator->maintenance();
@@ -459,5 +459,145 @@ TEST_F(RepeatedCycleTest, TenCyclesDataIntact) {
         }
     }
 
+    compio_close_archive(ar);
+}
+
+// ---------------------------------------------------------------------------
+// ThresholdCompactionTest
+// The threshold compares the free share of the container. Compaction must run
+// when a large part of the container is free, whatever the shape of the free
+// space, and must stay away when the loss is negligible.
+// ---------------------------------------------------------------------------
+class ThresholdCompactionTest : public ::testing::Test {
+protected:
+    char fn[256];
+
+    void SetUp() override { generate_tmp_fn(fn, sizeof(fn)); }
+    void TearDown() override { remove(fn); remove((std::string(fn) + ".wal").c_str()); }
+
+    static compio_config config(uint8_t threshold) {
+        compio_config cfg;
+        compio_build_default_config(&cfg);
+        cfg.fragmentation_threshold = threshold;
+        cfg.max_files = 16;
+        return cfg;
+    }
+
+    static void write_file(compio_archive *ar, const char *name, const std::vector<uint8_t> &data) {
+        compio_file *f = compio_open_file(name, ar);
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(compio_write(data.data(), data.size(), f), data.size());
+        compio_close_file(f);
+    }
+
+    uint64_t physical_size() const { return std::filesystem::file_size(fn); }
+};
+
+TEST_F(ThresholdCompactionTest, HalfFreeContainerIsCompactedOnClose) {
+    constexpr std::size_t SZ = 1 << 20;
+    const compio_config cfg = config(30);
+    const auto keep = make_random_bytes(SZ, 1);
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    write_file(ar, "drop", make_random_bytes(SZ, 2));
+    write_file(ar, "keep", keep);
+    compio_flush(ar);
+    ASSERT_GE(physical_size(), 2 * SZ);
+
+    // One contiguous free region covering half of the container.
+    ASSERT_EQ(compio_remove_file(ar, "drop"), 0);
+    compio_close_archive(ar);
+
+    EXPECT_LT(physical_size(), SZ + SZ / 10);
+
+    ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("keep", ar);
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(read_file_bytes(f, SZ), keep);
+    compio_close_file(f);
+    compio_close_archive(ar);
+}
+
+TEST_F(ThresholdCompactionTest, NegligibleFreeSpaceDoesNotTriggerCompaction) {
+    constexpr std::size_t SZ = 1 << 20;
+    const compio_config cfg = config(30);
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    write_file(ar, "a", make_random_bytes(4096, 1));
+    write_file(ar, "big1", make_random_bytes(SZ, 2));
+    write_file(ar, "b", make_random_bytes(4096, 3));
+    write_file(ar, "big2", make_random_bytes(SZ, 4));
+    compio_flush(ar);
+
+    // Two scattered holes of 4 KiB in a 2 MiB container: well under a percent.
+    ASSERT_EQ(compio_remove_file(ar, "a"), 0);
+    ASSERT_EQ(compio_remove_file(ar, "b"), 0);
+    compio_fragmentation_stats before{};
+    ASSERT_EQ(compio_get_fragmentation_stats(ar, &before), COMPIO_SUCCESS);
+    ASSERT_GE(before.total_free_bytes, 2u * 4096u);
+    EXPECT_EQ(before.fragmentation_percent, 0u);
+    compio_close_archive(ar);
+
+    // The holes are still there after reopening: nothing was moved.
+    ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_fragmentation_stats after{};
+    ASSERT_EQ(compio_get_fragmentation_stats(ar, &after), COMPIO_SUCCESS);
+    EXPECT_GE(after.total_free_bytes, 2u * 4096u);
+    compio_close_archive(ar);
+}
+
+// The files table is rewritten copy-on-write, which leaves a hole of its own
+// size. In a small archive that hole is a large share of the container; it must
+// be removed by compaction instead of surviving every close.
+TEST_F(ThresholdCompactionTest, SmallArchiveStaysTightAcrossSessions) {
+    compio_config cfg = config(30);
+    cfg.max_files = COMPIO_MAX_FILES;
+    const uint64_t table_size = static_cast<uint64_t>(COMPIO_MAX_FILES) *
+                                (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
+
+    std::vector<uint8_t> expected;
+    for (int session = 0; session < 6; session++) {
+        compio_archive *ar = compio_open_archive(fn, "a", &cfg);
+        ASSERT_NE(ar, nullptr);
+        compio_file *f = compio_open_file("log", ar);
+        ASSERT_NE(f, nullptr);
+        const auto chunk = make_random_bytes(1024, session);
+        ASSERT_EQ(compio_write(chunk.data(), chunk.size(), f), chunk.size());
+        expected.insert(expected.end(), chunk.begin(), chunk.end());
+        compio_close_file(f);
+        compio_close_archive(ar);
+
+        // Headers, one index node, the table, the data and two state slots.
+        EXPECT_LT(physical_size(), table_size + expected.size() + 4096) << "session " << session;
+    }
+
+    compio_archive *ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("log", ar);
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(read_file_bytes(f, expected.size()), expected);
+    compio_close_file(f);
+    compio_close_archive(ar);
+}
+
+TEST_F(ThresholdCompactionTest, UnchangedFilesTableIsNotRewritten) {
+    const compio_config cfg = config(100);
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    write_file(ar, "data", make_random_bytes(4096, 1));
+    compio_flush(ar);
+
+    const uint64_t table_addr = ar->header->files_table_addr;
+    ASSERT_NE(table_addr, 0u);
+    for (int i = 0; i < 5; i++) compio_flush(ar);
+    EXPECT_EQ(ar->header->files_table_addr, table_addr);
+
+    write_file(ar, "more", make_random_bytes(16, 2));
+    compio_flush(ar);
+    EXPECT_NE(ar->header->files_table_addr, table_addr);
     compio_close_archive(ar);
 }

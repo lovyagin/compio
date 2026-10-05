@@ -76,6 +76,10 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     return 0;
 }
 
+static uint32_t files_table_checksum(const compio::files_table &table);
+static bool fsync_archive(FILE *file);
+static void flush_header_double_buffered(compio_archive *archive);
+
 static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
     if (is_file_empty(file)) {
          out_slot = 0;
@@ -325,6 +329,12 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_archive;
     }
 
+    archive->publish_header = [archive]() {
+        if (!fsync_archive(archive->file)) return false;
+        flush_header_double_buffered(archive);
+        return fsync_archive(archive->file);
+    };
+
     // is_new_file already computed above
 
     if (is_new_file) {
@@ -442,6 +452,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
+    }
+
+    if (!is_new_file && readonly(archive->header, header)->files_table_addr != 0) {
+        archive->files_table_checksum = files_table_checksum(readonly(archive->header, header)->ftable);
+        archive->files_table_checksum_valid = true;
     }
 
     if (!is_new_file && !archive->allocator->load_state(archive)) {
@@ -660,6 +675,7 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 // Forward declarations
 static void end_auto_batch_if_active(compio_file *file);
 static void flush_header_double_buffered(compio_archive *archive);
+static void flush_impl(compio_archive *archive);
 // Commit a batch and publish the header. Caller must hold archive->mutex.
 static bool end_batch_impl(compio_archive *archive);
 
@@ -674,6 +690,25 @@ static bool fsync_archive(FILE *file) {
 #else
     return fsync(fileno(file)) == 0;
 #endif
+}
+
+// A compaction leaves the physical file longer than the container. The tail is
+// cut only once a header describing the compacted layout is durable: until then
+// the previous header may still reference data in it.
+static void truncate_after_header_publish(compio_archive *archive) {
+    if (!archive->truncate_after_publish) return;
+    if (!fsync_archive(archive->file)) return;
+
+    const uint64_t container_end = readonly(archive->header, header)->file_size;
+#ifdef _WIN32
+    const bool ok = _chsize_s(_fileno(archive->file), static_cast<__int64>(container_end)) == 0;
+#else
+    const bool ok = ftruncate(fileno(archive->file), static_cast<off_t>(container_end)) == 0;
+#endif
+    if (!ok) {
+        WARNING_PRINT("warning: failed to truncate archive after compaction\n");
+    }
+    archive->truncate_after_publish = false;
 }
 
 /**
@@ -856,6 +891,7 @@ static bool end_batch_impl(compio_archive *archive) {
         if (fsync_archive(archive->file)) {
             flush_header_double_buffered(archive);
             fsync_archive(archive->file);
+            truncate_after_header_publish(archive);
         }
         return true;
     }
@@ -874,6 +910,7 @@ static bool end_batch_impl(compio_archive *archive) {
         if (fsync_archive(archive->file)) {
             flush_header_double_buffered(archive);
             fsync_archive(archive->file);
+            truncate_after_header_publish(archive);
         }
     }
     return true;
@@ -918,7 +955,13 @@ int compio_defragment(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
+    // Write out pending changes first, so that the compaction works on the
+    // final layout and the files table is not rewritten behind it afterwards.
+    flush_impl(archive);
     archive->allocator->force_defragmentation();
+    // Publish the compacted layout right away: the file is only cut down to
+    // its new size once a header describing that layout is durable.
+    flush_impl(archive);
     return COMPIO_SUCCESS;
 }
 
@@ -997,7 +1040,7 @@ int compio_close_archive(compio_archive *archive) {
     // 2) run maintenance (defragmentation) before saving allocator state.
     //    Must happen while block_reader and index are still alive.
     if (!archive->is_readonly() && archive->allocator) {
-        archive->allocator->maintenance();
+        archive->allocator->maintenance(true);
     }
 
     // 3) now safe to delete block_reader
@@ -1041,6 +1084,7 @@ int compio_close_archive(compio_archive *archive) {
         WARNING_PRINT("warning: fsync failed in compio_close_archive\n");
     }
 #endif
+    truncate_after_header_publish(archive);
 
     // If WAL is enabled and we are closing cleanly, we should clear the WAL.
     // At this point, all data is synced to the archive file (via flush and header update).
@@ -2250,11 +2294,26 @@ after_merge:
     return size;
 }
 
+static uint32_t files_table_checksum(const compio::files_table &table) {
+    return crc32c(reinterpret_cast<const uint8_t *>(table.files.data()),
+                  static_cast<size_t>(table.max_files) * sizeof(compio::files_table::file));
+}
+
 static void sync_files_table(compio_archive *archive) {
     if (!archive || !archive->header) return;
 
     // Only applies to v5 format
-    if (archive->header->magic_number != COMPIO_MAGIC_NUMBER) return;
+    if (readonly(archive->header, header)->magic_number != COMPIO_MAGIC_NUMBER) return;
+
+    // The table is rewritten as a whole, so skip it when nothing in it changed
+    // since it was last written.
+    const uint32_t checksum = files_table_checksum(readonly(archive->header, header)->ftable);
+    if (archive->files_table_checksum_valid && archive->files_table_checksum == checksum &&
+        readonly(archive->header, header)->files_table_addr != 0 &&
+        readonly(archive->header, header)->files_table_capacity ==
+            readonly(archive->header, header)->ftable.max_files) {
+        return;
+    }
 
     // Copy-on-write for the files table:
     // Copy-on-write: allocate a fresh block for the table, write into it, then
@@ -2304,22 +2363,24 @@ static void sync_files_table(compio_archive *archive) {
 
         // Write the table content at the new address.
         archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
+        archive->files_table_checksum = checksum;
+        archive->files_table_checksum_valid = true;
 
         // Reclaim the previous table block (if any). Must run after the new
         // block is allocated so the two regions never overlap.
         if (archive->allocator && old_addr != 0 && old_addr != new_addr) {
             const uint64_t old_size = old_capacity * kEntrySize;
-            archive->allocator->deallocate(old_addr, old_size);
+            // No maintenance here: a compaction must not start in the middle
+            // of a flush, between the table write and the header publish.
+            archive->allocator->deallocate(old_addr, old_size, false);
         }
     } else {
          WARNING_PRINT("warning: failed to allocate space for files table\n");
     }
 }
 
-void compio_flush(compio_archive *archive) {
-    if (!archive) return;
-    std::unique_lock<std::shared_mutex> lock(archive->mutex);
-    
+// Caller must hold archive->mutex.
+static void flush_impl(compio_archive *archive) {
     // Check if we have write permission (w, a, or + modes)
     // mode_bit::r is set for 'r' and 'r+'. 'w'/'a' don't set 'r'.
     // So we need explicit check for write capability.
@@ -2388,6 +2449,8 @@ void compio_flush(compio_archive *archive) {
             if (fflush(archive->file)) {
                 WARNING_PRINT("warning: fflush failed after header write\n");
                 durable = false;
+            } else {
+                truncate_after_header_publish(archive);
             }
         }
     }
@@ -2425,6 +2488,12 @@ void compio_flush(compio_archive *archive) {
         // do not truncate the WAL so that recovery remains possible.
         WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
     }
+}
+
+void compio_flush(compio_archive *archive) {
+    if (!archive) return;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    flush_impl(archive);
 }
 
 int compio_repair(const char *path, const char *output_dir) {
