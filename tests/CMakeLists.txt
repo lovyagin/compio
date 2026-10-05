@@ -30,6 +30,7 @@ add_executable(compio_gtest
     src/test_concurrency.cpp
     src/test_concurrency_advanced.cpp
     src/test_header_validation.cpp
+    src/test_hole_punching.cpp
     src/test_max_files_scalability.cpp
     src/test_crash_protection.cpp
     src/test_crash_sigkill.cpp

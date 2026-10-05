@@ -245,7 +245,11 @@ typedef struct {
     int cache_size__blocks; /**< Maximum storage blocks kept in memory */
 
     compio_allocation_strategy allocation_strategy; /**< Free block selection strategy */
-    bool fill_holes_with_zeros;      /**< Zero-fill freed blocks for sparse file optimization */
+    bool fill_holes_with_zeros;      /**< Give the storage under freed regions back to the filesystem
+                                          (default: false). On Linux a hole is punched, which makes
+                                          the container a sparse file: its size stays the same while
+                                          its disk usage shrinks. Where hole punching is unavailable
+                                          the region is overwritten with zeros instead. */
     uint8_t fragmentation_threshold; /**< Trigger defragmentation when fragmentation exceeds this
                                         percentage (1-100) */
     int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).

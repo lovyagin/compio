@@ -23,6 +23,12 @@
 #include <unistd.h> // ftruncate, fileno
 #endif
 
+#ifdef __linux__
+#include <fcntl.h>        // fallocate
+#include <linux/falloc.h> // FALLOC_FL_PUNCH_HOLE
+#include <sys/stat.h>     // fstat
+#endif
+
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
 #include "compio/file.hpp"
@@ -81,7 +87,8 @@ free_blocks_manager &free_blocks_manager::operator=(free_blocks_manager &&other)
     return *this;
 }
 
-void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
+void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset,
+                                         uint64_t *merged_size) {
     if (size == 0)
         return;
     if (offset > UINT64_MAX - size) // overflow guard: offset + size would wrap
@@ -90,6 +97,13 @@ void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size) {
     // Check for mergeable blocks
     free_block *prev, *next;
     find_mergeable_blocks(offset, size, prev, next);
+
+    if (merged_offset && merged_size) {
+        const uint64_t start = prev ? prev->offset : offset;
+        const uint64_t end = next ? next->offset + next->size : offset + size;
+        *merged_offset = start;
+        *merged_size = end - start;
+    }
 
     if (prev || next) {
         // Merge blocks if possible
@@ -887,31 +901,18 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
         return;
     }
 
-    blocks_manager_.add_free_block(offset, size);
+    uint64_t merged_offset = offset;
+    uint64_t merged_size = size;
+    blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size);
     if (wal_) {
              // Similar to allocate, strict WAL logging of every free list change is expensive.
              // We rely on periodic checkpoints of the allocator state.
     }
 
     if (archive_->config.fill_holes_with_zeros && archive_->file) {
-        static constexpr size_t BUFFER_SIZE = 4096;
-        static uint8_t zeros[BUFFER_SIZE] = {0};
-
-        DEBUG_PRINT("[W][deallocate]addr=%" PRIu64 ";size=%" PRIu64 "\n", offset, size);
-        fseek64(archive_->file, offset, SEEK_SET);
-
-        size_t remaining = size;
-        while (remaining > 0) {
-            size_t write_size = std::min(remaining, BUFFER_SIZE);
-            if (fwrite(zeros, 1, write_size, archive_->file) != write_size) {
-                break;
-            }
-            remaining -= write_size;
-        }
-
-        fflush(archive_->file);
+        release_to_filesystem(offset, size, merged_offset, merged_size);
     }
-    
+
     // Check if defragmentation is needed (throttled to avoid O(N) cost on every dealloc)
     if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
         run_maintenance = true;
@@ -921,6 +922,74 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
     if (run_maintenance) {
         maintenance();
     }
+}
+
+bool block_allocator::punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset,
+                                 uint64_t merged_size) {
+#ifdef __linux__
+    const int fd = fileno(archive_->file);
+    if (fs_block_size_ == 0) {
+        struct stat st;
+        fs_block_size_ = (fstat(fd, &st) == 0 && st.st_blksize > 0)
+                             ? static_cast<uint64_t>(st.st_blksize) : 4096;
+    }
+    const uint64_t bs = fs_block_size_;
+    const uint64_t end = offset + size;
+    const uint64_t merged_end = merged_offset + merged_size;
+
+    // The filesystem can only take back whole blocks. A freed region seldom
+    // covers one on its own, but together with the free neighbours it has just
+    // been merged with it may, so the range is widened to the block boundaries
+    // that lie inside the merged free region.
+    const uint64_t lo = std::max((merged_offset + bs - 1) / bs * bs, offset / bs * bs);
+    const uint64_t hi = std::min(merged_end / bs * bs, (end + bs - 1) / bs * bs);
+    const uint64_t punch_start = std::min(lo, offset);
+    const uint64_t punch_end = std::max(hi, end);
+
+    return fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                     static_cast<off_t>(punch_start),
+                     static_cast<off_t>(punch_end - punch_start)) == 0;
+#else
+    UNUSED(offset);
+    UNUSED(size);
+    UNUSED(merged_offset);
+    UNUSED(merged_size);
+    return false;
+#endif
+}
+
+void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint64_t merged_offset,
+                                            uint64_t merged_size) {
+    DEBUG_PRINT("[W][deallocate]addr=%" PRIu64 ";size=%" PRIu64 "\n", offset, size);
+
+    // Buffered writes into the region must reach the file first, otherwise they
+    // would land after the hole is punched and bring the blocks back.
+    fflush(archive_->file);
+
+    if (hole_punching_supported_) {
+        if (punch_hole(offset, size, merged_offset, merged_size)) {
+            return;
+        }
+        hole_punching_supported_ = false;
+    }
+
+    // No hole punching on this platform or filesystem: overwrite with zeros,
+    // which at least lets a compressing filesystem reclaim the space.
+    static constexpr size_t BUFFER_SIZE = 4096;
+    static uint8_t zeros[BUFFER_SIZE] = {0};
+
+    fseek64(archive_->file, offset, SEEK_SET);
+
+    size_t remaining = size;
+    while (remaining > 0) {
+        size_t write_size = std::min(remaining, BUFFER_SIZE);
+        if (fwrite(zeros, 1, write_size, archive_->file) != write_size) {
+            break;
+        }
+        remaining -= write_size;
+    }
+
+    fflush(archive_->file);
 }
 
 void block_allocator::force_defragmentation() {

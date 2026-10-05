@@ -84,8 +84,11 @@ public:
      * @brief Add new free block to the storage
      * @param offset Block start offset
      * @param size Block size
+     * @param merged_offset If not null, receives the start of the free region the block became part of
+     * @param merged_size If not null, receives the size of that region
      */
-    void add_free_block(uint64_t offset, uint64_t size);
+    void add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset = nullptr,
+                        uint64_t *merged_size = nullptr);
 
     /**
      * @brief Find and allocate suitable block
@@ -473,6 +476,23 @@ private:
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
     uint64_t deallocate_count_ = 0;      /**< Counter to throttle maintenance checks */
     std::atomic<int> maintenance_suspended_{0};      /**< Maintenance suspension counter */
+    uint64_t fs_block_size_ = 0;         /**< Filesystem block size, read on first use */
+    bool hole_punching_supported_ = true; /**< Cleared after the first failed attempt */
+
+    /**
+     * @brief Give the storage under a freed region back to the filesystem
+     *
+     * Punches a hole where the platform supports it and falls back to
+     * overwriting the region with zeros.
+     */
+    void release_to_filesystem(uint64_t offset, uint64_t size, uint64_t merged_offset,
+                               uint64_t merged_size);
+
+    /**
+     * @brief Punch a hole over a freed region
+     * @return False if hole punching is unavailable or failed
+     */
+    bool punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset, uint64_t merged_size);
 
     /**
      * @brief Check if defragmentation is needed

@@ -32,11 +32,7 @@ namespace fs = std::filesystem;
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_lz4_compressor(&result->compressor);
-#ifdef NDEBUG
     result->fill_holes_with_zeros = false;
-#else
-    result->fill_holes_with_zeros = true;
-#endif
     result->block_size = 1 << 14;        // 16KB - balanced for performance and fragmentation
     result->block_size__minimum = 1 << 9;   // 512B min (compatible with test overrides)
     result->block_size__maximum = 1 << 18;  // 256KB max
