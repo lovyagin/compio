@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "compio.h"
+#include "compio/btree.hpp"
+#include "compio/compio_file.hpp"
 #include "compio/sharded_lru_2q_cache.hpp"
 #include "test_util.hpp"
 
@@ -185,6 +187,38 @@ TEST(BlockCacheTest, InsertDoesNotRewriteShiftedBlocks) {
     compio_close_file(f);
     compio_close_archive(ar);
 
+    remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
+}
+
+// Blocks written out by one flush used to land in arbitrary (in practice
+// reverse) order, so a freshly written file read backwards on disk.
+TEST(BlockCacheTest, FlushPlacesNewBlocksInLogicalOrder) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+    const compio_config cfg = counting_config();
+
+    constexpr size_t TOTAL = 64 * 4096;
+    std::vector<uint8_t> data(TOTAL);
+    for (size_t i = 0; i < TOTAL; i++) data[i] = static_cast<uint8_t>((i / 3) ^ (i >> 10));
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
+    compio_flush(ar);
+
+    auto range = ar->index->get_range({f->hash, 0}, {f->hash, UINT64_MAX});
+    ASSERT_TRUE(range.has_value());
+    ASSERT_GE(range->size(), 32u);
+    for (size_t i = 1; i < range->size(); i++) {
+        EXPECT_LT((*range)[i - 1].second.addr, (*range)[i].second.addr)
+            << "block at position " << (*range)[i].first.pos << " is placed before its predecessor";
+    }
+
+    compio_close_file(f);
+    compio_close_archive(ar);
     remove(fn);
     remove((std::string(fn) + ".wal").c_str());
 }

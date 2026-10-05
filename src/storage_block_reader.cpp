@@ -358,7 +358,14 @@ void storage_block_reader::clear_cache() {
         if (a_exists != b_exists) {
             return a_exists; // exists (true) comes before new (false)
         }
-        return a->addr() < b->addr();
+        if (a_exists) {
+            return a->addr() < b->addr();
+        }
+        // New blocks are placed in logical order, so that a file written in one
+        // go is laid out front to back and reads sequentially on disk.
+        const tree_key &ka = a->key();
+        const tree_key &kb = b->key();
+        return ka.hash != kb.hash ? ka.hash < kb.hash : ka.pos < kb.pos;
     });
 
     // The C++ standard does not guarantee any particular destruction order for
