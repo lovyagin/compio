@@ -39,6 +39,7 @@ add_executable(compio_gtest
     src/test_wal_recovery.cpp
     src/test_wal_format.cpp
     src/test_auto_checkpoint.cpp
+    src/test_block_cache.cpp
     src/test_data_integrity_strict.cpp
     src/test_concurrency_stress.cpp
     src/test_checksums.cpp
