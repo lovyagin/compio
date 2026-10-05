@@ -69,6 +69,28 @@ cd build/benchmarks
 ./random_usage
 ```
 
+### 5. **Random Modification Benchmark** (`random_modification`)
+Sustained random overwrites / inserts / erases of one logical file. Shows whether
+throughput and the container size degrade as modifications accumulate.
+
+**Key metrics** (one CSV row per window of operations):
+- operations per second and MiB/s
+- container size and space actually allocated on disk (they differ with hole punching)
+- free bytes, number of free regions, fragmentation percent
+- container / data ratio
+
+Sequential and random read speed are reported before and after the modifications.
+
+**Run:**
+```bash
+cd build/benchmarks
+./random_modification --file-mb=256 --ops=40000 --window=10000 --cache-blocks=1024
+./random_modification --strategy=first --threshold=30 --overwrite=60 --insert=20 --erase=20
+./random_modification --data=/path/to/enwik9 --file-mb=1024 --compressor=zstd
+```
+
+All options are listed at the top of `custom/random_modification.cpp`.
+
 ## Quick Start
 
 ### Build all benchmarks:
