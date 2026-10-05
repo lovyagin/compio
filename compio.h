@@ -244,7 +244,7 @@ typedef struct {
     int cache_size__nodes;  /**< Maximum B-tree nodes kept in memory */
     int cache_size__blocks; /**< Maximum storage blocks kept in memory */
 
-    compio_allocation_strategy allocation_strategy; /**< Free block selection strategy */
+    compio_allocation_strategy allocation_strategy; /**< Free block selection strategy (default: best fit) */
     bool fill_holes_with_zeros;      /**< Give the storage under freed regions back to the filesystem
                                           (default: false). On Linux a hole is punched, which makes
                                           the container a sparse file: its size stays the same while

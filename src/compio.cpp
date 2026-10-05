@@ -38,7 +38,7 @@ void compio_build_default_config(compio_config *result) {
     result->block_size__maximum = 1 << 18;  // 256KB max
     result->cache_size__nodes = 1024;
     result->cache_size__blocks = 8192;
-    result->allocation_strategy = COMPIO_ALLOC_FIRST_FIT;
+    result->allocation_strategy = COMPIO_ALLOC_BEST_FIT;
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
     result->wal_max_size_bytes = 64 * 1024 * 1024; // 64 MB
