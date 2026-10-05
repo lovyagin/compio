@@ -53,6 +53,13 @@ add_executable(compio_gtest
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
 target_include_directories(compio_gtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Model-based crash consistency check. Run by hand; it reports how the archive
+# survives a SIGKILL and is not part of the test suite.
+if (UNIX)
+    add_executable(crash_consistency crash/crash_consistency.cpp)
+    target_link_libraries(crash_consistency PRIVATE compio)
+endif()
+
 enable_testing()
 
 add_test(NAME compio_gtest_tests COMMAND compio_gtest)
