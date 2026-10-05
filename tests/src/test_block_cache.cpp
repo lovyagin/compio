@@ -92,7 +92,7 @@ TEST(BlockCacheTest, SingleFileUsesWholeBlockCache) {
     cfg.cache_size__blocks = 1024;
     cfg.fragmentation_threshold = 100;
 
-    constexpr size_t TOTAL = 600 * 8192;
+    constexpr size_t TOTAL = 600 * 4096;
     std::vector<uint8_t> data(TOTAL);
     for (size_t i = 0; i < TOTAL; i++) data[i] = static_cast<uint8_t>((i / 7) ^ (i >> 9));
 

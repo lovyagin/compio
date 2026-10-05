@@ -1372,13 +1372,15 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 #ifndef COMPIO_DISABLE_INSERT_ERASE
             // When appending at EOF, try to extend the current tail block instead of creating a
             // new one. This reduces internal fragmentation caused by many small appends.
+            // The tail grows up to the target block size only: growing it to the maximum
+            // would make every sequentially written block maximum-sized.
             if (current_pos == file->size && current_pos > 0) {
                 const tree_key tail_probe{file->hash, current_pos - 1};
                 const auto tail_kv = archive->index->get_block(tail_probe);
                 if (tail_kv.has_value()) {
                     const auto &[tail_key, tail_val] = tail_kv.value();
                     if (tail_key.hash == file->hash && tail_key.pos + tail_val.size == current_pos &&
-                        tail_val.size < block_size__maximum) {
+                        tail_val.size < block_size) {
                         const auto tail_block = block_reader->read_block(tail_val.addr, tail_key);
                         if (!tail_block) {
                             WARNING_PRINT(
@@ -1389,7 +1391,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                         }
 
                         const uint64_t append_size =
-                            std::min<uint64_t>(remaining_write, block_size__maximum - tail_block->size());
+                            std::min<uint64_t>(remaining_write, block_size - tail_block->size());
                         if (append_size > 0) {
                             const uint64_t old_tail_size = tail_block->size();
                             tail_block->grow(old_tail_size + append_size);
