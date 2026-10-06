@@ -49,6 +49,9 @@ void compio_build_default_config(compio_config *result) {
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
+    if (!fp || !t) {
+        return -1;
+    }
     FILE *file = fopen(fp, "r");
     if (file == nullptr) {
         return -1;
@@ -201,7 +204,12 @@ static bool validate_config(const compio_config *c, bool allow_zeros = false) {
 }
 
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
-    if (!validate_config(c, true)) {
+    compio_config default_config;
+    if (!c) {
+        compio_build_default_config(&default_config);
+        c = &default_config;
+    }
+    if (!fp || !mode || !validate_config(c, true)) {
         errno = EINVAL;
         return NULL;
     }
@@ -1106,6 +1114,10 @@ int compio_close_archive(compio_archive *archive) {
 }
 
 int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
+    if (!file) {
+        errno = EINVAL;
+        return -1;
+    }
     int64_t new_cursor = file->cursor;
     switch (origin) {
     case COMPIO_SEEK_SET:
@@ -1134,9 +1146,21 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     return 0;
 }
 
-uint64_t compio_tell(compio_file *file) { return file->cursor; }
+uint64_t compio_tell(compio_file *file) {
+    if (!file) {
+        errno = EINVAL;
+        return 0;
+    }
+    return file->cursor;
+}
 
-uint64_t compio_get_size(compio_file *file) { return file->size; }
+uint64_t compio_get_size(compio_file *file) {
+    if (!file) {
+        errno = EINVAL;
+        return 0;
+    }
+    return file->size;
+}
 
 static void validate_no_overlap_in_range(const std::vector<std::pair<tree_key, tree_val>> range) {
     for (std::size_t i = 1; i < range.size(); ++i) {
@@ -1576,12 +1600,20 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     if (!file || !file->archive) {
         return 0;
     }
+    if (!ptr && size != 0) {
+        errno = EINVAL;
+        return 0;
+    }
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
     return compio_write_impl(ptr, size, file);
 }
 
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     if (!file || !file->archive) {
+        return 0;
+    }
+    if (!ptr && size != 0) {
+        errno = EINVAL;
         return 0;
     }
 
@@ -1801,11 +1833,14 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
-
     if (!file || !file->archive) {
         return 0;
     }
+    if (!ptr && size != 0) {
+        errno = EINVAL;
+        return 0;
+    }
+    DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
 
 #ifdef COMPIO_DISABLE_INSERT_ERASE
