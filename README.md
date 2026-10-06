@@ -35,11 +35,6 @@ To use another source of dependencies (system packages, Conan with the provided
 `conanfile.txt`), pass your own `-DCMAKE_TOOLCHAIN_FILE=...` or
 `-DCMAKE_PREFIX_PATH=...`: the bundled vcpkg is only the default.
 
-The versions of the dependencies are fixed by the revision of the `vcpkg`
-submodule. To move to newer ones, check out a newer vcpkg release in the
-submodule and run `./vcpkg/bootstrap-vcpkg.sh` (`bootstrap-vcpkg.bat` on
-Windows) once.
-
 ## Usage
 
 Compio provides two interfaces:
