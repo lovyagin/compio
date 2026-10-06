@@ -8,6 +8,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <winioctl.h>
 #include <io.h>
 #else
 #include <sys/stat.h>
@@ -37,21 +38,50 @@ protected:
         remove((std::string(fn) + ".wal").c_str());
     }
 
+    static uint64_t file_size(const char *path) { return std::filesystem::file_size(path); }
+
     // Storage the file takes on disk, as opposed to its size.
     static uint64_t disk_usage(const char *path) {
 #ifdef _WIN32
-        DWORD high = 0;
-        const DWORD low = GetCompressedFileSizeA(path, &high);
-        EXPECT_FALSE(low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR);
-        return (static_cast<uint64_t>(high) << 32) | low;
+        // The allocated ranges inside the file are added up. GetCompressedFileSize
+        // would also count what NTFS allocates in advance past the end of a file
+        // that grows by small writes and keeps until the file is closed: up to a
+        // few megabytes, different from run to run.
+        const HANDLE handle = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                          nullptr, OPEN_EXISTING, 0, nullptr);
+        EXPECT_NE(handle, INVALID_HANDLE_VALUE);
+        if (handle == INVALID_HANDLE_VALUE) return 0;
+
+        const uint64_t size = file_size(path);
+        std::vector<FILE_ALLOCATED_RANGE_BUFFER> ranges(1024);
+        uint64_t usage = 0;
+        uint64_t position = 0;
+        bool more = true;
+        while (more && position < size) {
+            FILE_ALLOCATED_RANGE_BUFFER query;
+            query.FileOffset.QuadPart = static_cast<LONGLONG>(position);
+            query.Length.QuadPart = static_cast<LONGLONG>(size - position);
+            DWORD bytes = 0;
+            const BOOL ok = DeviceIoControl(handle, FSCTL_QUERY_ALLOCATED_RANGES, &query, sizeof(query), ranges.data(),
+                                            static_cast<DWORD>(ranges.size() * sizeof(FILE_ALLOCATED_RANGE_BUFFER)),
+                                            &bytes, nullptr);
+            more = !ok && GetLastError() == ERROR_MORE_DATA;
+            EXPECT_TRUE(ok || more);
+            const size_t count = bytes / sizeof(FILE_ALLOCATED_RANGE_BUFFER);
+            if (count == 0) break;
+            for (size_t i = 0; i < count; i++) {
+                usage += static_cast<uint64_t>(ranges[i].Length.QuadPart);
+            }
+            position = static_cast<uint64_t>(ranges[count - 1].FileOffset.QuadPart + ranges[count - 1].Length.QuadPart);
+        }
+        CloseHandle(handle);
+        return usage;
 #else
         struct stat st;
         EXPECT_EQ(stat(path, &st), 0);
         return static_cast<uint64_t>(st.st_blocks) * 512;
 #endif
     }
-
-    static uint64_t file_size(const char *path) { return std::filesystem::file_size(path); }
 
     static bool sync_to_disk(FILE *file) {
         if (fflush(file) != 0) return false;
