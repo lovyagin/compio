@@ -309,65 +309,14 @@ bool header::read_from(FILE *file, uint64_t addr) {
     return load_and_validate(file, addr);
 }
 
-void header::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
+// The header is never journaled: its two slots already make the update atomic.
+void header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
     DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
     
     // Auto-update checksum before writing
     // We cast away const because we want the on-disk structure to be correct, 
     // and updating the checksum member is logically part of the serialization process.
     const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
-
-    if (wal_manager) {
-        wal_manager->begin_transaction();
-        
-        // Optimize: Pre-allocate full buffer to avoid reallocations
-        uint64_t total_size = disk_size();
-        std::vector<uint8_t> buffer(total_size);
-        uint8_t* ptr = buffer.data();
-        bool is_be = is_big_endian();
-        
-        auto write_u32 = [&](uint32_t v) {
-            if (is_be) { uint8_t* p = (uint8_t*)&v; std::swap(p[0], p[3]); std::swap(p[1], p[2]); }
-            std::memcpy(ptr, &v, 4); ptr += 4;
-        };
-        auto write_u64 = [&](uint64_t v) {
-            if (is_be) swap_uint64(&v);
-            std::memcpy(ptr, &v, 8); ptr += 8;
-        };
-        
-        // Serialize header fields
-        write_u32(magic_number);
-        std::memcpy(ptr, checksum, 32); ptr += 32;
-        write_u64(sequence_id);
-        write_u64(index_root);
-        write_u64(file_size);
-        write_u64(allocator_state_offset);
-        write_u64(allocator_state_size);
-        write_u32(compression_type);
-        write_u32(block_size);
-        write_u32(b_tree_degree);
-
-        if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
-            write_u64(files_table_addr);
-            write_u32(files_table_capacity);
-            write_u64(ftable.n_files);
-        } else {
-             // Fallback for v4 (only partial, cannot write inline table anymore)
-             write_u32(ftable.max_files);
-             write_u64(ftable.n_files);
-        }
-        
-        // Files Table is NOT written here for v5 (external)
-        // For v4 it was inline, but we removed support for inline writing.
-        
-        if (!wal_manager->log_write(WalRecordType::HEADER, addr, buffer.data(), buffer.size())) {
-            WARNING_PRINT("error: WAL log_write failed for header at addr=%" PRIu64 "\n", addr);
-        }
-        
-        if (!wal_manager->commit_transaction()) {
-            WARNING_PRINT("error: WAL commit failed for header at addr=%" PRIu64 "\n", addr);
-        }
-    }
 
     if (fseek64(file, addr, SEEK_SET))
         DEBUG_PRINT("warning: fseek failed\n");
