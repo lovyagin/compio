@@ -34,7 +34,7 @@ struct WalRecordHeader {
     WalRecordType type;     ///< Type of record (BLOCK, INDEX_NODE, HEADER, ALLOCATOR, COMMIT)
     uint64_t addr;          ///< Address/offset in the main archive file where data will be written
     uint64_t size;          ///< Size of the record payload in bytes
-    uint32_t checksum;      ///< CRC32 checksum of payload for integrity verification
+    uint32_t checksum;      ///< FNV-1a (32-bit) of the payload for integrity verification
 };
 
 /**

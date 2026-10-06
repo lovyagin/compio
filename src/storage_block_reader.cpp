@@ -267,7 +267,7 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
                 key.pos);
-#ifndef NDEBUG
+#if !defined(NDEBUG) && defined(COMPIO_DEBUG_PRINT)
     {
         auto keys = cache.debug_keys();
         DEBUG_PRINT("[SBR][CACHE]: cache contents (%zu entries):\n", keys.size());

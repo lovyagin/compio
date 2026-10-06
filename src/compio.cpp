@@ -1804,7 +1804,10 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             break;
         }
         
-        assert(b->size() == val.size);
+        // The size in the index is not asserted here: after a crash the block on
+        // disk can be a newer version than the index entry describes, because
+        // a rewritten block may take the place of its previous version before
+        // the header of the new state is durable. The block knows its own size.
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
