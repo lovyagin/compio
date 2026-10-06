@@ -24,12 +24,6 @@
 #include <unistd.h> // ftruncate, fileno
 #endif
 
-#ifdef __linux__
-#include <fcntl.h>        // fallocate
-#include <linux/falloc.h> // FALLOC_FL_PUNCH_HOLE
-#include <sys/stat.h>     // fstat
-#endif
-
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
 #include "compio/file.hpp"
@@ -666,12 +660,11 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
 
 bool block_allocator::punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset,
                                  uint64_t merged_size) {
-#ifdef __linux__
-    const int fd = fileno(archive_->file);
     if (fs_block_size_ == 0) {
-        struct stat st;
-        fs_block_size_ = (fstat(fd, &st) == 0 && st.st_blksize > 0)
-                             ? static_cast<uint64_t>(st.st_blksize) : 4096;
+        fs_block_size_ = hole_granularity(archive_->file);
+        if (fs_block_size_ == 0) {
+            return false;
+        }
     }
     const uint64_t bs = fs_block_size_;
     const uint64_t end = offset + size;
@@ -686,16 +679,7 @@ bool block_allocator::punch_hole(uint64_t offset, uint64_t size, uint64_t merged
     const uint64_t punch_start = std::min(lo, offset);
     const uint64_t punch_end = std::max(hi, end);
 
-    return fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                     static_cast<off_t>(punch_start),
-                     static_cast<off_t>(punch_end - punch_start)) == 0;
-#else
-    UNUSED(offset);
-    UNUSED(size);
-    UNUSED(merged_offset);
-    UNUSED(merged_size);
-    return false;
-#endif
+    return punch_file_hole(archive_->file, punch_start, punch_end - punch_start);
 }
 
 void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint64_t merged_offset,

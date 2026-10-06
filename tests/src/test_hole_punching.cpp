@@ -1,13 +1,22 @@
 #include <gtest/gtest.h>
 
-#ifdef __linux__
-
-#include <fcntl.h>
-#include <linux/falloc.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <io.h>
+#else
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <random>
 #include <string>
 #include <vector>
@@ -15,6 +24,7 @@
 #include "compio.h"
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
 #include "test_util.hpp"
 
 class HolePunchingTest : public ::testing::Test {
@@ -27,26 +37,45 @@ protected:
         remove((std::string(fn) + ".wal").c_str());
     }
 
+    // Storage the file takes on disk, as opposed to its size.
     static uint64_t disk_usage(const char *path) {
+#ifdef _WIN32
+        DWORD high = 0;
+        const DWORD low = GetCompressedFileSizeA(path, &high);
+        EXPECT_FALSE(low == INVALID_FILE_SIZE && GetLastError() != NO_ERROR);
+        return (static_cast<uint64_t>(high) << 32) | low;
+#else
         struct stat st;
         EXPECT_EQ(stat(path, &st), 0);
         return static_cast<uint64_t>(st.st_blocks) * 512;
+#endif
     }
 
-    static uint64_t file_size(const char *path) {
-        struct stat st;
-        EXPECT_EQ(stat(path, &st), 0);
-        return static_cast<uint64_t>(st.st_size);
+    static uint64_t file_size(const char *path) { return std::filesystem::file_size(path); }
+
+    static bool sync_to_disk(FILE *file) {
+        if (fflush(file) != 0) return false;
+#ifdef _WIN32
+        return _commit(_fileno(file)) == 0;
+#else
+        return fsync(fileno(file)) == 0;
+#endif
     }
 
+    // Probes the filesystem the test files live on with the library's own
+    // primitive. The runners of the CI use filesystems that do punch holes, so
+    // there a negative answer is a defect of that primitive, not a reason to skip.
     bool filesystem_punches_holes() {
-        const int fd = open(fn, O_RDWR);
-        if (fd < 0) return false;
-        const std::vector<char> data(1 << 16, 'x');
-        bool ok = write(fd, data.data(), data.size()) == static_cast<ssize_t>(data.size()) &&
-                  fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0, 1 << 16) == 0;
-        ok = ok && ftruncate(fd, 0) == 0;
-        close(fd);
+        constexpr size_t PROBE_BYTES = 1 << 20;
+        FILE *file = fopen(fn, "wb+");
+        if (!file) return false;
+        const std::vector<char> data(PROBE_BYTES, 'x');
+        bool ok = fwrite(data.data(), 1, data.size(), file) == data.size() && sync_to_disk(file);
+        const uint64_t before = ok ? disk_usage(fn) : 0;
+        ok = ok && compio::punch_file_hole(file, 0, PROBE_BYTES) && sync_to_disk(file);
+        fclose(file);
+        ok = ok && disk_usage(fn) + PROBE_BYTES / 2 < before;
+        remove(fn);
         return ok;
     }
 
@@ -58,8 +87,14 @@ protected:
     }
 };
 
+#define SKIP_WITHOUT_HOLE_PUNCHING()                                                               \
+    if (!filesystem_punches_holes()) {                                                            \
+        ASSERT_EQ(getenv("GITHUB_ACTIONS"), nullptr) << "hole punching must work on the CI runners"; \
+        GTEST_SKIP() << "filesystem does not support hole punching";                              \
+    }
+
 TEST_F(HolePunchingTest, RemovedFileStopsOccupyingDisk) {
-    if (!filesystem_punches_holes()) GTEST_SKIP() << "filesystem does not support hole punching";
+    SKIP_WITHOUT_HOLE_PUNCHING();
 
     constexpr size_t FILE_BYTES = 4 << 20;
     compio_config cfg;
@@ -86,7 +121,7 @@ TEST_F(HolePunchingTest, RemovedFileStopsOccupyingDisk) {
 
     // The container keeps its size, but the removed half no longer takes disk space.
     EXPECT_GE(file_size(fn), size_before);
-    EXPECT_LT(disk_usage(fn), usage_before - FILE_BYTES * 9 / 10);
+    EXPECT_LT(disk_usage(fn), usage_before - FILE_BYTES * 9 / 10) << "usage before " << usage_before;
 
     compio_file *f = compio_open_file("keep", ar);
     ASSERT_NE(f, nullptr);
@@ -100,10 +135,10 @@ TEST_F(HolePunchingTest, RemovedFileStopsOccupyingDisk) {
 // Regions smaller than a filesystem block free nothing one by one; the blocks
 // must be returned once neighbouring regions add up to cover them.
 TEST_F(HolePunchingTest, AdjacentSmallRegionsAreReleasedTogether) {
-    if (!filesystem_punches_holes()) GTEST_SKIP() << "filesystem does not support hole punching";
+    SKIP_WITHOUT_HOLE_PUNCHING();
 
     constexpr uint64_t REGION = 1000;
-    constexpr int COUNT = 256;
+    constexpr int COUNT = 4096;
     compio_config cfg;
     compio_build_default_config(&cfg);
     cfg.max_files = 16;
@@ -118,23 +153,21 @@ TEST_F(HolePunchingTest, AdjacentSmallRegionsAreReleasedTogether) {
     for (int i = 0; i < COUNT; i++) {
         const uint64_t offset = ar->allocator->allocate(REGION);
         ASSERT_NE(offset, UINT64_MAX);
-        ASSERT_EQ(fseek(ar->file, static_cast<long>(offset), SEEK_SET), 0);
+        ASSERT_EQ(compio::fseek64(ar->file, static_cast<int64_t>(offset), SEEK_SET), 0);
         ASSERT_EQ(fwrite(filler.data(), 1, REGION, ar->file), REGION);
         offsets.push_back(offset);
     }
-    ASSERT_EQ(fflush(ar->file), 0);
-    ASSERT_EQ(fsync(fileno(ar->file)), 0);
+    ASSERT_TRUE(sync_to_disk(ar->file));
     const uint64_t usage_before = disk_usage(fn);
 
     for (const uint64_t offset : offsets) {
         ar->allocator->deallocate(offset, REGION, false);
     }
-    ASSERT_EQ(fsync(fileno(ar->file)), 0);
+    ASSERT_TRUE(sync_to_disk(ar->file));
 
     const uint64_t freed = REGION * COUNT;
-    EXPECT_LT(disk_usage(fn), usage_before - freed * 9 / 10);
+    EXPECT_LT(disk_usage(fn), usage_before - freed * 9 / 10)
+        << "usage before " << usage_before << ", freed " << freed;
 
     compio_close_archive(ar);
 }
-
-#endif // __linux__

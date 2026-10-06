@@ -5,8 +5,29 @@
 #include <mutex>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winioctl.h>
 #include <io.h>
 #include <intrin.h>
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
+#ifdef __linux__
+#include <linux/falloc.h>
+#endif
+
+#ifdef __APPLE__
+#include <sys/mount.h>
+#include <sys/param.h>
 #endif
 
 #if defined(__SSE4_2__)
@@ -14,6 +35,7 @@
 #endif
 
 #include "compio/allocator.hpp"
+#include "compio/debug_print.hpp"
 
 namespace compio {
 
@@ -205,6 +227,56 @@ bool is_file_empty(FILE *file) {
     fseek64(file, 0, SEEK_END);
     int64_t fsize = ftell64(file);
     return fsize == 0;
+}
+
+uint64_t hole_granularity(FILE *file) {
+#if defined(__linux__)
+    struct stat st;
+    return (fstat(fileno(file), &st) == 0 && st.st_blksize > 0) ? static_cast<uint64_t>(st.st_blksize) : 4096;
+#elif defined(__APPLE__) && defined(F_PUNCHHOLE)
+    struct statfs fs;
+    return (fstatfs(fileno(file), &fs) == 0 && fs.f_bsize > 0) ? static_cast<uint64_t>(fs.f_bsize) : 4096;
+#elif defined(_WIN32)
+    // NTFS releases the storage of a sparse file in units of 64 KiB.
+    UNUSED(file);
+    return 65536;
+#else
+    UNUSED(file);
+    return 0;
+#endif
+}
+
+bool punch_file_hole(FILE *file, uint64_t offset, uint64_t size) {
+    if (size == 0) return true;
+#if defined(__linux__)
+    return fallocate(fileno(file), FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, static_cast<off_t>(offset),
+                     static_cast<off_t>(size)) == 0;
+#elif defined(__APPLE__) && defined(F_PUNCHHOLE)
+    // The request must cover whole filesystem blocks, so the range is shrunk to
+    // the blocks that lie inside it.
+    const uint64_t unit = hole_granularity(file);
+    const uint64_t start = (offset + unit - 1) / unit * unit;
+    const uint64_t end = (offset + size) / unit * unit;
+    if (start >= end) return true;
+    fpunchhole_t request{};
+    request.fp_offset = static_cast<off_t>(start);
+    request.fp_length = static_cast<off_t>(end - start);
+    return fcntl(fileno(file), F_PUNCHHOLE, &request) == 0;
+#elif defined(_WIN32)
+    const HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(file)));
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    // Zeroing a range releases its storage only in a file marked as sparse.
+    DWORD returned = 0;
+    if (!DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr)) return false;
+    FILE_ZERO_DATA_INFORMATION range;
+    range.FileOffset.QuadPart = static_cast<LONGLONG>(offset);
+    range.BeyondFinalZero.QuadPart = static_cast<LONGLONG>(offset + size);
+    return DeviceIoControl(handle, FSCTL_SET_ZERO_DATA, &range, sizeof(range), nullptr, 0, &returned, nullptr) != 0;
+#else
+    UNUSED(file);
+    UNUSED(offset);
+    return false;
+#endif
 }
 
 int fseek64(FILE *file, int64_t offset, int whence) {

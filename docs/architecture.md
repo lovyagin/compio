@@ -55,7 +55,7 @@ or worst fit take logarithmic time in the number of free regions; first fit and 
 walk the regions in address order. Adjacent free regions are merged as soon as they appear.
 Fragmentation is the share of the archive taken by free regions; when it exceeds
 `fragmentation_threshold`, the archive is compacted. With `fill_holes_with_zeros`
-freed regions are returned to the filesystem by hole punching (Linux).
+freed regions are returned to the filesystem by hole punching (Linux, macOS, Windows).
 
 ### 4. Indexing (B-Tree)
 
