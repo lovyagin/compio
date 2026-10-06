@@ -37,6 +37,7 @@ struct compio_archive {
     std::string path;
     uint8_t mode_b;
     uint32_t open_files_count;
+    std::vector<compio_file *> auto_batching_files; /**< Files that hold a batch opened automatically */
     // Makes the in-memory header durable (data is synced first). Lets the
     // allocator checkpoint in the middle of a compaction.
     std::function<bool()> publish_header;

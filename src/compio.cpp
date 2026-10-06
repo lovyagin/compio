@@ -749,9 +749,19 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
         if (compio_begin_batch(file->archive) == COMPIO_SUCCESS) {
             file->is_auto_batching = true;
             file->auto_batch_count = 1; // Reset counter to count batched operations
+            file->archive->auto_batching_files.push_back(file);
         }
         // On failure, silently continue without auto-batching
     }
+}
+
+// Commit the batch that was opened automatically for this file.
+static void end_auto_batch(compio_file *file) {
+    end_batch_impl(file->archive); // Best effort - lock already held
+    file->is_auto_batching = false;
+    file->auto_batch_count = 0;
+    auto &batching = file->archive->auto_batching_files;
+    batching.erase(std::remove(batching.begin(), batching.end(), file), batching.end());
 }
 
 /**
@@ -760,9 +770,7 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
 static void end_auto_batch_if_needed(compio_file *file) {
     if (file->is_auto_batching &&
         file->auto_batch_count >= file->archive->config.auto_batch_size) {
-        end_batch_impl(file->archive); // Best effort - lock already held
-        file->is_auto_batching = false;
-        file->auto_batch_count = 0;
+        end_auto_batch(file);
     }
 }
 
@@ -771,9 +779,7 @@ static void end_auto_batch_if_needed(compio_file *file) {
  */
 static void end_auto_batch_if_active(compio_file *file) {
     if (file->is_auto_batching) {
-        end_batch_impl(file->archive); // Best effort - lock already held
-        file->is_auto_batching = false;
-        file->auto_batch_count = 0;
+        end_auto_batch(file);
     }
 }
 
@@ -2515,6 +2521,15 @@ static void flush_impl(compio_archive *archive) {
 void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+
+    // A batch opened automatically for sequential writes defers the commit and
+    // the header. The caller did not ask for that batch and expects a flush to
+    // make everything durable, so such batches end here. A batch the caller
+    // opened with compio_begin_batch keeps deferring, as documented.
+    while (!archive->auto_batching_files.empty()) {
+        end_auto_batch(archive->auto_batching_files.back());
+    }
+
     flush_impl(archive);
 }
 
