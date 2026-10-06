@@ -82,10 +82,8 @@ CMakeUserPresets.json
 *.bak
 *.old
 
-# Игнорировать vcpkg установленные файлы
+# Dependencies installed by vcpkg outside a build directory
 /vcpkg_installed/
-/vcpkg/buildtrees/
-/vcpkg/downloads/
 
 *.cmake
 *build.ninja
@@ -96,8 +94,6 @@ CMakeUserPresets.json
 Makefile
 docs/html/**
 tests/compio_gtest
-
-vcpkg/*
 
 # Benchmark results
 fragmentation_results.csv
