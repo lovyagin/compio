@@ -1,0 +1,19 @@
+var searchData=
+[
+  ['commit_0',['COMMIT',['../wal_8hpp.html#a1a48920952596814d9f2ccbc52601441a1d0ba376e273b9d622641124d8c59264',1,'compio']]],
+  ['compio_5falloc_5fbest_5ffit_1',['COMPIO_ALLOC_BEST_FIT',['../compio_8h.html#afe70314d65cd18638aea60a080b32610a2d6194f8b39a5ae47ffcdb3021ebcbc5',1,'compio.h']]],
+  ['compio_5falloc_5ffirst_5ffit_2',['COMPIO_ALLOC_FIRST_FIT',['../compio_8h.html#afe70314d65cd18638aea60a080b32610a6a30356bc91271e42b031f0a4b0e9547',1,'compio.h']]],
+  ['compio_5falloc_5fnext_5ffit_3',['COMPIO_ALLOC_NEXT_FIT',['../compio_8h.html#afe70314d65cd18638aea60a080b32610a54df3d5dbe73654e6145f777fd2e5f99',1,'compio.h']]],
+  ['compio_5falloc_5fworst_5ffit_4',['COMPIO_ALLOC_WORST_FIT',['../compio_8h.html#afe70314d65cd18638aea60a080b32610a3ba93cb5f507265a3a01ec7087c737f0',1,'compio.h']]],
+  ['compio_5fchecksum_5fcrc32c_5',['COMPIO_CHECKSUM_CRC32C',['../compio_8h.html#a404f5eb866352a2f1d9408837371c5abab38c2f9405dfb5233dd762b0fd6771d2',1,'compio.h']]],
+  ['compio_5fchecksum_5ffnv1a_6',['COMPIO_CHECKSUM_FNV1A',['../compio_8h.html#a404f5eb866352a2f1d9408837371c5abac144a96e0384de83bfb663ee00519086',1,'compio.h']]],
+  ['compio_5fcompress_5fbrotli_7',['COMPIO_COMPRESS_BROTLI',['../compio_8h.html#ad9d1340f5a616fb60a13adabd23a0287a6145035caaf0aee04a25737bb0b488fc',1,'compio.h']]],
+  ['compio_5fcompress_5fcustom_8',['COMPIO_COMPRESS_CUSTOM',['../compio_8h.html#ad9d1340f5a616fb60a13adabd23a0287a6e4ab9dacf9fe652ba0e7c0b98089ce0',1,'compio.h']]],
+  ['compio_5fcompress_5fdummy_9',['COMPIO_COMPRESS_DUMMY',['../compio_8h.html#ad9d1340f5a616fb60a13adabd23a0287abc592366d5a9352e306882f9fed2d1a7',1,'compio.h']]],
+  ['compio_5fcompress_5flz4_10',['COMPIO_COMPRESS_LZ4',['../compio_8h.html#ad9d1340f5a616fb60a13adabd23a0287aab35bbaaa871be7f314125486bef304f',1,'compio.h']]],
+  ['compio_5fcompress_5fzlib_11',['COMPIO_COMPRESS_ZLIB',['../compio_8h.html#ad9d1340f5a616fb60a13adabd23a0287a5a102d6581006bd1b58d0d51a1c27de0',1,'compio.h']]],
+  ['compio_5fcompress_5fzstd_12',['COMPIO_COMPRESS_ZSTD',['../compio_8h.html#ad9d1340f5a616fb60a13adabd23a0287a662526a8926c8c83e250d3039775dbee',1,'compio.h']]],
+  ['compio_5fwal_5fsync_5falways_13',['COMPIO_WAL_SYNC_ALWAYS',['../compio_8h.html#a6d129f101aa2dafa61c82f723fc0d6f0ac8e77658793da6d5a90a28737b5b3e7e',1,'compio.h']]],
+  ['compio_5fwal_5fsync_5fnormal_14',['COMPIO_WAL_SYNC_NORMAL',['../compio_8h.html#a6d129f101aa2dafa61c82f723fc0d6f0a285e312c2d3a3ea3b338a25272d89859',1,'compio.h']]],
+  ['compio_5fwal_5fsync_5foff_15',['COMPIO_WAL_SYNC_OFF',['../compio_8h.html#a6d129f101aa2dafa61c82f723fc0d6f0ae91fc701ce3f6d0f56afd4c69c01e228',1,'compio.h']]]
+];
