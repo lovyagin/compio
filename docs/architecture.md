@@ -49,7 +49,10 @@ Manages free space in the archive file with strategies:
 - **Worst-fit** - Use largest suitable block
 - **Next-fit** - Continue from last position
 
-The list of free regions is kept in memory and saved in the archive on flush and close.
+Free regions are kept in memory in two ordered indexes, by offset and by size, and are
+saved in the archive on flush and close. Releasing a region and allocating with best fit
+or worst fit take logarithmic time in the number of free regions; first fit and next fit
+walk the regions in address order. Adjacent free regions are merged as soon as they appear.
 Fragmentation is the share of the archive taken by free regions; when it exceeds
 `fragmentation_threshold`, the archive is compacted. With `fill_holes_with_zeros`
 freed regions are returned to the filesystem by hole punching (Linux).

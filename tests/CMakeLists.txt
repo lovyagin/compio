@@ -25,7 +25,7 @@ add_executable(compio_gtest
     src/test_btree_range_add.cpp
     src/test_btree_get_block.cpp
     src/test_insert_erase.cpp
-    src/test_segregated_allocator.cpp
+    src/test_free_space_manager.cpp
     src/test_max_files.cpp
     src/test_concurrency.cpp
     src/test_concurrency_advanced.cpp

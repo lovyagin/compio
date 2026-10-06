@@ -34,6 +34,9 @@ target_include_directories(random_usage PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 add_executable(random_modification custom/random_modification.cpp)
 target_link_libraries(random_modification PRIVATE compio)
 
+add_executable(free_space_scaling custom/free_space_scaling.cpp)
+target_link_libraries(free_space_scaling PRIVATE compio)
+
 add_executable(fragmentation_benchmark custom/fragmentation_benchmark.cpp)
 target_link_libraries(fragmentation_benchmark PRIVATE compio)
 target_include_directories(fragmentation_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
