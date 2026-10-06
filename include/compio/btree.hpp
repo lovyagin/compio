@@ -85,6 +85,11 @@ struct node_reader {
     void clear_cache();
 
     /**
+     * @brief Write modified cached nodes to file, keeping them cached
+     */
+    void flush_cache();
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability
@@ -251,6 +256,11 @@ struct btree {
      * from file. Useful for memory management or consistency operations.
      */
     void clear_cache();
+
+    /**
+     * @brief Write modified cached nodes to file, keeping the cache warm
+     */
+    void flush_cache();
 
     /**
      * @brief Collect file addresses of all B-tree nodes

@@ -25,7 +25,7 @@ add_executable(compio_gtest
     src/test_btree_range_add.cpp
     src/test_btree_get_block.cpp
     src/test_insert_erase.cpp
-    src/test_segregated_allocator.cpp
+    src/test_free_space_manager.cpp
     src/test_max_files.cpp
     src/test_concurrency.cpp
     src/test_concurrency_advanced.cpp
@@ -53,11 +53,15 @@ add_executable(compio_gtest
 target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
 target_include_directories(compio_gtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Model-based crash consistency check. Run by hand; it reports how the archive
-# survives a SIGKILL and is not part of the test suite.
+# Checks that are run by hand and are not part of the test suite: they report
+# how an archive survives a SIGKILL (crash_consistency) and a damaged index
+# node (index_corruption).
 if (UNIX)
     add_executable(crash_consistency crash/crash_consistency.cpp)
     target_link_libraries(crash_consistency PRIVATE compio)
+
+    add_executable(index_corruption crash/index_corruption.cpp)
+    target_link_libraries(index_corruption PRIVATE compio)
 endif()
 
 enable_testing()

@@ -10,101 +10,30 @@ Compio is a lightweight library designed for transparent data compression, enabl
 
 ---
 
-## Prerequisites
+## Building
 
-- **Git**: Required for cloning the repository.
-- **CMake**: Used for building the project.
-- **vcpkg**: A package manager for managing dependencies.
-- A compatible C++ compiler (e.g., GCC for Linux, MSVC for Windows).
+Requirements: Git, CMake 3.15 or newer and a C++17 compiler (GCC, Clang or MSVC).
+The compression libraries, GoogleTest and Google Benchmark are built by the bundled
+[vcpkg](https://github.com/microsoft/vcpkg) (the `vcpkg` submodule; the list is in
+`vcpkg.json`). On Linux and macOS vcpkg itself needs `curl`, `zip`, `unzip` and `tar`.
 
-## Installation Instructions
+The same commands work on Linux, macOS and Windows:
 
-### For Linux
+```bash
+git clone --recurse-submodules https://github.com/lovyagin/compio
+cd compio
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+ctest --test-dir build --build-config Release
+```
 
-1. **Clone the Repository**:
+The first configure builds the dependencies into `build/vcpkg_installed`, which
+takes a few minutes; later ones reuse them. In an IDE, open the project as a
+CMake project, no extra options are needed.
 
-   ```bash
-   git clone https://github.com/lovyagin/compio
-   cd compio
-   ```
-
-2. **Initialize and Update Submodules**:
-
-   ```bash
-   git submodule init
-   git submodule update
-   ```
-
-3. **Set Up vcpkg**:
-
-   ```bash
-   ./vcpkg/bootstrap-vcpkg.sh
-   ./vcpkg/vcpkg install
-   ```
-
-4. **Build the Project**:
-
-   ```bash
-   mkdir build
-   cd build
-   cmake .. -DCMAKE_TOOLCHAIN_FILE=../vcpkg/scripts/buildsystems/vcpkg.cmake
-   cmake --build .
-   ```
-
-### For Windows
-
-1. **Clone the Repository**:
-
-   ```cmd
-   git clone https://github.com/lovyagin/compio.git
-   cd compio
-   ```
-
-2. **Set Up vcpkg**:
-
-    - Clone the vcpkg repository:
-
-      ```cmd
-      git clone https://github.com/microsoft/vcpkg.git
-      cd vcpkg
-      ```
-    - Bootstrap vcpkg to generate the `vcpkg.exe` executable:
-
-      ```cmd
-      bootstrap-vcpkg.bat
-      ```
-    - Install dependencies:
-
-      ```cmd
-      vcpkg install
-      ```
-    - **Optional**: Add the vcpkg directory (e.g., `C:\path\to\compio\vcpkg`) to your system's `PATH` environment variable for easier access to `vcpkg.exe`.
-
-3. **Build the Project**:
-
-    - Create a build directory:
-
-      ```cmd
-      mkdir build
-      cd build
-      ```
-    - Configure the project with CMake, specifying the vcpkg toolchain file:
-
-      ```cmd
-      cmake .. -DCMAKE_TOOLCHAIN_FILE=C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake
-      ```
-    - Build the project:
-
-      ```cmd
-      cmake --build .
-      ```
-    - **Using an IDE (e.g., CLion)**: If you are using an IDE like CLion, open the project and add the following to your CMake options:
-
-      ```
-      -DCMAKE_TOOLCHAIN_FILE=C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake
-      ```
-
-      Then, use the IDE's build tools to compile the project.
+To use another source of dependencies (system packages, Conan with the provided
+`conanfile.txt`), pass your own `-DCMAKE_TOOLCHAIN_FILE=...` or
+`-DCMAKE_PREFIX_PATH=...`: the bundled vcpkg is only the default.
 
 ## Usage
 
@@ -146,8 +75,6 @@ Both support `-h` / `--help`. See [`util/README.md`](util/README.md) for full do
 
 ## Notes
 
-- Ensure the path `C:/path/to/compio/vcpkg/scripts/buildsystems/vcpkg.cmake` is adjusted to match your actual directory structure on Windows.
-- If you encounter issues with dependencies, verify that vcpkg has installed all required packages by running `vcpkg install` in the vcpkg directory.
 - For additional support or to report issues, visit the Compio GitHub repository.
 
 ## License

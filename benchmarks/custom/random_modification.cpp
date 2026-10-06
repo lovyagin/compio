@@ -184,13 +184,23 @@ double random_read_speed(compio_file *file, uint64_t read_size, int count, uint6
     return count / seconds_since(start);
 }
 
-// Both measurements start from an empty block cache (compio_flush drops it).
-void report_read_speed(const char *label, compio_archive *archive, compio_file *file, uint64_t seed) {
+// Both measurements start cold: the archive is synchronised and then read
+// through a separate read-only handle, which has caches of its own.
+void report_read_speed(const char *label, compio_archive *archive, const std::string &path,
+                       const compio_config &cfg, uint64_t seed) {
     compio_flush(archive);
-    const double sequential = sequential_read_speed(file);
-    compio_flush(archive);
-    const double random = random_read_speed(file, 4096, 20000, seed);
-    printf("# %s: sequential read %.1f MiB/s, random 4 KiB read %.0f ops/s\n", label, sequential, random);
+
+    double speeds[2] = {0.0, 0.0};
+    for (int kind = 0; kind < 2; kind++) {
+        compio_archive *reader = compio_open_archive(path.c_str(), "r", &cfg);
+        compio_file *file = reader ? compio_open_file("data", reader) : nullptr;
+        if (file) {
+            speeds[kind] = kind == 0 ? sequential_read_speed(file) : random_read_speed(file, 4096, 20000, seed);
+            compio_close_file(file);
+        }
+        if (reader) compio_close_archive(reader);
+    }
+    printf("# %s: sequential read %.1f MiB/s, random 4 KiB read %.0f ops/s\n", label, speeds[0], speeds[1]);
 }
 
 } // namespace
@@ -278,7 +288,7 @@ int main(int argc, char **argv) {
            static_cast<unsigned long long>(seed));
     printf("# fill: %.1f MiB/s, container %llu bytes, ratio %.4f\n", fill_speed,
            static_cast<unsigned long long>(after_fill.size), static_cast<double>(after_fill.size) / file_size);
-    report_read_speed("before", archive, file, seed + 2);
+    report_read_speed("before", archive, path, cfg, seed + 2);
 
     printf("ops,ops_per_s,mib_per_s,logical_bytes,container_bytes,disk_bytes,free_bytes,free_regions,"
            "fragmentation_percent,container_ratio,disk_ratio\n");
@@ -332,7 +342,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    report_read_speed("after", archive, file, seed + 2);
+    report_read_speed("after", archive, path, cfg, seed + 2);
 
     const uint64_t final_logical = compio_get_size(file);
     const auto close_start = clock_type::now();

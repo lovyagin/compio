@@ -99,101 +99,100 @@ block::block(context_t &context, const tree_key &key, uint64_t size, bool unused
 }
 
 block::~block() {
-    if (!_is_valid) {
-        // DEBUG_PRINT("[B][destructor]: not a valid block, skipping\n");
+    DEBUG_PRINT("[B][destructor]: called destructor for {%lu, %lu} (is_modified=%d, is_removed=%d)\n", _key.hash, _key.pos, _is_modified, _is_removed);
+    // A removed block has nothing to write: storage_block_reader::remove_block
+    // has already taken it out of the index and released its place.
+    write_back();
+}
+
+void block::write_back() {
+    if (!_is_valid || !_is_modified || _is_removed) {
         return;
     }
-    DEBUG_PRINT("[B][destructor]: called destructor for {%lu, %lu} (is_modified=%d, is_removed=%d)\n", _key.hash, _key.pos, _is_modified, _is_removed);
-    if (_is_modified && !_is_removed) {
-        storage_block b(context.compressor->get_bufsize(context.compressor, _size));
-        b.original_size = _size;
-        b.checksum_type = context.checksum_type;
-        b.src_key = _key; // v2 self-describing back-ref
 
-        int ret = context.compressor->compress(context.compressor, b.data.get(), &b.size, _data.get(), _size);
-        if (ret != 0 || b.size > _size) {
-            if (ret != 0) {
-                WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
-            }
+    storage_block b(context.compressor->get_bufsize(context.compressor, _size));
+    b.original_size = _size;
+    b.checksum_type = context.checksum_type;
+    b.src_key = _key; // v2 self-describing back-ref
 
-            b.is_compressed = false;
-            b.data = std::move(_data);
-            b.size = _size;
-        } else {
-#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
-            bm_n_compressed_bytes += _size;
-#endif
-            b.is_compressed = true;
+    int ret = context.compressor->compress(context.compressor, b.data.get(), &b.size, _data.get(), _size);
+    if (ret != 0 || b.size > _size) {
+        if (ret != 0) {
+            WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
         }
 
-        if (_addr != 0) {
-            // block was read from file, so addr was already allocated from allocator previously
-
-            // if (c_size >= b.size) {
-            //     // we can reuse previous memory block in file
-            // }
-
-            // though it would be better to pass this logic to allocator, and allocate memory again
-            // Disable maintenance during flush: defrag reads the btree index, but the index
-            // is only partially updated while clear_cache() destructors are still running.
-            // Running defrag mid-flush would see stale block addresses and corrupt the archive.
-            context.allocator->deallocate(_addr, _c_size + _disk_meta_size, false);
-        }
-
-        uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE_V2 + b.size);
-        DEBUG_PRINT(
-            "[B][destructor]: writing to file "
-            "(new_addr=%" PRIu64 ",addr=%" PRIu64 ",original_size=%" PRIu64 ",size=%" PRIu64 ",is_compressed=%d,key.pos=%" PRIu64 ")\n",
-            new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
-        
-        if (context.io_mutex) {
-            std::lock_guard<std::mutex> lock(*context.io_mutex);
-            b.write_to(context.file, new_addr, context.wal);
-        } else {
-            b.write_to(context.file, new_addr, context.wal);
-        }
-
-        // block already in btree thanks to storage_block_reader
-        // we just need to update it's file address
-        bool update_res = false;
-        if (tl_maintenance_mode) {
-             context.index->_update_impl(_key, {new_addr, _size});
-             update_res = true; // _update_impl returns void or we assume it works? Check btree.hpp
-        } else {
-             update_res = context.index->update(_key, {new_addr, _size});
-        }
-        
-        if (!update_res) {
-            WARNING_PRINT("[B][destructor] ERROR: failed to update index for key {%" PRIu64 ", %" PRIu64 "} with addr %" PRIu64 "\n",
-                          _key.hash, _key.pos, new_addr);
-            // This is a critical consistency error. The block is written to disk, but the index
-            // still points to addr=0 (or old addr). Future reads will fail.
-            assert(false && "Failed to update index in block destructor");
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(context.temp_index_mutex);
-            if (context.temp_index_refcount > 0) {
-                // save allocated address to temporary_index
-                context.temporary_index[_key] = new_addr;
-            }
-        }
+        b.is_compressed = false;
+        b.data = std::move(_data);
+        b.size = _size;
     } else {
-        if (_addr == 0) {
-            // this block was created in storage_block_reader::create_block, so it's key was
-            // inserted to btree
-            //
-            // not calling index->remove, because storage_block_reader::remove_block calls it
-            // index->remove(key);
-        }
-        if (_is_removed && _addr != 0) {
-            // this block was created in storage_block_reader::read_block, so we need to deallocate
-            // it's memory
-            //
-            // not deallocating, because storage_block_reader::remove_block does that
-            // context.allocator->deallocate(addr, c_size);
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+        bm_n_compressed_bytes += _size;
+#endif
+        b.is_compressed = true;
+    }
+
+    if (_addr != 0) {
+        // block was read from file, so addr was already allocated from allocator previously
+
+        // if (c_size >= b.size) {
+        //     // we can reuse previous memory block in file
+        // }
+
+        // though it would be better to pass this logic to allocator, and allocate memory again
+        // Disable maintenance during flush: defrag reads the btree index, but the index
+        // is only partially updated while clear_cache() destructors are still running.
+        // Running defrag mid-flush would see stale block addresses and corrupt the archive.
+        context.allocator->deallocate(_addr, _c_size + _disk_meta_size, false);
+    }
+
+    uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE_V2 + b.size);
+    DEBUG_PRINT(
+        "[B][destructor]: writing to file "
+        "(new_addr=%" PRIu64 ",addr=%" PRIu64 ",original_size=%" PRIu64 ",size=%" PRIu64 ",is_compressed=%d,key.pos=%" PRIu64 ")\n",
+        new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
+
+    if (context.io_mutex) {
+        std::lock_guard<std::mutex> lock(*context.io_mutex);
+        b.write_to(context.file, new_addr, context.wal);
+    } else {
+        b.write_to(context.file, new_addr, context.wal);
+    }
+
+    // block already in btree thanks to storage_block_reader
+    // we just need to update it's file address
+    bool update_res = false;
+    if (tl_maintenance_mode) {
+         context.index->_update_impl(_key, {new_addr, _size});
+         update_res = true; // _update_impl returns void or we assume it works? Check btree.hpp
+    } else {
+         update_res = context.index->update(_key, {new_addr, _size});
+    }
+
+    if (!update_res) {
+        WARNING_PRINT("[B][destructor] ERROR: failed to update index for key {%" PRIu64 ", %" PRIu64 "} with addr %" PRIu64 "\n",
+                      _key.hash, _key.pos, new_addr);
+        // This is a critical consistency error. The block is written to disk, but the index
+        // still points to addr=0 (or old addr). Future reads will fail.
+        assert(false && "Failed to update index in block destructor");
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            // save allocated address to temporary_index
+            context.temporary_index[_key] = new_addr;
         }
     }
+
+    // The block now lives at the new address. An incompressible block lent its
+    // buffer to the stored copy; take it back.
+    if (!b.is_compressed) {
+        _data = std::move(b.data);
+    }
+    _addr = new_addr;
+    _c_size = b.size;
+    _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
+    _is_modified = false;
 }
 
 const uint8_t *block::data() const { return _data.get(); }
@@ -268,7 +267,7 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
                 key.pos);
-#ifndef NDEBUG
+#if !defined(NDEBUG) && defined(COMPIO_DEBUG_PRINT)
     {
         auto keys = cache.debug_keys();
         DEBUG_PRINT("[SBR][CACHE]: cache contents (%zu entries):\n", keys.size());
@@ -342,40 +341,48 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     return b;
 }
 
-void storage_block_reader::clear_cache() {
-    DEBUG_PRINT("[SBR][clear_cache]\n");
-
-    auto blocks = cache.extract_all();
-
-    // Sort blocks by address to optimize reallocation during flush.
-    // We prioritize existing blocks (addr != 0) over new blocks (addr == 0).
-    // Existing blocks free their old space first, creating holes.
-    // New blocks then allocate, potentially filling those holes.
-    // Within existing blocks, we sort by address to maximize merging of adjacent freed blocks.
+// Order in which blocks are written out. Blocks that already have a place go
+// first, by address: they release it, and adjacent holes merge. New blocks
+// follow in logical order, so that a file written in one go is laid out front
+// to back and reads sequentially on disk.
+static void sort_for_write_back(std::vector<std::shared_ptr<block>> &blocks) {
     std::sort(blocks.begin(), blocks.end(), [](const std::shared_ptr<block> &a, const std::shared_ptr<block> &b) {
         bool a_exists = a->addr() != 0;
         bool b_exists = b->addr() != 0;
         if (a_exists != b_exists) {
-            return a_exists; // exists (true) comes before new (false)
+            return a_exists;
         }
         if (a_exists) {
             return a->addr() < b->addr();
         }
-        // New blocks are placed in logical order, so that a file written in one
-        // go is laid out front to back and reads sequentially on disk.
         const tree_key &ka = a->key();
         const tree_key &kb = b->key();
         return ka.hash != kb.hash ? ka.hash < kb.hash : ka.pos < kb.pos;
     });
+}
 
-    // The C++ standard does not guarantee any particular destruction order for
-    // std::vector::clear() / erase(). By manually resetting shared_ptrs in this loop,
-    // we ensure destructors run in the exact order we want (ascending address / existing first),
-    // independent of the container's internal destruction order.
+void storage_block_reader::clear_cache() {
+    DEBUG_PRINT("[SBR][clear_cache]\n");
+
+    auto blocks = cache.extract_all();
+    sort_for_write_back(blocks);
+
+    // The order of destruction of vector elements is not specified, so the
+    // blocks are released one by one in the order chosen above.
     for (auto& b : blocks) {
         b.reset();
     }
     blocks.clear();
+}
+
+void storage_block_reader::flush_cache() {
+    DEBUG_PRINT("[SBR][flush_cache]\n");
+
+    auto blocks = cache.values();
+    sort_for_write_back(blocks);
+    for (auto &b : blocks) {
+        b->write_back();
+    }
 }
 
 void storage_block_reader::set_maintenance_mode(bool enabled) {

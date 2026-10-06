@@ -13,13 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            triplet: x64-linux
-          - os: windows-latest
-            triplet: x64-windows
-          - os: macos-latest
-            triplet: arm64-osx
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      VCPKG_DISABLE_METRICS: 1
 
     steps:
       - name: Checkout repository
@@ -27,58 +23,22 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Cache vcpkg packages
+      # The configure step builds the dependencies with the bundled vcpkg into
+      # build/vcpkg_installed. They depend on the vcpkg revision and on
+      # vcpkg.json, so those two make the cache key.
+      - name: Identify vcpkg revision
+        id: vcpkg
+        run: echo "revision=$(git rev-parse HEAD:vcpkg)" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Cache dependencies
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/vcpkg_installed
-          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-${{ matrix.triplet }}-
+          path: build/vcpkg_installed
+          key: vcpkg-${{ matrix.os }}-${{ steps.vcpkg.outputs.revision }}-${{ hashFiles('vcpkg.json') }}
 
-      - name: Bootstrap vcpkg (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
-
-      - name: Bootstrap vcpkg (Windows)
-        if: runner.os == 'Windows'
-        run: .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-        shell: pwsh
-
-      # vcpkg would fetch pkg-config from msys2 packages pinned by the submodule
-      # revision, and the mirrors no longer serve them; hand it a current one.
-      - name: Install pkg-config (Windows)
-        if: runner.os == 'Windows'
-        id: msys2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          install: mingw-w64-x86_64-pkgconf
-
-      - name: Point vcpkg at pkg-config (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $pkgconfig = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'mingw64\bin\pkg-config.exe'
-          if (-not (Test-Path $pkgconfig)) { throw "pkg-config not found at $pkgconfig" }
-          "PKG_CONFIG=$($pkgconfig -replace '\\', '/')" >> $env:GITHUB_ENV
-          "VCPKG_KEEP_ENV_VARS=PKG_CONFIG" >> $env:GITHUB_ENV
-        shell: pwsh
-
-      - name: Install dependencies via vcpkg (Linux/macOS)
-        if: runner.os != 'Windows'
-        run: ./vcpkg/vcpkg install --triplet ${{ matrix.triplet }}
-
-      - name: Install dependencies via vcpkg (Windows)
-        if: runner.os == 'Windows'
-        run: .\vcpkg\vcpkg.exe install --triplet ${{ matrix.triplet }}
-        shell: pwsh
-
-      - name: Configure CMake
-        run: >
-          cmake -B build -S .
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-          -DVCPKG_INSTALLED_DIR=${{ github.workspace }}/vcpkg_installed
-          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+      - name: Configure
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build --config Release --parallel

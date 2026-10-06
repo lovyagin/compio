@@ -10,28 +10,19 @@
 #ifndef COMPIO_ALLOCATOR_HPP
 #define COMPIO_ALLOCATOR_HPP
 
-#include <cstdint>
-#include <string>
-#include <vector>
 #include <atomic>
+#include <cstdint>
+#include <map>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "compio.h"
 
 namespace compio {
 
 class WalManager;
-
-/**
- * @brief Structure representing a free block in storage
- */
-struct free_block {
-    uint64_t offset;  /**< Block start offset in file */
-    uint64_t size;    /**< Block size in bytes */
-    free_block *next; /**< Pointer to next free block (offset-sorted list) */
-    free_block *prev; /**< Pointer to previous free block (offset-sorted list) */
-    free_block *next_in_bucket = nullptr; /**< Pointer to next block in size bucket */
-    free_block *prev_in_bucket = nullptr; /**< Pointer to prev block in size bucket */
-};
 
 /**
  * @brief Free blocks management strategies
@@ -50,17 +41,16 @@ enum class allocation_strategy {
 };
 
 /**
- * @brief Free blocks table manager
+ * @brief Free space manager
  *
- * Manages a linked list of free blocks in the archive storage.
- * Supports multiple allocation strategies (first-fit, best-fit, worst-fit, next-fit)
- * and provides automatic block merging to reduce fragmentation.
+ * Keeps the free regions of the archive in two ordered indexes over the same
+ * set: by offset (neighbour lookup for merging, address-ordered strategies) and
+ * by size (best-fit and worst-fit lookup). Freeing a region, best fit and worst
+ * fit are logarithmic in the number of free regions; first fit and next fit
+ * walk the regions in address order.
  *
- * The manager maintains:
- * - A doubly-linked list of free blocks sorted by offset
- * - A size-based index for efficient best-fit and worst-fit searches
- * - Fragmentation tracking and caching
- * - Serialization/deserialization for persistent storage
+ * Adjacent free regions are merged as soon as they are freed, so the set never
+ * holds two regions that touch.
  */
 class free_blocks_manager {
 public:
@@ -71,23 +61,15 @@ public:
     explicit free_blocks_manager(const uint64_t *file_size);
 
     /**
-     * @brief Destructor — frees all nodes in the linked list
-     */
-    ~free_blocks_manager();
-
-    /**
-     * @brief Move assignment operator — takes ownership of other's nodes
-     */
-    free_blocks_manager &operator=(free_blocks_manager &&other) noexcept;
-
-    /**
      * @brief Add new free block to the storage
      * @param offset Block start offset
      * @param size Block size
      * @param merged_offset If not null, receives the start of the free region the block became part of
      * @param merged_size If not null, receives the size of that region
+     * @return False if the region is empty, wraps around or overlaps a region that is already free
+     *         (nothing is added then)
      */
-    void add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset = nullptr,
+    bool add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset = nullptr,
                         uint64_t *merged_size = nullptr);
 
     /**
@@ -99,7 +81,7 @@ public:
     uint64_t allocate_block(uint64_t size, allocation_strategy strategy);
 
     /**
-     * @brief Merge adjacent free blocks
+     * @brief Merge adjacent free blocks and restart the next-fit search from the beginning
      */
     void defragment();
 
@@ -147,7 +129,7 @@ public:
      * @brief Check if a region is already marked as free
      * @param offset Start offset of the region
      * @param size Size of the region
-     * @return True if region is already in the free list
+     * @return True if the whole region lies inside one free region
      */
     bool is_region_free(uint64_t offset, uint64_t size) const;
 
@@ -164,7 +146,7 @@ public:
     void update_file_size_ptr(const uint64_t *file_size) { file_size_ = file_size; }
 
     /**
-     * @brief Number of entries in the free list
+     * @brief Number of free regions
      */
     size_t free_region_count() const;
 
@@ -198,176 +180,30 @@ public:
     bool load_from_file(compio_archive *archive);
 
 private:
-    /**
-     * @brief Remove block from the list and deallocate memory
-     * @param block Block to remove
-     */
-    void remove_block(free_block *block);
+    using region_map = std::map<uint64_t, uint64_t>;
 
-    /**
-     * @brief Segregated size index for fast block lookups
-     *
-     * Uses size-class buckets instead of multimap for faster allocation:
-     * - Bucket 0: 0-256 bytes
-     * - Bucket 1: 257-512 bytes
-     * - Bucket 2: 513-1KB
-     * - Bucket 3: 1KB-2KB
-     * - Bucket 4: 2KB-4KB
-     * - Bucket 5: 4KB-8KB
-     * - Bucket 6: 8KB-16KB
-     * - Bucket 7: 16KB-32KB
-     * - Bucket 8: 32KB-64KB
-     * - Bucket 9: >64KB
-     *
-     * Performance improvement: 4-5x for best-fit, 15-30x for first-fit
-     */
-    struct size_index {
-        static constexpr size_t NUM_BUCKETS = 10;
-        free_block* buckets[NUM_BUCKETS] = {nullptr};
+    region_map by_offset_;                              /**< Free regions: offset -> size */
+    std::set<std::pair<uint64_t, uint64_t>> by_size_;   /**< The same regions as (size, offset) */
+    uint64_t next_fit_cursor_ = 0;                      /**< Offset the next NEXT_FIT search starts from */
+    uint64_t total_free_;                               /**< Total free space in bytes */
+    const uint64_t *file_size_;                         /**< Reference to total file size */
+    mutable uint8_t cached_fragmentation_;              /**< Cached fragmentation level */
+    mutable bool fragmentation_dirty_;                  /**< True when cache needs recalculation */
+    uint64_t spare_slot_offset_ = 0;                    /**< Alternate slot of the saved state (0 = none) */
+    uint64_t spare_slot_size_ = 0;                      /**< Size of the alternate slot */
 
-        static size_t get_bucket(uint64_t size) {
-            if (size <= 256) return 0;
-            if (size <= 512) return 1;
-            if (size <= 1024) return 2;
-            if (size <= 2048) return 3;
-            if (size <= 4096) return 4;
-            if (size <= 8192) return 5;
-            if (size <= 16384) return 6;
-            if (size <= 32768) return 7;
-            if (size <= 65536) return 8;
-            return 9;
-        }
+    region_map::iterator insert_region(region_map::iterator hint, uint64_t offset, uint64_t size);
+    region_map::iterator erase_region(region_map::iterator it);
+    void clear_regions();
 
-        void insert(free_block *block) {
-            size_t bucket = get_bucket(block->size);
-            block->next_in_bucket = buckets[bucket];
-            block->prev_in_bucket = nullptr;
-            if (buckets[bucket]) {
-                buckets[bucket]->prev_in_bucket = block;
-            }
-            buckets[bucket] = block;
-        }
-
-        void remove(free_block *block) {
-            size_t bucket = get_bucket(block->size);
-            if (block->prev_in_bucket) {
-                block->prev_in_bucket->next_in_bucket = block->next_in_bucket;
-            } else {
-                buckets[bucket] = block->next_in_bucket;
-            }
-            if (block->next_in_bucket) {
-                block->next_in_bucket->prev_in_bucket = block->prev_in_bucket;
-            }
-            block->next_in_bucket = nullptr;
-            block->prev_in_bucket = nullptr;
-        }
-
-        void clear() {
-            for (size_t i = 0; i < NUM_BUCKETS; ++i) {
-                buckets[i] = nullptr;
-            }
-        }
-
-        free_block *find_best_fit(uint64_t size) const {
-            size_t start_bucket = get_bucket(size);
-            free_block* best = nullptr;
-
-            for (size_t i = start_bucket; i < NUM_BUCKETS; ++i) {
-                for (free_block* block = buckets[i]; block; block = block->next_in_bucket) {
-                    if (block->size >= size) {
-                        if (!best || block->size < best->size) {
-                            best = block;
-                            if (block->size == size) return best; // Exact fit
-                        }
-                    }
-                }
-                // If found in current bucket, it's the best fit
-                if (best && i == start_bucket) return best;
-            }
-            return best;
-        }
-
-        free_block *find_worst_fit(uint64_t size) const {
-            // Start from largest bucket
-            for (int i = NUM_BUCKETS - 1; i >= 0; --i) {
-                free_block* largest = nullptr;
-                for (free_block* block = buckets[i]; block; block = block->next_in_bucket) {
-                    if (block->size >= size) {
-                        if (!largest || block->size > largest->size) {
-                            largest = block;
-                        }
-                    }
-                }
-                if (largest) return largest;
-            }
-            return nullptr;
-        }
-    };
-
-    size_index size_idx_;
-
-    free_block *head_;                           /**< Head of free blocks list */
-    free_block *tail_;                           /**< Tail of free blocks list */
-    free_block *last_alloc_;                     /**< Last allocation position for NEXT_FIT */
-    uint64_t total_free_;                        /**< Total free space in bytes */
-    const uint64_t *file_size_;                  /**< Reference to total file size */
-    mutable uint8_t cached_fragmentation_;       /**< Cached fragmentation level */
-    mutable bool fragmentation_dirty_;           /**< True when cache needs recalculation */
-    uint64_t spare_slot_offset_ = 0;             /**< Alternate slot of the saved state (0 = none) */
-    uint64_t spare_slot_size_ = 0;               /**< Size of the alternate slot */
-
-    /**
-     * @brief Find the first suitable block for allocation
-     * @param size Required block size
-     * @return Pointer to the first suitable block or nullptr if not found
-     */
-    free_block *find_first_fit(uint64_t size) const;
-
-    /**
-     * @brief Find the smallest suitable block for allocation
-     * @param size Required block size
-     * @return Pointer to the best-fit block or nullptr if not found
-     */
-    free_block *find_best_fit(uint64_t size) const;
-
-    /**
-     * @brief Find the largest suitable block for allocation
-     * @param size Required block size
-     * @return Pointer to the worst-fit block or nullptr if not found
-     */
-    free_block *find_worst_fit(uint64_t size) const;
-
-    /**
-     * @brief Find the next suitable block for allocation
-     * @param size Required block size
-     * @return Pointer to the next-fit block or nullptr if not found
-     */
-    free_block *find_next_fit(uint64_t size) const;
-
-    /**
-     * @brief Find blocks that can be merged with the given region
-     * @param offset Start offset of the region
-     * @param size Size of the region
-     * @param prev Output parameter for previous mergeable block
-     * @param next Output parameter for next mergeable block
-     */
-    void find_mergeable_blocks(uint64_t offset, uint64_t size, free_block *&prev,
-                               free_block *&next) const;
-
-    /**
-     * @brief Insert new block in the ordered list
-     * @param new_block Block to insert
-     */
-    void insert_ordered_block(free_block *new_block);
-
-    /**
-     * @brief Merge three blocks (prev + new + next)
-     * @param prev Previous block
-     * @param offset New block offset
-     * @param size New block size
-     * @param next Next block
-     */
-    void merge_blocks(free_block *prev, uint64_t offset, uint64_t size, free_block *next);
+    /** Lowest region that can hold @p size, or end() */
+    region_map::iterator find_first_fit(uint64_t size);
+    /** Smallest region that can hold @p size (the lowest one among equals), or end() */
+    region_map::iterator find_best_fit(uint64_t size);
+    /** Largest region if it can hold @p size (the lowest one among equals), or end() */
+    region_map::iterator find_worst_fit(uint64_t size);
+    /** First region at or after the previous allocation that can hold @p size, wrapping around; or end() */
+    region_map::iterator find_next_fit(uint64_t size);
 };
 
 /**

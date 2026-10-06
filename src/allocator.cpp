@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <mutex>
 #include <vector>
 
@@ -23,12 +24,6 @@
 #include <unistd.h> // ftruncate, fileno
 #endif
 
-#ifdef __linux__
-#include <fcntl.h>        // fallocate
-#include <linux/falloc.h> // FALLOC_FL_PUNCH_HOLE
-#include <sys/stat.h>     // fstat
-#endif
-
 #include "compio/compio_file.hpp"
 #include "compio/debug_print.hpp"
 #include "compio/file.hpp"
@@ -36,220 +31,78 @@
 #include "compio/utils.hpp"
 
 namespace compio {
-struct free_block;
 
 free_blocks_manager::free_blocks_manager(const uint64_t *file_size)
-    : head_(nullptr),
-      tail_(nullptr),
-      last_alloc_(nullptr),
-      total_free_(0),
+    : total_free_(0),
       file_size_(file_size),
       cached_fragmentation_(0),
       fragmentation_dirty_(true) {
     assert(file_size_ != nullptr);
 }
 
-free_blocks_manager::~free_blocks_manager() {
-    free_block *current = head_;
-    while (current) {
-        free_block *next = current->next;
-        delete current;
-        current = next;
-    }
-    head_ = tail_ = last_alloc_ = nullptr;
+free_blocks_manager::region_map::iterator
+free_blocks_manager::insert_region(region_map::iterator hint, uint64_t offset, uint64_t size) {
+    by_size_.emplace(size, offset);
+    return by_offset_.emplace_hint(hint, offset, size);
 }
 
-free_blocks_manager &free_blocks_manager::operator=(free_blocks_manager &&other) noexcept {
-    if (this != &other) {
-        // Free existing nodes
-        free_block *current = head_;
-        while (current) {
-            free_block *next = current->next;
-            delete current;
-            current = next;
-        }
-        // Take ownership
-        head_ = other.head_;
-        tail_ = other.tail_;
-        last_alloc_ = other.last_alloc_;
-        total_free_ = other.total_free_;
-        file_size_ = other.file_size_;
-        cached_fragmentation_ = other.cached_fragmentation_;
-        fragmentation_dirty_ = other.fragmentation_dirty_;
-        size_idx_ = other.size_idx_;
-        spare_slot_offset_ = other.spare_slot_offset_;
-        spare_slot_size_ = other.spare_slot_size_;
-        // Nullify source
-        other.head_ = other.tail_ = other.last_alloc_ = nullptr;
-        other.total_free_ = 0;
-        other.size_idx_.clear();
-    }
-    return *this;
+free_blocks_manager::region_map::iterator free_blocks_manager::erase_region(region_map::iterator it) {
+    by_size_.erase({it->second, it->first});
+    return by_offset_.erase(it);
 }
 
-void free_blocks_manager::add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset,
+void free_blocks_manager::clear_regions() {
+    by_offset_.clear();
+    by_size_.clear();
+    next_fit_cursor_ = 0;
+    total_free_ = 0;
+    fragmentation_dirty_ = true;
+}
+
+bool free_blocks_manager::add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset,
                                          uint64_t *merged_size) {
     if (size == 0)
-        return;
+        return false;
     if (offset > UINT64_MAX - size) // overflow guard: offset + size would wrap
-        return;
+        return false;
 
-    // Check for mergeable blocks
-    free_block *prev, *next;
-    find_mergeable_blocks(offset, size, prev, next);
+    auto next = by_offset_.lower_bound(offset);
+    auto prev = next == by_offset_.begin() ? by_offset_.end() : std::prev(next);
+
+    // A region that is already (partly) free must not be added again: the two
+    // copies would be handed out to two different owners.
+    if (next != by_offset_.end() && next->first < offset + size)
+        return false;
+    if (prev != by_offset_.end() && prev->first + prev->second > offset)
+        return false;
+
+    uint64_t start = offset;
+    uint64_t end = offset + size;
+    if (prev != by_offset_.end() && prev->first + prev->second == offset) {
+        start = prev->first;
+        erase_region(prev);
+    }
+    if (next != by_offset_.end() && next->first == end) {
+        end = next->first + next->second;
+        next = erase_region(next);
+    }
+    insert_region(next, start, end - start);
 
     if (merged_offset && merged_size) {
-        const uint64_t start = prev ? prev->offset : offset;
-        const uint64_t end = next ? next->offset + next->size : offset + size;
         *merged_offset = start;
         *merged_size = end - start;
     }
 
-    if (prev || next) {
-        // Merge blocks if possible
-        merge_blocks(prev, offset, size, next);
-    } else {
-        // Create new block if no merging possible
-        auto *new_block = new free_block{offset, size, nullptr, nullptr, nullptr, nullptr};
-        insert_ordered_block(new_block);
-    }
-
     total_free_ += size;
     fragmentation_dirty_ = true;
-}
-
-void free_blocks_manager::find_mergeable_blocks(uint64_t offset, uint64_t size, free_block *&prev,
-                                                free_block *&next) const {
-    prev = next = nullptr;
-
-    for (free_block *current = head_; current; current = current->next) {
-        if (current->offset + current->size == offset) {
-            prev = current;
-        } else if (offset + size == current->offset) {
-            next = current;
-        }
-
-        if (prev && next)
-            break;
-    }
-}
-
-void free_blocks_manager::remove_block(free_block *block) {
-    if (!block)
-        return;
-
-    size_idx_.remove(block);
-
-    if (block->prev) {
-        block->prev->next = block->next;
-    } else {
-        head_ = block->next;
-    }
-
-    if (block->next) {
-        block->next->prev = block->prev;
-    } else {
-        tail_ = block->prev;
-    }
-
-    if (last_alloc_ == block) {
-        last_alloc_ = block->next ? block->next : head_;
-    }
-
-    delete block;
-}
-
-void free_blocks_manager::insert_ordered_block(free_block *new_block) {
-    if (!head_) {
-        head_ = tail_ = last_alloc_ = new_block;
-        size_idx_.insert(new_block);
-        return;
-    }
-
-    if (new_block->offset < head_->offset) {
-        new_block->next = head_;
-        head_->prev = new_block;
-        head_ = new_block;
-        size_idx_.insert(new_block);
-        return;
-    }
-
-    free_block *current = head_;
-    while (current->next && current->next->offset < new_block->offset) {
-        current = current->next;
-    }
-
-    new_block->next = current->next;
-    new_block->prev = current;
-
-    if (current->next) {
-        current->next->prev = new_block;
-    } else {
-        tail_ = new_block;
-    }
-    current->next = new_block;
-
-    size_idx_.insert(new_block);
-}
-
-void free_blocks_manager::merge_blocks(free_block *prev, uint64_t offset, uint64_t size,
-                                       free_block *next) {
-    if (prev && next) {
-        // Remove both blocks from the size index before merging
-        size_idx_.remove(prev);
-        size_idx_.remove(next);
-
-        // Merge all three blocks
-        prev->size += size + next->size;
-
-        if (next->next) {
-            next->next->prev = prev;
-        } else {
-            tail_ = prev;
-        }
-
-        prev->next = next->next;
-
-        // Update last_alloc_ if it points to the block being deleted
-        if (last_alloc_ == next) {
-            last_alloc_ = prev;
-        }
-
-        delete next;
-
-        // Add merged block to the index
-        size_idx_.insert(prev);
-    } else if (prev) {
-        // Remove block from index before size modification
-        size_idx_.remove(prev);
-
-        // Merge with previous block only
-        prev->size += size;
-
-        // Add updated block to index
-        size_idx_.insert(prev);
-    } else if (next) {
-        // Remove block from index before modification
-        size_idx_.remove(next);
-
-        // Merge with next block only
-        next->offset = offset;
-        next->size += size;
-
-        // Add updated block to index
-        size_idx_.insert(next);
-    } else {
-        // No blocks to merge with, create new block
-        auto *new_block = new free_block{offset, size, nullptr, nullptr, nullptr, nullptr};
-        insert_ordered_block(new_block);
-    }
+    return true;
 }
 
 uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
-    if (size == 0 || !head_)
+    if (size == 0 || by_offset_.empty())
         return UINT64_MAX;
 
-    free_block *target = nullptr;
+    auto target = by_offset_.end();
 
     switch (strategy) {
     case allocation_strategy::FIRST_FIT:
@@ -266,44 +119,18 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
         break;
     }
 
-    if (!target)
+    if (target == by_offset_.end())
         return UINT64_MAX;
 
-    const uint64_t allocated_offset = target->offset;
-
-    // Update the size index before modifying the block
-    size_idx_.remove(target);
-
-    if (target->size > size) {
-        // Split block: keep remainder in free list
-        uint64_t new_offset = target->offset + size;
-        uint64_t remaining_size = target->size - size;
-        target->offset = new_offset;
-        target->size = remaining_size;
-
-        // Re-add the modified block to the size index
-        size_idx_.insert(target);
-    } else {
-        // Use entire block: remove from free list
-        if (target->prev) {
-            target->prev->next = target->next;
-        } else {
-            head_ = target->next;
-        }
-
-        if (target->next) {
-            target->next->prev = target->prev;
-        } else {
-            tail_ = target->prev;
-        }
-
-        if (last_alloc_ == target) {
-            last_alloc_ = target->next ? target->next : head_;
-        }
-
-        delete target;
+    // The request takes the start of the region; what is left stays free.
+    const uint64_t allocated_offset = target->first;
+    const uint64_t remaining_size = target->second - size;
+    auto hint = erase_region(target);
+    if (remaining_size != 0) {
+        insert_region(hint, allocated_offset + size, remaining_size);
     }
 
+    next_fit_cursor_ = allocated_offset + size;
     total_free_ -= size;
     fragmentation_dirty_ = true;
 
@@ -311,55 +138,29 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
 }
 
 void free_blocks_manager::defragment() {
-    if (!head_ || !head_->next) {
-        return;
-    }
-
-    // Clear size index — pointers inside blocks become stale, but we rebuild
-    // the index from scratch at the end of this function.
-    size_idx_.clear();
-
-    // The free-block list is always kept sorted by offset.  A single forward
-    // pass is therefore sufficient to merge all adjacent blocks: if
-    // current->offset + current->size == next->offset the two blocks are
-    // contiguous and can be merged into one.  We stay at 'current' after each
-    // merge so that the newly enlarged block is immediately tested against its
-    // new successor (chain merges in one pass, O(n) overall).
-    free_block *current = head_;
-    while (current && current->next) {
-        free_block *nxt = current->next;
-        if (current->offset + current->size == nxt->offset) {
-            current->size += nxt->size;
-            current->next  = nxt->next;
-            if (nxt->next) {
-                nxt->next->prev = current;
-            } else {
-                tail_ = current;
-            }
-            if (last_alloc_ == nxt) {
-                last_alloc_ = current;
-            }
-            delete nxt;
-            // Do NOT advance: current may now be adjacent to its new successor.
+    // Regions are merged when they are freed, so this pass normally finds
+    // nothing; it is kept as the documented way to restore that invariant.
+    for (auto it = by_offset_.begin(); it != by_offset_.end();) {
+        auto next = std::next(it);
+        if (next != by_offset_.end() && it->first + it->second == next->first) {
+            const uint64_t offset = it->first;
+            const uint64_t size = it->second + next->second;
+            erase_region(next);
+            it = insert_region(erase_region(it), offset, size);
         } else {
-            current = current->next;
+            it = next;
         }
     }
 
-    // Rebuild size index from the merged list.
-    for (free_block *b = head_; b; b = b->next) {
-        size_idx_.insert(b);
-    }
-
-    last_alloc_ = head_;
+    next_fit_cursor_ = 0;
     fragmentation_dirty_ = true;
 }
 
 void free_blocks_manager::print_list() const {
-    free_block *current = head_;
-    while (current) {
-        DEBUG_PRINT("Block: %" PRIu64 ", %" PRIu64 "\n", current->offset, current->size);
-        current = current->next;
+    for (const auto &[offset, size] : by_offset_) {
+        DEBUG_PRINT("Block: %" PRIu64 ", %" PRIu64 "\n", offset, size);
+        UNUSED(offset);
+        UNUSED(size);
     }
 }
 
@@ -374,27 +175,16 @@ uint8_t free_blocks_manager::get_cached_fragmentation() const {
 free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_stats() const {
     fragmentation_stats stats = {};
 
-    if (!head_) {
+    if (by_offset_.empty()) {
         return stats;
     }
 
-    size_t block_count = 0;
-    uint64_t largest_block = 0;
-    uint64_t smallest_block = UINT64_MAX;
-
-    for (free_block *current = head_; current; current = current->next) {
-        block_count++;
-        largest_block = std::max(largest_block, current->size);
-        smallest_block = std::min(smallest_block, current->size);
-    }
-
+    const size_t block_count = by_offset_.size();
     stats.num_free_regions = block_count;
     stats.total_free_bytes = total_free_;
-    stats.largest_free_region = largest_block;
-    stats.smallest_free_region = (block_count > 0) ? smallest_block : 0;
-    stats.avg_free_region_size = (block_count > 0) ?
-        static_cast<double>(total_free_) / block_count : 0.0;
-
+    stats.largest_free_region = by_size_.rbegin()->first;
+    stats.smallest_free_region = by_size_.begin()->first;
+    stats.avg_free_region_size = static_cast<double>(total_free_) / static_cast<double>(block_count);
     stats.fragmentation_percent = calculate_fragmentation();
 
     return stats;
@@ -410,12 +200,11 @@ bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
     if (size > UINT64_MAX - offset)
         return false;
 
-    for (free_block *current = head_; current; current = current->next) {
-        if (current->offset <= offset && offset + size <= current->offset + current->size) {
-            return true;
-        }
-    }
-    return false;
+    auto it = by_offset_.upper_bound(offset);
+    if (it == by_offset_.begin())
+        return false;
+    --it;
+    return offset + size <= it->first + it->second;
 }
 
 uint8_t free_blocks_manager::calculate_fragmentation() const {
@@ -450,13 +239,7 @@ static uint64_t get_le64(const uint8_t *src) {
     return v;
 }
 
-size_t free_blocks_manager::free_region_count() const {
-    size_t count = 0;
-    for (free_block *current = head_; current; current = current->next) {
-        count++;
-    }
-    return count;
-}
+size_t free_blocks_manager::free_region_count() const { return by_offset_.size(); }
 
 uint32_t free_blocks_manager::serialize(std::vector<uint8_t> &buffer) {
     const size_t block_count = free_region_count();
@@ -468,9 +251,9 @@ uint32_t free_blocks_manager::serialize(std::vector<uint8_t> &buffer) {
     uint8_t *out = buffer.data();
     put_le64(out, block_count);
     out += sizeof(uint64_t);
-    for (free_block *current = head_; current; current = current->next) {
-        put_le64(out, current->offset);
-        put_le64(out + sizeof(uint64_t), current->size);
+    for (const auto &[offset, size] : by_offset_) {
+        put_le64(out, offset);
+        put_le64(out + sizeof(uint64_t), size);
         out += STATE_ENTRY_SIZE;
     }
     put_le64(out, spare_slot_offset_);
@@ -518,15 +301,7 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
         spare_size = get_le64(trailer + sizeof(uint64_t));
     }
 
-    // Clear existing blocks
-    while (head_) {
-        free_block *temp = head_;
-        head_ = head_->next;
-        delete temp;
-    }
-    head_ = tail_ = last_alloc_ = nullptr;
-    total_free_ = 0;
-    size_idx_.clear();
+    clear_regions();
     spare_slot_offset_ = spare_offset;
     spare_slot_size_ = spare_size;
 
@@ -537,26 +312,13 @@ bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
 
         // Skip invalid entries
         if (block_size == 0) continue;
-        if (file_size_ && offset + block_size > *file_size_) continue;
         if (offset + block_size < offset) continue; // overflow
+        if (file_size_ && offset + block_size > *file_size_) continue;
 
-        add_free_block(offset, block_size);
-    }
-
-    // Verify no overlapping blocks (list is offset-sorted after add_free_block).
-    for (free_block *cur = head_; cur && cur->next; cur = cur->next) {
-        if (cur->offset + cur->size > cur->next->offset) {
-            // Corrupted data: overlapping free blocks — reset to empty state.
-            while (head_) {
-                free_block *tmp = head_;
-                head_ = head_->next;
-                delete tmp;
-            }
-            head_ = tail_ = last_alloc_ = nullptr;
-            total_free_ = 0;
-            size_idx_.clear();
+        if (!add_free_block(offset, block_size)) {
+            // Overlapping free regions: the state is corrupted, start empty.
+            clear_regions();
             spare_slot_offset_ = spare_slot_size_ = 0;
-            fragmentation_dirty_ = true;
             return false;
         }
     }
@@ -709,41 +471,39 @@ bool free_blocks_manager::load_from_file(compio_archive *archive) {
 
 // Private helper methods
 
-free_block *free_blocks_manager::find_first_fit(const uint64_t size) const {
-    for (auto *blk = head_; blk; blk = blk->next) {
-        if (blk->size >= size)
-            return blk;
-    }
-    return nullptr;
+free_blocks_manager::region_map::iterator free_blocks_manager::find_first_fit(const uint64_t size) {
+    // Nothing fits: skip the walk over every region.
+    if (by_size_.rbegin()->first < size)
+        return by_offset_.end();
+    return std::find_if(by_offset_.begin(), by_offset_.end(),
+                        [size](const auto &region) { return region.second >= size; });
 }
 
-free_block *free_blocks_manager::find_best_fit(const uint64_t size) const {
-    return size_idx_.find_best_fit(size);
+free_blocks_manager::region_map::iterator free_blocks_manager::find_best_fit(const uint64_t size) {
+    auto it = by_size_.lower_bound({size, 0});
+    return it == by_size_.end() ? by_offset_.end() : by_offset_.find(it->second);
 }
 
-free_block *free_blocks_manager::find_worst_fit(const uint64_t size) const {
-    return size_idx_.find_worst_fit(size);
+free_blocks_manager::region_map::iterator free_blocks_manager::find_worst_fit(const uint64_t size) {
+    const uint64_t largest = by_size_.rbegin()->first;
+    if (largest < size)
+        return by_offset_.end();
+    return by_offset_.find(by_size_.lower_bound({largest, 0})->second);
 }
 
-free_block *free_blocks_manager::find_next_fit(const uint64_t size) const {
-    if (!last_alloc_ || !head_)
-        return find_first_fit(size);
+free_blocks_manager::region_map::iterator free_blocks_manager::find_next_fit(const uint64_t size) {
+    if (by_size_.rbegin()->first < size)
+        return by_offset_.end();
 
-    free_block *current = last_alloc_;
-    while (current) {
-        if (current->size >= size)
-            return current;
-        current = current->next;
+    const auto fits = [size](const auto &region) { return region.second >= size; };
+    const auto start = by_offset_.lower_bound(next_fit_cursor_);
+    auto it = std::find_if(start, by_offset_.end(), fits);
+    if (it == by_offset_.end()) {
+        it = std::find_if(by_offset_.begin(), start, fits);
+        if (it == start)
+            return by_offset_.end();
     }
-
-    current = head_;
-    while (current && current != last_alloc_) {
-        if (current->size >= size)
-            return current;
-        current = current->next;
-    }
-
-    return nullptr;
+    return it;
 }
 
 // block_allocator implementation
@@ -875,7 +635,9 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
 
     uint64_t merged_offset = offset;
     uint64_t merged_size = size;
-    blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size);
+    if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+        return;
+    }
     if (wal_) {
              // Similar to allocate, strict WAL logging of every free list change is expensive.
              // We rely on periodic checkpoints of the allocator state.
@@ -898,12 +660,11 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
 
 bool block_allocator::punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset,
                                  uint64_t merged_size) {
-#ifdef __linux__
-    const int fd = fileno(archive_->file);
     if (fs_block_size_ == 0) {
-        struct stat st;
-        fs_block_size_ = (fstat(fd, &st) == 0 && st.st_blksize > 0)
-                             ? static_cast<uint64_t>(st.st_blksize) : 4096;
+        fs_block_size_ = hole_granularity(archive_->file);
+        if (fs_block_size_ == 0) {
+            return false;
+        }
     }
     const uint64_t bs = fs_block_size_;
     const uint64_t end = offset + size;
@@ -918,16 +679,7 @@ bool block_allocator::punch_hole(uint64_t offset, uint64_t size, uint64_t merged
     const uint64_t punch_start = std::min(lo, offset);
     const uint64_t punch_end = std::max(hi, end);
 
-    return fallocate(fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
-                     static_cast<off_t>(punch_start),
-                     static_cast<off_t>(punch_end - punch_start)) == 0;
-#else
-    UNUSED(offset);
-    UNUSED(size);
-    UNUSED(merged_offset);
-    UNUSED(merged_size);
-    return false;
-#endif
+    return punch_file_hole(archive_->file, punch_start, punch_end - punch_start);
 }
 
 void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint64_t merged_offset,

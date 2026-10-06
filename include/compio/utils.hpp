@@ -101,6 +101,27 @@ int64_t ftell64(FILE *file);
 bool is_file_empty(FILE *file);
 
 /**
+ * @brief Unit in which the filesystem takes storage back from the middle of a file
+ * @param file File the question is about
+ * @return Size of that unit in bytes, 0 if the platform has no way to punch holes
+ */
+uint64_t hole_granularity(FILE *file);
+
+/**
+ * @brief Give the storage under a byte range back to the filesystem, keeping the file size
+ *
+ * The range reads as zeros afterwards wherever storage was released. Only whole
+ * units of hole_granularity() are released; what happens to the partial units
+ * at the edges depends on the platform (zeroed or left as they are).
+ *
+ * @param file File opened for writing; its buffered data must be flushed by the caller
+ * @param offset Start of the range
+ * @param size Length of the range
+ * @return False if hole punching is unavailable here or the request failed
+ */
+bool punch_file_hole(FILE *file, uint64_t offset, uint64_t size);
+
+/**
  * @brief Check if system is Big Endian
  * @return true if Big Endian, false if Little Endian
  */

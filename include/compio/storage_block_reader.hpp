@@ -158,6 +158,15 @@ public:
     ~block();
 
     /**
+     * @brief Write the block to the archive if it has unsaved modifications
+     *
+     * Compresses the data, places it at a newly allocated address (the old
+     * place is released) and records that address in the index. The block
+     * stays usable and is considered unmodified afterwards.
+     */
+    void write_back();
+
+    /**
      * @brief Get read-only access to block data
      *
      * @return Const pointer to the uncompressed block data
@@ -365,6 +374,11 @@ public:
      * all changes are persisted or when you need to free memory.
      */
     void clear_cache();
+
+    /**
+     * @brief Write all modified blocks to the archive, keeping them cached
+     */
+    void flush_cache();
 
     /**
      * @brief Set maintenance mode (unlocked updates)

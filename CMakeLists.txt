@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.15)
 
+# Dependencies come from the bundled vcpkg (the vcpkg submodule and vcpkg.json)
+# unless another toolchain is given. A toolchain only takes effect when it is
+# set before project().
+if (NOT DEFINED CMAKE_TOOLCHAIN_FILE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+        CACHE STRING "CMake toolchain file")
+endif()
+
 project(compio LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
@@ -19,13 +27,6 @@ endif()
 
 IF (MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-endif()
-
-# use vcpkg toolchain by default
-if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    if (EXISTS "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE "${CMAKE_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "CMake toolchain file")
-    endif()
 endif()
 
 

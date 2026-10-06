@@ -56,6 +56,12 @@ void node_reader::remove_node(const shared_node &node) {
 
 void node_reader::clear_cache() { cache.clear(); }
 
+void node_reader::flush_cache() {
+    for (auto &node : cache.values()) {
+        node.flush();
+    }
+}
+
 double node_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
 
 btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
@@ -446,6 +452,11 @@ void btree::clear_cache() {
 
 void btree::_clear_cache() {
     reader.clear_cache();
+}
+
+void btree::flush_cache() {
+    std::unique_lock<std::shared_mutex> lock(mutex);
+    reader.flush_cache();
 }
 
 double btree::get_cache_hit_probability() const {

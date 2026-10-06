@@ -71,6 +71,17 @@ public:
         for (auto &s : _shards) s->clear();
     }
 
+    // Values of all shards; the cache keeps them.
+    std::vector<value_t> values() const {
+        std::vector<value_t> result;
+        for (auto &s : _shards) {
+            auto part = s->values();
+            result.insert(result.end(), std::make_move_iterator(part.begin()),
+                          std::make_move_iterator(part.end()));
+        }
+        return result;
+    }
+
     std::vector<value_t> extract_all() {
         std::vector<value_t> result;
         for (auto &s : _shards) {

@@ -7,7 +7,6 @@
     "lz4",
     "zstd",
     "brotli",
-    "cunit",
     "gtest",
     "benchmark"
   ]

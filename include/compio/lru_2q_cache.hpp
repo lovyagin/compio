@@ -1,6 +1,7 @@
 #ifndef _LRU_2Q_CACHE_HPP_INCLUDED_
 #define _LRU_2Q_CACHE_HPP_INCLUDED_
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <list>
@@ -11,15 +12,22 @@
 
 namespace cache {
 
+// 2Q replacement (Johnson and Shasha, VLDB 1994), full version.
+//
+// A new entry enters a FIFO queue (A1in). An entry that leaves that queue is
+// dropped, but its key is remembered in a ghost queue (A1out). Only an entry
+// that comes back while its key is still remembered goes to the main LRU queue
+// (Am): it has been referenced again after a pause, which is what tells a
+// reused entry from one that is touched a few times in a row and never again.
+// Hits inside A1in therefore do not promote.
+//
+// A1in is meant to take a quarter of the cache and the ghost queue remembers
+// half as many keys as there are entries. Nothing is evicted while there is
+// room, so a cache that is not full keeps everything.
 template <typename key_t, typename value_t, typename comparator = std::less<key_t>>
 class lru_2q_cache {
 public:
-    lru_2q_cache(size_t max_size)
-        : _max_size(max_size),
-          _in_max_size(max_size / 4),
-          _main_max_size(max_size - _in_max_size),
-          _hit_count(0),
-          _total_count(0) {}
+    lru_2q_cache(size_t max_size) : _max_size(max_size), _hit_count(0), _total_count(0) {}
 
     void put(const key_t &key, const value_t &value) {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -35,46 +43,32 @@ public:
             return;
         }
 
-        // New entry: add to in_queue
-        _in_queue.push_back(key);
-        _items_map[key] = {value, false, --_in_queue.end()};
-
-        // Evict from in_queue if over capacity
-        if (_in_queue.size() > _in_max_size) {
-            auto oldest_key = _in_queue.front();
-            _in_queue.pop_front();
-            _items_map.erase(oldest_key);
+        auto ghost = _ghost_map.find(key);
+        if (ghost != _ghost_map.end()) {
+            _ghost_queue.erase(ghost->second);
+            _ghost_map.erase(ghost);
+            _main_queue.push_front(key);
+            _items_map[key] = {value, true, _main_queue.begin()};
+        } else {
+            _in_queue.push_back(key);
+            _items_map[key] = {value, false, --_in_queue.end()};
         }
 
-        // Evict from main_queue if total over capacity
-        if (_items_map.size() > _max_size) {
-            auto oldest_key = _main_queue.back();
-            _main_queue.pop_back();
-            _items_map.erase(oldest_key);
+        while (_items_map.size() > _max_size) {
+            evict_one_locked();
         }
         _approx_size.store(_items_map.size(), std::memory_order_relaxed);
     }
 
-    // Drop one entry, following the 2Q rule: entries seen only once go first
-    // while they take more than their quarter of the cache. Returns false if
-    // the cache is empty. The entry is destroyed under the cache lock, so a
-    // lookup for it waits until its destructor has run.
+    // Drop one entry by the 2Q rule. Returns false if the cache is empty. The
+    // entry is destroyed under the cache lock, so a lookup for it waits until
+    // its destructor has run.
     bool evict_one() {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_items_map.empty()) {
             return false;
         }
-        const bool from_in_queue =
-            _main_queue.empty() || _in_queue.size() * 4 > _items_map.size();
-        if (from_in_queue) {
-            auto oldest_key = _in_queue.front();
-            _in_queue.pop_front();
-            _items_map.erase(oldest_key);
-        } else {
-            auto oldest_key = _main_queue.back();
-            _main_queue.pop_back();
-            _items_map.erase(oldest_key);
-        }
+        evict_one_locked();
         _approx_size.store(_items_map.size(), std::memory_order_relaxed);
         return true;
     }
@@ -92,14 +86,7 @@ public:
 
         ++_hit_count;
 
-        if (!it->second.in_main_queue) {
-            // Promote from in_queue to main_queue
-            _in_queue.erase(it->second.queue_iter);
-            _main_queue.push_front(key);
-            it->second.queue_iter = _main_queue.begin();
-            it->second.in_main_queue = true;
-        } else {
-            // Already in main_queue: move to front (LRU)
+        if (it->second.in_main_queue) {
             _main_queue.splice(_main_queue.begin(), _main_queue, it->second.queue_iter);
         }
 
@@ -131,30 +118,25 @@ public:
         _items_map.clear();
         _in_queue.clear();
         _main_queue.clear();
+        _ghost_map.clear();
+        _ghost_queue.clear();
         _approx_size.store(0, std::memory_order_relaxed);
+    }
+
+    // Values in the order extract_all() returns them; the cache keeps them.
+    std::vector<value_t> values() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return values_locked();
     }
 
     std::vector<value_t> extract_all() {
         std::lock_guard<std::mutex> lock(_mutex);
-        std::vector<value_t> result;
-        result.reserve(_items_map.size());
-        // Iterate in insertion order: first in_queue (FIFO, oldest first),
-        // then main_queue (most recently promoted first).
-        for (const auto &key : _in_queue) {
-            auto it = _items_map.find(key);
-            if (it != _items_map.end()) {
-                result.push_back(it->second.value);
-            }
-        }
-        for (const auto &key : _main_queue) {
-            auto it = _items_map.find(key);
-            if (it != _items_map.end()) {
-                result.push_back(it->second.value);
-            }
-        }
+        std::vector<value_t> result = values_locked();
         _items_map.clear();
         _in_queue.clear();
         _main_queue.clear();
+        _ghost_map.clear();
+        _ghost_queue.clear();
         _approx_size.store(0, std::memory_order_relaxed);
         return result;
     }
@@ -183,6 +165,14 @@ public:
     template <typename Func>
     void for_each_in_range(const key_t& key_min, const key_t& key_max, Func&& func) {
         std::lock_guard<std::mutex> lock(_mutex);
+
+        // The keys in the range are about to mean something else, so what is
+        // remembered about them no longer applies.
+        for (auto ghost = _ghost_map.lower_bound(key_min); ghost != _ghost_map.end() && !_ghost_map.key_comp()(key_max, ghost->first);) {
+            _ghost_queue.erase(ghost->second);
+            ghost = _ghost_map.erase(ghost);
+        }
+
         auto it_start = _items_map.lower_bound(key_min);
         auto it_end = _items_map.upper_bound(key_max);
 
@@ -240,13 +230,58 @@ private:
         typename std::list<key_t>::iterator queue_iter;
     };
 
+    // First the entries seen once (oldest first), then the main queue (most
+    // recently used first).
+    std::vector<value_t> values_locked() const {
+        std::vector<value_t> result;
+        result.reserve(_items_map.size());
+        for (const auto &key : _in_queue) {
+            result.push_back(_items_map.find(key)->second.value);
+        }
+        for (const auto &key : _main_queue) {
+            result.push_back(_items_map.find(key)->second.value);
+        }
+        return result;
+    }
+
+    // The cache may be one shard of a shared budget, so its own share is not
+    // known in advance: the quarter is taken of what it holds at the moment.
+    void evict_one_locked() {
+        const bool from_in_queue = _main_queue.empty() || _in_queue.size() * 4 > _items_map.size();
+        if (from_in_queue) {
+            auto key = _in_queue.front();
+            _in_queue.pop_front();
+            _items_map.erase(key);
+            remember(key);
+        } else {
+            auto key = _main_queue.back();
+            _main_queue.pop_back();
+            _items_map.erase(key);
+        }
+    }
+
+    void remember(const key_t &key) {
+        const size_t limit = std::min(_max_size / 2, std::max<size_t>(_items_map.size() / 2, kMinGhostKeys));
+        if (limit == 0) {
+            return;
+        }
+        _ghost_queue.push_back(key);
+        _ghost_map[key] = --_ghost_queue.end();
+        while (_ghost_queue.size() > limit) {
+            _ghost_map.erase(_ghost_queue.front());
+            _ghost_queue.pop_front();
+        }
+    }
+
+    static constexpr size_t kMinGhostKeys = 16;
+
     std::map<key_t, ItemInfo, comparator> _items_map;
-    std::list<key_t> _in_queue;   // FIFO queue
-    std::list<key_t> _main_queue; // LRU queue
+    std::list<key_t> _in_queue;    // A1in: FIFO, values held
+    std::list<key_t> _main_queue;  // Am: LRU, values held
+    std::list<key_t> _ghost_queue; // A1out: FIFO, keys only
+    std::map<key_t, typename std::list<key_t>::iterator, comparator> _ghost_map;
 
     size_t _max_size;
-    size_t _in_max_size;
-    size_t _main_max_size;
     size_t _hit_count;
     size_t _total_count;
     std::atomic<size_t> _approx_size{0};

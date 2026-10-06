@@ -276,6 +276,17 @@ public:
         return _cache_items_map.size() >= _max_size; 
     }
 
+    // Values currently held; the cache keeps them.
+    std::vector<value_t> values() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        std::vector<value_t> result;
+        result.reserve(_cache_items_list.size());
+        for (const auto& item : _cache_items_list) {
+            result.push_back(item.second);
+        }
+        return result;
+    }
+
     std::vector<value_t> extract_all() {
         std::lock_guard<std::mutex> lock(_mutex);
         std::vector<value_t> result;
@@ -377,6 +388,16 @@ public:
         for (auto &shard : _shards) {
             shard->clear();
         }
+    }
+
+    // Values of all shards; the cache keeps them.
+    std::vector<value_t> values() const {
+        std::vector<value_t> result;
+        for (const auto &shard : _shards) {
+            auto part = shard->values();
+            result.insert(result.end(), part.begin(), part.end());
+        }
+        return result;
     }
 
     double get_hit_probability() const {

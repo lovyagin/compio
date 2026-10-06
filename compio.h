@@ -246,10 +246,12 @@ typedef struct {
 
     compio_allocation_strategy allocation_strategy; /**< Free block selection strategy (default: best fit) */
     bool fill_holes_with_zeros;      /**< Give the storage under freed regions back to the filesystem
-                                          (default: false). On Linux a hole is punched, which makes
-                                          the container a sparse file: its size stays the same while
-                                          its disk usage shrinks. Where hole punching is unavailable
-                                          the region is overwritten with zeros instead. */
+                                          (default: false). A hole is punched (Linux: fallocate,
+                                          macOS: F_PUNCHHOLE, Windows: sparse file with zeroed
+                                          ranges), which makes the container a sparse file: its
+                                          size stays the same while its disk usage shrinks. Where
+                                          the platform or the filesystem cannot do that, the region
+                                          is overwritten with zeros instead. */
     uint8_t fragmentation_threshold; /**< Compact the archive when free regions take more than this
                                         percentage of the container (default: 30; 100 disables
                                         automatic compaction). Checked after a file is removed,
@@ -528,7 +530,8 @@ uint64_t compio_get_size(compio_file *file);
  * @brief Flushes all cached data to disk
  *
  * Forces all buffered changes to be written to the underlying archive file and
- * synced to the filesystem. Ensures durability of all prior operations.
+ * synced to the filesystem. Ensures durability of all prior operations. The
+ * caches keep their contents, so reads after a flush do not go back to the file.
  *
  * @param[in] archive Opened archive handle
  *

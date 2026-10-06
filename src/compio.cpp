@@ -49,6 +49,9 @@ void compio_build_default_config(compio_config *result) {
 }
 
 int compio_get_compression_type(const char *fp, compio_compression_type *t) {
+    if (!fp || !t) {
+        return -1;
+    }
     FILE *file = fopen(fp, "r");
     if (file == nullptr) {
         return -1;
@@ -201,7 +204,12 @@ static bool validate_config(const compio_config *c, bool allow_zeros = false) {
 }
 
 compio_archive *compio_open_archive(const char *fp, const char *mode, const compio_config *c) {
-    if (!validate_config(c, true)) {
+    compio_config default_config;
+    if (!c) {
+        compio_build_default_config(&default_config);
+        c = &default_config;
+    }
+    if (!fp || !mode || !validate_config(c, true)) {
         errno = EINVAL;
         return NULL;
     }
@@ -741,9 +749,19 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
         if (compio_begin_batch(file->archive) == COMPIO_SUCCESS) {
             file->is_auto_batching = true;
             file->auto_batch_count = 1; // Reset counter to count batched operations
+            file->archive->auto_batching_files.push_back(file);
         }
         // On failure, silently continue without auto-batching
     }
+}
+
+// Commit the batch that was opened automatically for this file.
+static void end_auto_batch(compio_file *file) {
+    end_batch_impl(file->archive); // Best effort - lock already held
+    file->is_auto_batching = false;
+    file->auto_batch_count = 0;
+    auto &batching = file->archive->auto_batching_files;
+    batching.erase(std::remove(batching.begin(), batching.end(), file), batching.end());
 }
 
 /**
@@ -752,9 +770,7 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
 static void end_auto_batch_if_needed(compio_file *file) {
     if (file->is_auto_batching &&
         file->auto_batch_count >= file->archive->config.auto_batch_size) {
-        end_batch_impl(file->archive); // Best effort - lock already held
-        file->is_auto_batching = false;
-        file->auto_batch_count = 0;
+        end_auto_batch(file);
     }
 }
 
@@ -763,9 +779,7 @@ static void end_auto_batch_if_needed(compio_file *file) {
  */
 static void end_auto_batch_if_active(compio_file *file) {
     if (file->is_auto_batching) {
-        end_batch_impl(file->archive); // Best effort - lock already held
-        file->is_auto_batching = false;
-        file->auto_batch_count = 0;
+        end_auto_batch(file);
     }
 }
 
@@ -1106,6 +1120,10 @@ int compio_close_archive(compio_archive *archive) {
 }
 
 int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
+    if (!file) {
+        errno = EINVAL;
+        return -1;
+    }
     int64_t new_cursor = file->cursor;
     switch (origin) {
     case COMPIO_SEEK_SET:
@@ -1134,9 +1152,21 @@ int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
     return 0;
 }
 
-uint64_t compio_tell(compio_file *file) { return file->cursor; }
+uint64_t compio_tell(compio_file *file) {
+    if (!file) {
+        errno = EINVAL;
+        return 0;
+    }
+    return file->cursor;
+}
 
-uint64_t compio_get_size(compio_file *file) { return file->size; }
+uint64_t compio_get_size(compio_file *file) {
+    if (!file) {
+        errno = EINVAL;
+        return 0;
+    }
+    return file->size;
+}
 
 static void validate_no_overlap_in_range(const std::vector<std::pair<tree_key, tree_val>> range) {
     for (std::size_t i = 1; i < range.size(); ++i) {
@@ -1576,12 +1606,20 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
     if (!file || !file->archive) {
         return 0;
     }
+    if (!ptr && size != 0) {
+        errno = EINVAL;
+        return 0;
+    }
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
     return compio_write_impl(ptr, size, file);
 }
 
 uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     if (!file || !file->archive) {
+        return 0;
+    }
+    if (!ptr && size != 0) {
+        errno = EINVAL;
         return 0;
     }
 
@@ -1772,7 +1810,10 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             break;
         }
         
-        assert(b->size() == val.size);
+        // The size in the index is not asserted here: after a crash the block on
+        // disk can be a newer version than the index entry describes, because
+        // a rewritten block may take the place of its previous version before
+        // the header of the new state is durable. The block knows its own size.
 
         const uint64_t block_start = key.pos;
         const uint64_t block_end = key.pos + b->size();
@@ -1801,11 +1842,14 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
 }
 
 uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
-    DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
-
     if (!file || !file->archive) {
         return 0;
     }
+    if (!ptr && size != 0) {
+        errno = EINVAL;
+        return 0;
+    }
+    DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
 
 #ifdef COMPIO_DISABLE_INSERT_ERASE
@@ -2405,9 +2449,11 @@ static void flush_impl(compio_archive *archive) {
     // Track whether all durability operations succeed; used to decide if we can safely checkpoint.
     bool durable = true;
 
-    if (archive->block_reader) archive->block_reader->clear_cache();
+    // Dirty blocks first: writing them updates the index nodes. Both caches
+    // keep their contents, so a flush does not cost the reads that follow.
+    if (archive->block_reader) archive->block_reader->flush_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
-    if (archive->index) archive->index->clear_cache();
+    if (archive->index) archive->index->flush_cache();
 
     // Sync files table (allocate if needed, write to disk)
     if (can_write) {
@@ -2450,8 +2496,10 @@ static void flush_impl(compio_archive *archive) {
             durable = false;
         } else {
             flush_header_double_buffered(archive);
-            if (fflush(archive->file)) {
-                WARNING_PRINT("warning: fflush failed after header write\n");
+            // The header is what makes this flush visible after a crash, so it
+            // has to reach the disk as well, with or without a journal.
+            if (can_write ? !fsync_archive(archive->file) : fflush(archive->file) != 0) {
+                WARNING_PRINT("warning: failed to sync the header\n");
                 durable = false;
             } else {
                 truncate_after_header_publish(archive);
@@ -2459,44 +2507,29 @@ static void flush_impl(compio_archive *archive) {
         }
     }
 
-    // Now that everything is flushed to the OS buffer for the main file,
-    // and the WAL transaction is committed and synced (via commit_transaction),
-    // we can safely checkpoint, but only if all durability steps have succeeded.
-    //
-    // Checkpointing means:
-    // 1. fsync the main archive file (ensure data is durable).
-    // 2. Truncate the WAL (it is no longer needed since main file is up to date).
-    
-    if (wal_active && durable && wal_ptr->get_batch_depth() == 0) {
-        bool main_file_synced = true;
-#ifdef _WIN32
-        if (_commit(_fileno(archive->file)) != 0) {
-            WARNING_PRINT("warning: _commit failed in compio_flush checkpoint\n");
-            main_file_synced = false;
+    // The archive itself is durable now, so the journal is no longer needed.
+    // It is kept if anything above failed: recovery may still need it.
+    if (wal_active && !in_batch) {
+        if (!durable) {
+            WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
+        } else if (!archive->wal->checkpoint()) {
+            WARNING_PRINT("warning: WAL checkpoint failed\n");
         }
-#else
-        if (fsync(fileno(archive->file)) != 0) {
-            WARNING_PRINT("warning: fsync failed in compio_flush checkpoint\n");
-            main_file_synced = false;
-        }
-#endif
-        if (!main_file_synced) {
-            WARNING_PRINT("warning: skipping WAL checkpoint due to main file sync failure\n");
-        } else {
-            if (!archive->wal->checkpoint()) {
-                 WARNING_PRINT("warning: WAL checkpoint failed\n");
-            }
-        }
-    } else if (wal_active && archive->wal && !durable) {
-        // We had a durability failure earlier (e.g., WAL commit or fflush);
-        // do not truncate the WAL so that recovery remains possible.
-        WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
     }
 }
 
 void compio_flush(compio_archive *archive) {
     if (!archive) return;
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+
+    // A batch opened automatically for sequential writes defers the commit and
+    // the header. The caller did not ask for that batch and expects a flush to
+    // make everything durable, so such batches end here. A batch the caller
+    // opened with compio_begin_batch keeps deferring, as documented.
+    while (!archive->auto_batching_files.empty()) {
+        end_auto_batch(archive->auto_batching_files.back());
+    }
+
     flush_impl(archive);
 }
 

@@ -268,3 +268,53 @@ TEST_F(WalRecoveryTest, CompioFlushTruncatesWal) {
     compio_close_file(f);
     compio_close_archive(archive);
 }
+
+// Sequential writes are batched automatically, and a batch defers the commit
+// and the header. A flush must still make everything written so far durable:
+// the state of the files right after it is what a crash would leave behind.
+TEST_F(WalRecoveryTest, FlushIsDurableDuringSequentialWrites) {
+    for (const bool wal_enabled : {true, false}) {
+        compio_config config;
+        compio_build_default_config(&config);
+        config.block_size = 4096;
+        config.max_files = 16;
+        config.enable_wal = wal_enabled;
+
+        const std::vector<uint8_t> chunk(3000, 0xC7);
+        constexpr int CHUNKS = 6; // enough consecutive writes to start a batch
+
+        compio_archive* archive = compio_open_archive(filename, "w", &config);
+        ASSERT_NE(archive, nullptr);
+        compio_file* file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        for (int i = 0; i < CHUNKS; i++) {
+            ASSERT_EQ(compio_write(chunk.data(), chunk.size(), file), chunk.size());
+        }
+        compio_flush(archive);
+
+        // What is on disk now, as a crash would leave it.
+        const std::string crashed = std::string(filename) + ".crashed";
+        fs::copy_file(filename, crashed, fs::copy_options::overwrite_existing);
+        if (fs::exists(wal_filename)) {
+            fs::copy_file(wal_filename, crashed + ".wal", fs::copy_options::overwrite_existing);
+        }
+        compio_close_file(file);
+        compio_close_archive(archive);
+
+        compio_archive* reopened = compio_open_archive(crashed.c_str(), "r+", &config);
+        ASSERT_NE(reopened, nullptr) << "wal=" << wal_enabled;
+        compio_file* data = compio_open_file("data", reopened);
+        ASSERT_NE(data, nullptr);
+        EXPECT_EQ(compio_get_size(data), CHUNKS * chunk.size()) << "wal=" << wal_enabled;
+        std::vector<uint8_t> back(CHUNKS * chunk.size());
+        EXPECT_EQ(compio_read(back.data(), back.size(), data), back.size());
+        EXPECT_EQ(back, std::vector<uint8_t>(back.size(), 0xC7));
+        compio_close_file(data);
+        compio_close_archive(reopened);
+
+        fs::remove(crashed);
+        fs::remove(crashed + ".wal");
+        fs::remove(filename);
+        fs::remove(wal_filename);
+    }
+}

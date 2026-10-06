@@ -91,6 +91,18 @@ cd build/benchmarks
 
 All options are listed at the top of `custom/random_modification.cpp`.
 
+### 6. **Free Space Scaling** (`free_space_scaling`)
+Cost of the free space manager against the number of free regions, without any
+file I/O: time to build the set of regions (paid when an archive is opened), one
+allocation and one release, for each placement strategy. Output is CSV.
+
+**Run:**
+```bash
+cd build/benchmarks
+./free_space_scaling            # 1000 ... 256000 regions
+./free_space_scaling 4096000
+```
+
 ## Quick Start
 
 ### Build all benchmarks:

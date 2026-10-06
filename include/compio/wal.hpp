@@ -18,7 +18,6 @@ namespace compio {
 enum class WalRecordType : uint8_t {
     BLOCK = 1,              ///< Data block write
     INDEX_NODE = 2,         ///< B-tree index node modification
-    HEADER = 3,             ///< Archive header update
     ALLOCATOR = 4,          ///< Allocator state change
     COMMIT = 255            ///< Transaction commit marker
 };
@@ -31,10 +30,10 @@ enum class WalRecordType : uint8_t {
  * about the record type, location, size, and integrity check.
  */
 struct WalRecordHeader {
-    WalRecordType type;     ///< Type of record (BLOCK, INDEX_NODE, HEADER, ALLOCATOR, COMMIT)
+    WalRecordType type;     ///< Type of record (BLOCK, INDEX_NODE, ALLOCATOR, COMMIT)
     uint64_t addr;          ///< Address/offset in the main archive file where data will be written
     uint64_t size;          ///< Size of the record payload in bytes
-    uint32_t checksum;      ///< CRC32 checksum of payload for integrity verification
+    uint32_t checksum;      ///< FNV-1a (32-bit) of the payload for integrity verification
 };
 
 /**
@@ -140,7 +139,7 @@ public:
      * Logs a single modification record. The record is written to the WAL file
      * but NOT immediately synced (sync deferred until commit_transaction).
      *
-     * @param[in] type Record type (BLOCK, INDEX_NODE, HEADER, ALLOCATOR)
+     * @param[in] type Record type (BLOCK, INDEX_NODE, ALLOCATOR)
      * @param[in] addr Archive file offset where this data will be written
      * @param[in] data Payload data to be logged. Must not be nullptr if size > 0.
      * @param[in] size Payload size in bytes
