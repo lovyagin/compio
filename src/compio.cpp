@@ -2405,9 +2405,11 @@ static void flush_impl(compio_archive *archive) {
     // Track whether all durability operations succeed; used to decide if we can safely checkpoint.
     bool durable = true;
 
-    if (archive->block_reader) archive->block_reader->clear_cache();
+    // Dirty blocks first: writing them updates the index nodes. Both caches
+    // keep their contents, so a flush does not cost the reads that follow.
+    if (archive->block_reader) archive->block_reader->flush_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
-    if (archive->index) archive->index->clear_cache();
+    if (archive->index) archive->index->flush_cache();
 
     // Sync files table (allocate if needed, write to disk)
     if (can_write) {

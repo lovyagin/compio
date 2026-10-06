@@ -225,7 +225,14 @@ TEST(BlockCacheTest, SingleFileUsesWholeBlockCache) {
     compio_file *f = compio_open_file("data", ar);
     ASSERT_NE(f, nullptr);
     ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
-    compio_flush(ar); // empties the cache: the reads below start cold
+    compio_close_file(f);
+    compio_close_archive(ar);
+
+    // Reopened: the reads below start cold.
+    ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
 
     auto read_all = [&]() {
         std::vector<uint8_t> chunk(1024);
@@ -297,6 +304,108 @@ TEST(BlockCacheTest, RepeatedSequentialReadIsServedFromCache) {
 
     compio_close_file(f);
     compio_close_archive(ar);
+    remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
+}
+
+// A flush writes the modified blocks out and keeps them (and everything else)
+// cached, so the reads that follow do not go back to the file.
+TEST(BlockCacheTest, FlushKeepsCacheWarm) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+    const compio_config cfg = counting_config();
+
+    constexpr size_t TOTAL = 300 * 4096;
+    std::vector<uint8_t> data(TOTAL);
+    for (size_t i = 0; i < TOTAL; i++) data[i] = static_cast<uint8_t>((i / 11) ^ (i >> 7));
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
+
+    compress_calls = 0;
+    compio_flush(ar);
+    EXPECT_GE(compress_calls, 300u);
+
+    decompress_calls = 0;
+    std::vector<uint8_t> back(TOTAL);
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_read(back.data(), TOTAL, f), TOTAL);
+    EXPECT_EQ(back, data);
+    EXPECT_EQ(decompress_calls, 0u);
+
+    // Nothing changed since: a second flush has nothing to write.
+    compress_calls = 0;
+    compio_flush(ar);
+    EXPECT_EQ(compress_calls, 0u);
+
+    compio_close_file(f);
+    compio_close_archive(ar);
+    remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
+}
+
+// Blocks that were written out by a flush keep being modified, flushed again
+// and read; compressible and incompressible ones take different paths there.
+TEST(BlockCacheTest, FlushedBlocksStayUsable) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+    const compio_config cfg = counting_config();
+
+    constexpr size_t TOTAL = 200 * 4096;
+    std::vector<uint8_t> data(TOTAL);
+    uint32_t state = 12345;
+    auto noise = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return static_cast<uint8_t>(state >> 24);
+    };
+    for (size_t i = 0; i < TOTAL; i++) {
+        // Alternate 16 KiB of text-like data with 16 KiB of noise.
+        data[i] = (i / 16384) % 2 == 0 ? static_cast<uint8_t>('a' + (i / 13) % 7) : noise();
+    }
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
+
+    std::vector<uint8_t> back(TOTAL);
+    for (int round = 0; round < 5; round++) {
+        compio_flush(ar);
+
+        compio_seek(f, 0, COMPIO_SEEK_SET);
+        ASSERT_EQ(compio_read(back.data(), TOTAL, f), TOTAL);
+        ASSERT_EQ(back, data) << "round " << round;
+
+        // Patch a spread of places, noise over text and text over noise.
+        for (size_t pos = 1000 + round * 700; pos + 3000 < TOTAL; pos += 37000) {
+            std::vector<uint8_t> patch(3000);
+            for (auto &byte : patch) byte = (pos / 37000) % 2 == 0 ? noise() : static_cast<uint8_t>('k');
+            std::copy(patch.begin(), patch.end(), data.begin() + static_cast<long>(pos));
+            compio_seek(f, static_cast<int64_t>(pos), COMPIO_SEEK_SET);
+            ASSERT_EQ(compio_write(patch.data(), patch.size(), f), patch.size());
+        }
+
+        compio_seek(f, 0, COMPIO_SEEK_SET);
+        ASSERT_EQ(compio_read(back.data(), TOTAL, f), TOTAL);
+        ASSERT_EQ(back, data) << "round " << round;
+    }
+    compio_close_file(f);
+    compio_close_archive(ar);
+
+    ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_get_size(f), TOTAL);
+    ASSERT_EQ(compio_read(back.data(), TOTAL, f), TOTAL);
+    EXPECT_EQ(back, data);
+    compio_close_file(f);
+    compio_close_archive(ar);
+
     remove(fn);
     remove((std::string(fn) + ".wal").c_str());
 }

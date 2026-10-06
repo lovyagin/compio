@@ -66,10 +66,13 @@ B-Tree index maps (file_hash, block_position) → (storage_address, block_size).
 
 ### 5. Caching
 
-Three-level cache system:
-- **Node cache** - B-Tree nodes
-- **Block cache** - Compressed storage blocks
-- **Decompression cache** - Uncompressed data
+Two caches, both sized in entries:
+- **Node cache** (`cache_size__nodes`) - B-Tree nodes, LRU
+- **Block cache** (`cache_size__blocks`) - uncompressed blocks, 2Q with a ghost queue;
+  one budget shared by all files of the archive
+
+A modified block is compressed and written when it leaves the cache or on `compio_flush`.
+A flush writes what is modified and keeps both caches warm.
 
 ## Data Flow
 

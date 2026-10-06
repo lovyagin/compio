@@ -528,7 +528,8 @@ uint64_t compio_get_size(compio_file *file);
  * @brief Flushes all cached data to disk
  *
  * Forces all buffered changes to be written to the underlying archive file and
- * synced to the filesystem. Ensures durability of all prior operations.
+ * synced to the filesystem. Ensures durability of all prior operations. The
+ * caches keep their contents, so reads after a flush do not go back to the file.
  *
  * @param[in] archive Opened archive handle
  *

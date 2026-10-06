@@ -508,6 +508,18 @@ public:
      * the modified flag.
      */
     void write() { S->write(); }
+
+    /**
+     * @brief Write the object to file if it has unsaved modifications
+     *
+     * The object stays loaded and is considered unmodified afterwards.
+     */
+    void flush() {
+        if (S->modified && !S->removed) {
+            S->write();
+            S->modified = false;
+        }
+    }
 };
 
 #ifdef COMPIO_BENCHMARK_FILE_OPERATIONS_COUNTER
