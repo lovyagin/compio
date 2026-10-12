@@ -5,24 +5,67 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def mean(values):
+    return sum(values) / len(values)
+
+
+def load_data(path):
+    """Load and aggregate data from either single-run or multi-region JSON."""
+    with open(path, "r") as f:
+        data = json.load(f)
+
+    # Detect format: multi-region (from run_regions.py) or single-run (from run.py)
+    if "regions" in data:
+        # Multi-region format: aggregate by taking mean across regions
+        region_size = data["region_size"]
+        compressor = data["compressor"]
+        level = data["level"]
+        num_regions = data["num_regions"]
+
+        # block_size -> list of (whole, blocked, archive)
+        agg = {}
+        for region_data in data["regions"].values():
+            for r in region_data["results"]:
+                bs = r["block_size"]
+                if bs not in agg:
+                    agg[bs] = {"whole": [], "blocked": [], "archive": []}
+                agg[bs]["whole"].append(r["whole"])
+                agg[bs]["blocked"].append(r["blocked"])
+                agg[bs]["archive"].append(r["archive"])
+
+        block_sizes = sorted(agg.keys())
+        whole_sizes = [mean(agg[bs]["whole"]) for bs in block_sizes]
+        blocked_sums = [mean(agg[bs]["blocked"]) for bs in block_sizes]
+        archive_sizes = [mean(agg[bs]["archive"]) for bs in block_sizes]
+        original_size = region_size
+
+        print(
+            f"Loaded multi-region data: {num_regions} regions x "
+            f"{region_size // (1024*1024)} MB, compressor={compressor}, level={level}"
+        )
+    else:
+        # Single-run format (original run.py)
+        original_size = data["original_size"]
+        compressor = data["compressor"]
+        level = data["level"]
+        results = data["results"]
+
+        block_sizes = [r["block_size"] for r in results]
+        whole_sizes = [r["whole"] for r in results]
+        blocked_sums = [r["blocked"] for r in results]
+        archive_sizes = [r["archive"] for r in results]
+
+    return original_size, compressor, level, block_sizes, whole_sizes, blocked_sums, archive_sizes
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_json", help="JSON file from run.py")
+    parser.add_argument("input_json", help="JSON file from run.py or run_regions.py")
     parser.add_argument("output_svg", help="output SVG file path")
     args = parser.parse_args()
 
-    with open(args.input_json, "r") as f:
-        data = json.load(f)
-
-    original_size = data["original_size"]
-    compressor = data["compressor"]
-    level = data["level"]
-    results = data["results"]
-
-    block_sizes = [r["block_size"] for r in results]
-    whole_sizes = [r["whole"] for r in results]
-    blocked_sums = [r["blocked"] for r in results]
-    archive_sizes = [r["archive"] for r in results]
+    original_size, compressor, level, block_sizes, whole_sizes, blocked_sums, archive_sizes = \
+        load_data(args.input_json)
 
     original_mib = original_size / (1024 * 1024)
     whole_mib = [w / (1024 * 1024) for w in whole_sizes]
@@ -56,7 +99,7 @@ def main():
         x,
         whole_mib,
         width,
-        label="Compressed baseline",
+        label=f"Размер непрерывно сжатого файла ({whole_constant_mib:.1f} МиБ)",
         color="lightgreen",
         edgecolor="none",
     )
@@ -65,7 +108,7 @@ def main():
         blocked_overhead_mib,
         width,
         bottom=whole_mib,
-        label="Blocked compression overhead",
+        label="Издержки блочного сжатия",
         color="salmon",
         edgecolor="none",
     )
@@ -77,7 +120,7 @@ def main():
         archive_overhead_mib,
         width,
         bottom=bottom_mid,
-        label="Compio overhead",
+        label="Издержки метаданных библиотеки",
         color="lightblue",
         edgecolor="none",
     )
@@ -87,14 +130,7 @@ def main():
         color="red",
         linestyle="--",
         linewidth=1.5,
-        label=f"Original ({original_mib:.1f} MiB)",
-    )
-    ax.axhline(
-        y=whole_constant_mib,
-        color="green",
-        linestyle=":",
-        linewidth=1.5,
-        label=f"Compressed ({whole_constant_mib:.1f} MiB)",
+        label=f"Исходный размер ({original_mib:.1f} МиБ)",
     )
 
     max_tick = int(np.ceil(y_max / 10)) * 10
@@ -157,9 +193,9 @@ def main():
                 color="black",
             )
 
-    ax.set_xlabel("Block size (bytes)", fontsize=12)
-    ax.set_ylabel("Size (MiB)", fontsize=12)
-    ax.set_title(f"Compression overhead ({compressor} level {level})", fontsize=14)
+    ax.set_xlabel("Размер блока (Б)", fontsize=12)
+    ax.set_ylabel("Размер файла-контейнера (МиБ)", fontsize=12)
+    ax.set_title(f"Накладные расходы на размер файла-контейнера в зависимости от размера блока ({compressor} уровень {level})", fontsize=14)
     ax.set_xticks(x)
     ax.set_xticklabels(block_sizes)
     ax.set_ylim(0, y_max)

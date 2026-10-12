@@ -27,9 +27,7 @@ def load_csv(filepath):
 
 def block_size(filepath):
     return int(
-        re.search(
-            r"_(\d+)$", os.path.splitext(os.path.basename(filepath))[0]
-        ).group(1)
+        re.search(r"_(\d+)$", os.path.splitext(os.path.basename(filepath))[0]).group(1)
     )
 
 
@@ -42,6 +40,8 @@ def label(filepath):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="*")
+    parser.add_argument("--original-file-size", type=float, default=None)
+    parser.add_argument("--no-stddev", action="store_true")
     parser.add_argument("-o", "--output", default="results.svg")
     args = parser.parse_args()
 
@@ -79,6 +79,15 @@ def main():
     ax.set_xlim(left=x_left, right=x_right)
     ax.set_ylim(bottom=y_bottom, top=y_top)
 
+    if args.original_file_size is not None:
+        ax.axvline(
+            x=args.original_file_size,
+            color="red",
+            linestyle="--",
+            alpha=0.75,
+            label="original file size",
+        )
+
     for idx, (lbl, flist) in enumerate(sorted(groups.items())):
         xs, ys, yerrs = zip(*[load_csv(fp) for fp, _ in flist])
         c = cmap(idx)
@@ -93,7 +102,12 @@ def main():
             alpha=0.75,
             label=lbl,
         )
-        ax.errorbar(xs, ys, yerr=yerrs, fmt="none", color=c, alpha=0.5, capsize=3)
+
+        params = {"fmt": "none", "color": c, "alpha": 0.5, "capsize": 3}
+        if args.no_stddev:
+            ax.errorbar(xs, ys, **params)
+        else:
+            ax.errorbar(xs, ys, yerrs=yerrs, **params)
 
     ax.set(
         xlabel="File Size (MB)",
