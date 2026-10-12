@@ -1,0 +1,68 @@
+{
+  "original_size": 33554432,
+  "compressor": "zstd",
+  "level": 1,
+  "input_file": "enwik75",
+  "results": [
+    {
+      "block_size": 256,
+      "whole": 13687841,
+      "blocked": 24187756,
+      "archive": 40034582
+    },
+    {
+      "block_size": 512,
+      "whole": 13687841,
+      "blocked": 21466557,
+      "archive": 29474009
+    },
+    {
+      "block_size": 1024,
+      "whole": 13687841,
+      "blocked": 19151438,
+      "archive": 23237200
+    },
+    {
+      "block_size": 2048,
+      "whole": 13687841,
+      "blocked": 17528810,
+      "archive": 19655730
+    },
+    {
+      "block_size": 4096,
+      "whole": 13687841,
+      "blocked": 16302089,
+      "archive": 17447585
+    },
+    {
+      "block_size": 8192,
+      "whole": 13687841,
+      "blocked": 15396762,
+      "archive": 16051546
+    },
+    {
+      "block_size": 16384,
+      "whole": 13687841,
+      "blocked": 14661657,
+      "archive": 15067079
+    },
+    {
+      "block_size": 32768,
+      "whole": 13687841,
+      "blocked": 14467849,
+      "archive": 14754599
+    },
+    {
+      "block_size": 65536,
+      "whole": 13687841,
+      "blocked": 14118656,
+      "archive": 14346070
+    },
+    {
+      "block_size": 131072,
+      "whole": 13687841,
+      "blocked": 13929423,
+      "archive": 14127169
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "original_size": 41458703,
+  "compressor": "zstd",
+  "level": 1,
+  "input_file": "../benchmarks/data/webster",
+  "results": [
+    {
+      "block_size": 256,
+      "whole": 13661986,
+      "blocked": 29993893,
+      "archive": 49540528
+    },
+    {
+      "block_size": 512,
+      "whole": 13661986,
+      "blocked": 25472432,
+      "archive": 35321783
+    },
+    {
+      "block_size": 1024,
+      "whole": 13661986,
+      "blocked": 21778121,
+      "archive": 26786842
+    },
+    {
+      "block_size": 2048,
+      "whole": 13661986,
+      "blocked": 19397382,
+      "archive": 21985786
+    },
+    {
+      "block_size": 4096,
+      "whole": 13661986,
+      "blocked": 17560724,
+      "archive": 18936962
+    },
+    {
+      "block_size": 8192,
+      "whole": 13661986,
+      "blocked": 16293006,
+      "archive": 17061158
+    },
+    {
+      "block_size": 16384,
+      "whole": 13661986,
+      "blocked": 15365947,
+      "archive": 15830067
+    },
+    {
+      "block_size": 32768,
+      "whole": 13661986,
+      "blocked": 14921327,
+      "archive": 15237437
+    },
+    {
+      "block_size": 65536,
+      "whole": 13661986,
+      "blocked": 14459217,
+      "archive": 14701311
+    },
+    {
+      "block_size": 131072,
+      "whole": 13661986,
+      "blocked": 14185098,
+      "archive": 14388192
+    }
+  ]
+}

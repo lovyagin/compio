@@ -1,0 +1,166 @@
+import argparse
+import csv
+import glob
+import math
+import os
+import re
+
+import matplotlib.pyplot as plt
+
+
+def load_csv(filepath):
+    with open(filepath) as f:
+        lines = [line for line in f if not line.startswith("#")]
+    reader = csv.DictReader(lines)
+    rows = list(reader)
+    if not rows:
+        raise ValueError(f"Empty CSV: {filepath}")
+
+    file_size = float(rows[0]["file_size"]) / 1e6
+    values = [float(r["throughput"]) / 1e6 for r in rows]
+    n = len(values)
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / n
+    stddev = math.sqrt(variance)
+    return file_size, mean, stddev
+
+
+def block_size(filepath):
+    return int(
+        re.search(r"_(\d+)$", os.path.splitext(os.path.basename(filepath))[0]).group(1)
+    )
+
+
+def label(filepath):
+    return re.sub(
+        r"_\d+$", "", os.path.splitext(os.path.basename(filepath))[0]
+    ).replace("_", " ")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("files", nargs="*")
+    parser.add_argument("--original-file-size", type=float, default=None)
+    parser.add_argument("--no-stddev", action="store_true")
+    parser.add_argument("-o", "--output", default="results.svg")
+    args = parser.parse_args()
+
+    files = sorted(args.files) if args.files else sorted(glob.glob("results/*.csv"))
+    if not files:
+        print("No files found.")
+        return
+
+    groups = {}
+    for fp in files:
+        groups.setdefault(label(fp), []).append((fp, block_size(fp)))
+    for g in groups.values():
+        g.sort(key=lambda x: x[1])
+
+    all_x = []
+    all_y = []
+    for flist in groups.values():
+        for fp, _ in flist:
+            x, y, _ = load_csv(fp)
+            all_x.append(x)
+            all_y.append(y)
+
+    x_min, x_max = min(all_x), max(all_x)
+    y_min, y_max = min(all_y), max(all_y)
+
+    x_left = x_min * 0.9
+    x_right = x_max * 1.1
+    y_bottom = y_min * 0.8
+    y_top = y_max * 1.2
+
+    # Easily changeable colors for each library group
+    group_colors = ["#e41a1c", "#377eb8", "#4daf4a", "#984ea3", "#ff7f00", "#ffff33"]
+
+    plt.figure(figsize=(10, 7))
+    ax = plt.gca()
+
+    ax.set_xlim(left=x_left, right=x_right)
+    ax.set_ylim(bottom=y_bottom, top=y_top)
+
+    if args.original_file_size is not None:
+        ax.axvline(
+            x=args.original_file_size,
+            color="red",
+            linestyle="--",
+            alpha=0.75,
+            label="исходный размер файла",
+        )
+
+    for idx, (lbl, flist) in enumerate(sorted(groups.items())):
+        xs, ys, yerrs = zip(*[load_csv(fp) for fp, _ in flist])
+        c = group_colors[idx % len(group_colors)]
+        def shorten(lib):
+            if "compio" in lib:
+                return "Compio+Zlib"
+            elif "zran" in lib:
+                return "Zran"
+            return lib
+        ax.loglog(
+            xs,
+            ys,
+            marker="o",
+            linestyle="-",
+            linewidth=2,
+            markersize=4,
+            color=c,
+            alpha=0.75,
+            label=shorten(lbl),
+        )
+
+        params = {"fmt": "none", "color": c, "alpha": 0.5, "capsize": 3}
+        if args.no_stddev:
+            ax.errorbar(xs, ys, **params)
+        else:
+            ax.errorbar(xs, ys, yerrs=yerrs, **params)
+
+        # Annotate every point with its block size, colored to match the line
+        for bi, (fp, bs) in enumerate(flist):
+            label_text = f"{bs}"
+            # Approximate pixel width of the label text in points (fontsize=7,
+            # each digit ~4pt, plus a small gap)
+            text_width_pt = len(label_text) * 4.0
+            # Determine label position based on library name
+            if "compio" in lbl.lower():
+                # compio: left for bs > 8192, bottom otherwise
+                if bs > 8192:
+                    # Shift left by text width + padding so label ends cleanly at the point
+                    xytext_label = (-text_width_pt - 10, 0)
+                else:
+                    xytext_label = (0, -18)
+            elif "zran" in lbl.lower():
+                # zran: top-left for all, except bs=1048576 goes to the right
+                if bs == 1048576:
+                    xytext_label = (10, -2)
+                else:
+                    xytext_label = (-text_width_pt - 10, 4)
+            else:
+                # default: top-left
+                xytext_label = (-text_width_pt - 4, 8)
+            ax.annotate(
+                label_text,
+                (xs[bi], ys[bi]),
+                textcoords="offset points",
+                xytext=xytext_label,
+                fontsize=7,
+                alpha=0.6,
+                color=c,
+            )
+
+    ax.set(
+        xlabel="Размер файла (МБ)",
+        ylabel="Пропускная способность (МБ/с)",
+        title="Чтение · Пропускная способность от размера файла (без кэша блоков)",
+    )
+    ax.grid(True, which="both", linestyle=":", alpha=0.7)
+    ax.legend(loc="lower right")
+    plt.tight_layout()
+    plt.savefig(args.output, bbox_inches="tight")
+    print(f"Saved {args.output}")
+
+
+if __name__ == "__main__":
+    main()

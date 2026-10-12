@@ -1,0 +1,142 @@
+{
+  "input_file": "../../compio/benchmarks/data/enwik8",
+  "file_size": 100000000,
+  "region_size": 33554432,
+  "num_regions": 2,
+  "compressor": "zstd",
+  "level": 1,
+  "regions": {
+    "0": {
+      "offset": 0,
+      "size": 33554432,
+      "results": [
+        {
+          "block_size": 256,
+          "whole": 13687841,
+          "blocked": 24187756,
+          "archive": 40034582
+        },
+        {
+          "block_size": 512,
+          "whole": 13687841,
+          "blocked": 21466557,
+          "archive": 29474009
+        },
+        {
+          "block_size": 1024,
+          "whole": 13687841,
+          "blocked": 19151438,
+          "archive": 23237200
+        },
+        {
+          "block_size": 2048,
+          "whole": 13687841,
+          "blocked": 17528810,
+          "archive": 19655730
+        },
+        {
+          "block_size": 4096,
+          "whole": 13687841,
+          "blocked": 16302089,
+          "archive": 17447585
+        },
+        {
+          "block_size": 8192,
+          "whole": 13687841,
+          "blocked": 15396762,
+          "archive": 16051546
+        },
+        {
+          "block_size": 16384,
+          "whole": 13687841,
+          "blocked": 14661657,
+          "archive": 15067079
+        },
+        {
+          "block_size": 32768,
+          "whole": 13687841,
+          "blocked": 14467849,
+          "archive": 14754599
+        },
+        {
+          "block_size": 65536,
+          "whole": 13687841,
+          "blocked": 14118656,
+          "archive": 14346070
+        },
+        {
+          "block_size": 131072,
+          "whole": 13687841,
+          "blocked": 13929423,
+          "archive": 14127169
+        }
+      ]
+    },
+    "1": {
+      "offset": 33554432,
+      "size": 33554432,
+      "results": [
+        {
+          "block_size": 256,
+          "whole": 13616827,
+          "blocked": 24045113,
+          "archive": 39891939
+        },
+        {
+          "block_size": 512,
+          "whole": 13616827,
+          "blocked": 21326047,
+          "archive": 29333499
+        },
+        {
+          "block_size": 1024,
+          "whole": 13616827,
+          "blocked": 19010424,
+          "archive": 23096186
+        },
+        {
+          "block_size": 2048,
+          "whole": 13616827,
+          "blocked": 17393984,
+          "archive": 19520904
+        },
+        {
+          "block_size": 4096,
+          "whole": 13616827,
+          "blocked": 16175653,
+          "archive": 17321149
+        },
+        {
+          "block_size": 8192,
+          "whole": 13616827,
+          "blocked": 15266101,
+          "archive": 15920885
+        },
+        {
+          "block_size": 16384,
+          "whole": 13616827,
+          "blocked": 14543794,
+          "archive": 14949216
+        },
+        {
+          "block_size": 32768,
+          "whole": 13616827,
+          "blocked": 14353317,
+          "archive": 14640067
+        },
+        {
+          "block_size": 65536,
+          "whole": 13616827,
+          "blocked": 14011462,
+          "archive": 14238876
+        },
+        {
+          "block_size": 131072,
+          "whole": 13616827,
+          "blocked": 13823789,
+          "archive": 14021535
+        }
+      ]
+    }
+  }
+}
