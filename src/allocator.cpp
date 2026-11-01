@@ -57,6 +57,9 @@ void free_blocks_manager::clear_regions() {
     next_fit_cursor_ = 0;
     total_free_ = 0;
     fragmentation_dirty_ = true;
+    deferred_.clear();
+    saved_deferred_.clear();
+    saved_state_offset_ = saved_state_size_ = 0;
 }
 
 bool free_blocks_manager::add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset,
@@ -363,10 +366,9 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         pos = slot_size = 0;
     }
 
-    // Sized for the list as it will be if the spare slot has to be released
-    // below, which adds at most one entry.
+    // Include deferred frees and at most one released spare slot.
     const uint64_t needed = sizeof(uint64_t) +
-                            (static_cast<uint64_t>(free_region_count()) + 1) * STATE_ENTRY_SIZE +
+                            (static_cast<uint64_t>(free_region_count()) + deferred_.size() + 1) * STATE_ENTRY_SIZE +
                             STATE_TRAILER_SIZE;
     if (needed > UINT32_MAX / 2) {
         WARNING_PRINT("warning: allocator state is too large to save\n");
@@ -396,8 +398,15 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     staged.spare_slot_offset_ = published_offset;
     staged.spare_slot_size_ = published_size;
 
+    free_blocks_manager snapshot(staged);
+    for (const auto &[offset, size] : deferred_) {
+        if (!snapshot.add_free_block(offset, size)) {
+            errno = EINVAL;
+            return false;
+        }
+    }
     std::vector<uint8_t> buffer;
-    staged.serialize(buffer);
+    snapshot.serialize(buffer);
     assert(buffer.size() <= slot_size);
     buffer.resize(slot_size, 0);
     const uint32_t size = static_cast<uint32_t>(slot_size);
@@ -449,6 +458,9 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         }
     }
 
+    staged.saved_deferred_ = deferred_;
+    staged.saved_state_offset_ = pos;
+    staged.saved_state_size_ = size;
     *this = std::move(staged);
     archive->header->allocator_state_offset = pos;
     archive->header->allocator_state_size = size;
@@ -630,7 +642,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 }
 
 void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_maintenance) {
-    if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
+    if (size == 0 || size > UINT64_MAX - offset || !archive_ || !archive_->header) {
         return;
     }
 
@@ -638,38 +650,41 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
     {
         std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
 
-        // Validate bounds using the cached file size pointer to avoid locking header_mutex
-    // (which could cause deadlocks if held by caller).
-    const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
-    if (file_size_ptr) {
-        if (size > UINT64_MAX - offset ||
-            offset + size > *file_size_ptr) {
+        // The caller may hold header_mutex, so use the cached size pointer.
+        const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
+        if ((file_size_ptr && offset + size > *file_size_ptr) ||
+            offset < readonly(archive_->header, header)->reserved_size()) {
             return;
         }
-    }
 
-    if (blocks_manager_.is_region_free(offset, size)) {
-        return;
-    }
+        auto overlaps = [&](const auto &regions) {
+            auto next = regions.lower_bound(offset);
+            return (next != regions.end() && next->first < offset + size) ||
+                   (next != regions.begin() && std::prev(next)->first + std::prev(next)->second > offset);
+        };
+        if (overlaps(blocks_manager_.by_offset_) || overlaps(blocks_manager_.deferred_)) return;
 
-    uint64_t merged_offset = offset;
-    uint64_t merged_size = size;
-    if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
-        return;
-    }
-    if (wal_) {
-             // Similar to allocate, strict WAL logging of every free list change is expensive.
-             // We rely on periodic checkpoints of the allocator state.
-    }
+        // The old checkpoint cannot reference allocations beyond its logical end.
+        // Everything below it stays reserved until a full checkpoint is published.
+        if (offset < archive_->published_file_size) {
+            blocks_manager_.deferred_.emplace(offset, size);
+            return;
+        }
 
-    if (archive_->config.fill_holes_with_zeros && archive_->file) {
-        release_to_filesystem(offset, size, merged_offset, merged_size);
-    }
+        uint64_t merged_offset = offset;
+        uint64_t merged_size = size;
+        if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+            return;
+        }
 
-    // Check if defragmentation is needed (throttled to avoid O(N) cost on every dealloc)
-    if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
-        run_maintenance = true;
-    }
+        if (archive_->config.fill_holes_with_zeros && archive_->file) {
+            release_to_filesystem(offset, size, merged_offset, merged_size);
+        }
+
+        // Throttle maintenance to avoid O(N) work on every deallocation.
+        if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
+            run_maintenance = true;
+        }
     }
 
     if (run_maintenance) {
@@ -707,7 +722,7 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
 
     // Buffered writes into the region must reach the file first, otherwise they
     // would land after the hole is punched and bring the blocks back.
-    fflush(archive_->file);
+    if (fflush(archive_->file) != 0) return;
 
     if (hole_punching_supported_) {
         if (punch_hole(offset, size, merged_offset, merged_size)) {
@@ -721,7 +736,7 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
     static constexpr size_t BUFFER_SIZE = 4096;
     static uint8_t zeros[BUFFER_SIZE] = {0};
 
-    fseek64(archive_->file, offset, SEEK_SET);
+    if (fseek64(archive_->file, offset, SEEK_SET) != 0) return;
 
     size_t remaining = size;
     while (remaining > 0) {
@@ -867,6 +882,28 @@ bool block_allocator::load_state(compio_archive *archive) {
     return blocks_manager_.load_from_file(archive);
 }
 
+void block_allocator::commit_state() {
+    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+    std::lock_guard<std::mutex> io_lock(archive_->io_mutex);
+    if (blocks_manager_.saved_state_offset_ != archive_->published_allocator_state_offset ||
+        blocks_manager_.saved_state_size_ != archive_->published_allocator_state_size) return;
+
+    for (const auto &[offset, size] : blocks_manager_.saved_deferred_) {
+        uint64_t merged_offset = offset;
+        uint64_t merged_size = size;
+        if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+            // A failed invariant must leak space rather than release live data.
+            WARNING_PRINT("warning: failed to release a checkpoint's deferred region\n");
+            continue;
+        }
+        blocks_manager_.deferred_.erase(offset);
+        if (archive_->config.fill_holes_with_zeros) {
+            release_to_filesystem(offset, size, merged_offset, merged_size);
+        }
+    }
+    blocks_manager_.saved_deferred_.clear();
+}
+
 // Private methods
 
 bool block_allocator::needs_defragmentation() const {
@@ -882,6 +919,9 @@ static bool sync_file(FILE *file) {
 }
 
 void block_allocator::perform_defragmentation(bool relocate_files_table) {
+    // Compaction writes gaps in place. A gap can still belong to the previous
+    // checkpoint even though it is absent from the current index.
+    if (!blocks_manager_.deferred_.empty()) return;
     // Flush all cached/dirty blocks to disk first so that every index entry
     // has a real physical address before we start moving data.
     // NOTE: This must be done by the caller (maintenance/force_defragmentation)

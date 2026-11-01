@@ -145,6 +145,9 @@ TEST_F(StatsAfterDefragTest, TotalFreeMatchesEraseBeforeDefrag) {
 
     compio_remove_file(archive, "a");
 
+    // Deferred frees become available only after a checkpoint.
+    compio_flush(archive);
+
     compio_fragmentation_stats before{};
     ASSERT_EQ(compio_get_fragmentation_stats(archive, &before), COMPIO_SUCCESS);
     EXPECT_GT(before.total_free_bytes, 0u)
@@ -318,6 +321,8 @@ TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
     compio_flush(ar);
     compio_remove_file(ar, "a");
     compio_remove_file(ar, "c");
+
+    compio_flush(ar);
 
     uint8_t frag_before = ar->allocator->get_fragmentation();
     EXPECT_GT(frag_before, 0u)
@@ -535,6 +540,7 @@ TEST_F(ThresholdCompactionTest, NegligibleFreeSpaceDoesNotTriggerCompaction) {
     // Two scattered holes of 4 KiB in a 2 MiB container: well under a percent.
     ASSERT_EQ(compio_remove_file(ar, "a"), 0);
     ASSERT_EQ(compio_remove_file(ar, "b"), 0);
+    compio_flush(ar);
     compio_fragmentation_stats before{};
     ASSERT_EQ(compio_get_fragmentation_stats(ar, &before), COMPIO_SUCCESS);
     ASSERT_GE(before.total_free_bytes, 2u * 4096u);

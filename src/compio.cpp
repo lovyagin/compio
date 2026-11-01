@@ -143,6 +143,7 @@ compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *fi
       open_files_count(0) {
     published_allocator_state_offset = readonly(header, compio::header)->allocator_state_offset;
     published_allocator_state_size = readonly(header, compio::header)->allocator_state_size;
+    published_file_size = readonly(header, compio::header)->file_size;
     // btree constructor is called in compio_open_archive to break
     // the dependence cycle (archive -> index -> allocator -> archive)
     //
@@ -905,16 +906,8 @@ static bool end_batch_impl(compio_archive *archive) {
         }
     }
 
-    // Data must be durable before publishing the header, and the header must
-    // be durable before reporting success or permitting physical truncation.
-    if (!fsync_archive(archive->file)) {
-        return false;
-    }
-    if (!flush_header_double_buffered(archive)) {
-        return false;
-    }
-    truncate_after_header_publish(archive);
-    return true;
+    // Publish an up-to-date allocator snapshot together with the batch's data.
+    return flush_impl(archive);
 }
 
 int compio_end_batch(compio_archive *archive) {
@@ -1000,6 +993,7 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         archive->current_header_slot = target_slot;
         archive->published_allocator_state_offset = new_h_data->allocator_state_offset;
         archive->published_allocator_state_size = new_h_data->allocator_state_size;
+        archive->published_file_size = new_h_data->file_size;
         
         // Mark old header object as unmodified so it doesn't write on destruction
         archive->header.unmodify();
@@ -1063,8 +1057,6 @@ int compio_close_archive(compio_archive *archive) {
         close_error = errno ? errno : EIO;
     }
 
-    delete archive->allocator;
-    archive->allocator = nullptr;
     delete archive->index;
     archive->index = nullptr;
 
@@ -1073,12 +1065,16 @@ int compio_close_archive(compio_archive *archive) {
         if (!durable) close_error = errno ? errno : EIO;
     }
     if (durable) {
+        if (archive->allocator) archive->allocator->commit_state();
         truncate_after_header_publish(archive);
         if (archive->wal && !archive->wal->clear()) {
             durable = false;
             close_error = errno ? errno : EIO;
         }
     }
+
+    delete archive->allocator;
+    archive->allocator = nullptr;
 
     // Never let destructor write-back bypass checked header publication,
     // including when publication failed and the old header is still dirty.
@@ -2339,11 +2335,8 @@ static void sync_files_table(compio_archive *archive) {
     // Copy-on-write for the files table:
     // Copy-on-write: allocate a fresh block for the table, write into it, then
     // point the header at the new region. The previous table block is freed
-    // afterwards. This is crash safe: deallocate() only mutates the in-memory
-    // free list, which becomes durable atomically together with the new header
-    // (allocator save_state + double-buffered header + WAL commit happen later
-    // in compio_flush). A crash before that rolls back to the previous header,
-    // whose table block is still marked allocated and intact on disk. The new
+    // afterwards. deallocate() defers reuse and physical release of the old
+    // table until the allocator snapshot and new header are durable. The new
     // block is allocated before the old one is freed, so they never overlap.
 
     uint32_t current_capacity = archive->header->ftable.max_files;
@@ -2472,6 +2465,7 @@ static bool flush_impl(compio_archive *archive) {
                 WARNING_PRINT("warning: failed to sync the header\n");
                 durable = false;
             } else {
+                if (archive->allocator) archive->allocator->commit_state();
                 truncate_after_header_publish(archive);
             }
         }

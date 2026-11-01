@@ -52,11 +52,11 @@ build_check/tests/crash_consistency --scenario=checkpoint-remove --trials=1 \
     --fill-holes=1 --keep=1
 ```
 
-The second run currently exposes a safety gap: deletion releases storage still
-referenced by the saved checkpoint. The tool reports a nonzero exit code and
-keeps the artifacts. This is a diagnostic scenario; the harness integration
-tests check its verdict against the observed state without requiring this gap
-to remain after a fix.
+Both runs must preserve the checkpoint. Storage freed below the published
+container end stays unavailable for reuse and physical release until an
+allocator snapshot containing those frees and its header are durable. The
+harness integration tests require preservation with physical release enabled
+and disabled. A failure returns a nonzero exit code and keeps the artifacts.
 
 Run the clean control separately. It must reopen successfully with the file
 absent after flushing and closing:

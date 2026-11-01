@@ -191,6 +191,14 @@ private:
     mutable bool fragmentation_dirty_;                  /**< True when cache needs recalculation */
     uint64_t spare_slot_offset_ = 0;                    /**< Alternate slot of the saved state (0 = none) */
     uint64_t spare_slot_size_ = 0;                      /**< Size of the alternate slot */
+    // Deferred regions remain unavailable until the snapshot containing them
+    // is published. Keep entries separate so later frees cannot merge into it.
+    region_map deferred_;
+    region_map saved_deferred_;
+    uint64_t saved_state_offset_ = 0;
+    uint64_t saved_state_size_ = 0;
+
+    friend class block_allocator;
 
     region_map::iterator insert_region(region_map::iterator hint, uint64_t offset, uint64_t size);
     region_map::iterator erase_region(region_map::iterator it);
@@ -293,6 +301,9 @@ public:
      * @return True if save was successful
      */
     bool save_state(compio_archive *archive);
+
+    /** Make frees from the published allocator snapshot available for reuse. */
+    void commit_state();
 
     /**
      * @brief Load allocator state from archive

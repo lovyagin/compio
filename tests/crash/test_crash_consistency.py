@@ -171,26 +171,25 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
         self.assertTrue(os.WIFSIGNALED(status))
         self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
 
-    def test_checkpoint_removal_with_release_reports_observed_state_and_replays(self):
+    def test_checkpoint_removal_with_release_preserves_initial_file_and_replays(self):
         result = self.run_process(
             "--scenario=checkpoint-remove", "--fill-holes=1", "--keep=1"
         )
-        self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         directory, values = self.manifest(result.stdout)
         self.assertEqual(values["checkpoint_verified"], "1")
         self.assertEqual(values["verifier_status"], "0")
         self.assertEqual(values["completed"], "1")
         self.assertEqual(values["flushed"], "0")
         self.assertNotEqual(values["outcome"], "writer_failed")
-        # Validate the oracle without requiring the current safety gap to stay.
         preserved = (
             values["verifier_code"] == "0"
             and values["read_size"] == values["checkpoint_size"]
             and values["read_hash"] == values["checkpoint_hash"]
         )
-        self.assertEqual(result.returncode, 0 if preserved else 1)
-        self.assertEqual(values["outcome"] == "consistent", preserved)
-        self.assertEqual(values["matched_prefix"], "0" if preserved else "-1")
+        self.assertTrue(preserved)
+        self.assertEqual(values["outcome"], "consistent")
+        self.assertEqual(values["matched_prefix"], "0")
         original = (directory / "archive.compio").read_bytes()
         replay = subprocess.run(
             shlex.split(values["replay"]), capture_output=True, text=True, timeout=45

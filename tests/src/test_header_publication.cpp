@@ -197,6 +197,82 @@ TEST_P(HeaderPublicationTest, CompactionCallbackReportsPublicationFailure) {
     retry();
 }
 
+TEST_P(HeaderPublicationTest, FailedCheckpointKeepsDeferredBlocksReservedUntilRetry) {
+    const std::vector<unsigned char> original(4096, 0xAB);
+    const uint64_t offset = archive->allocator->allocate(original.size());
+    ASSERT_NE(offset, UINT64_MAX);
+    ASSERT_EQ(pwrite(fileno(archive->file), original.data(), original.size(), offset),
+              static_cast<ssize_t>(original.size()));
+    compio_flush(archive);
+    capture_header();
+    archive->allocator->deallocate(offset, original.size(), false);
+    for (int i = 0; i < 3; ++i) {
+        arm();
+        compio_flush(archive);
+        expect_old_slot();
+        expect_wal_retained();
+        std::vector<unsigned char> actual(original.size());
+        ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
+                  static_cast<ssize_t>(actual.size()));
+        EXPECT_EQ(actual, original);
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_NE(archive->allocator->allocate(original.size()), offset);
+    }
+    compio_flush(archive);
+    EXPECT_EQ(archive->allocator->allocate(original.size()), offset);
+}
+
+TEST_P(HeaderPublicationTest, SnapshotFailureKeepsDeferredBlocksReservedUntilRetry) {
+    const std::vector<unsigned char> original(4096, 0xAB);
+    const uint64_t offset = archive->allocator->allocate(original.size());
+    ASSERT_NE(offset, UINT64_MAX);
+    ASSERT_EQ(pwrite(fileno(archive->file), original.data(), original.size(), offset),
+              static_cast<ssize_t>(original.size()));
+    compio_flush(archive);
+    capture_header();
+    ASSERT_TRUE(archive->allocator->save_state(archive));
+    archive->allocator->deallocate(offset, original.size(), false);
+    arm();
+    fault.target = readonly(archive->header, compio::header)->allocator_state_offset;
+    fault.short_write_call = 1;
+    const bool saved = archive->allocator->save_state(archive);
+    EXPECT_FALSE(saved && archive->publish_header());
+    expect_old_slot();
+    std::vector<unsigned char> actual(original.size());
+    ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, original);
+    fault = {};
+    clearerr(archive->file);
+    EXPECT_NE(archive->allocator->allocate(original.size()), offset);
+    compio_flush(archive);
+    EXPECT_EQ(archive->allocator->allocate(original.size()), offset);
+}
+
+TEST_P(HeaderPublicationTest, FailedCloseDoesNotReleaseDeferredBlocks) {
+    const std::vector<unsigned char> original(4096, 0xAB);
+    const uint64_t offset = archive->allocator->allocate(original.size());
+    ASSERT_NE(offset, UINT64_MAX);
+    ASSERT_EQ(pwrite(fileno(archive->file), original.data(), original.size(), offset),
+              static_cast<ssize_t>(original.size()));
+    compio_flush(archive);
+    capture_header();
+    archive->allocator->deallocate(offset, original.size(), false);
+    arm();
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+    archive = nullptr;
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    FILE *file = fopen(path, "rb");
+    ASSERT_NE(file, nullptr);
+    std::vector<unsigned char> actual(original.size());
+    EXPECT_EQ(pread(fileno(file), actual.data(), actual.size(), offset),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, original);
+    EXPECT_EQ(fclose(file), 0);
+}
+
 TEST_P(HeaderPublicationTest, RepeatedFlushFailuresPreserveAllocatorSnapshot) {
     const uint64_t free_block = archive->allocator->allocate(4096);
     ASSERT_NE(free_block, UINT64_MAX);

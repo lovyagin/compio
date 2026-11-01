@@ -30,6 +30,7 @@ struct compio_archive {
     // The mutable header may already point to an unpublished allocator state.
     uint64_t published_allocator_state_offset = 0;
     uint64_t published_allocator_state_size = 0;
+    uint64_t published_file_size = 0;
     FILE *file;
     const compio_config config;
     smart_infile_object<compio::header> header;
