@@ -209,6 +209,72 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
             self.assertEqual(values[key], replay_values[key], key)
         self.assertEqual((directory / "archive.compio").read_bytes(), original)
 
+    def run_header_cut(self, *arguments):
+        result = self.run_process("--scenario=checkpoint-remove-flush", *arguments)
+        if result.returncode == 2 and "requires Linux with GNU/Clang" in result.stderr:
+            self.skipTest("link-time header interception unavailable")
+        return result
+
+    def test_header_boundary_control_requires_durable_removal(self):
+        for release in (0, 1):
+            with self.subTest(release=release):
+                result = self.run_header_cut(
+                    "--control=1", f"--fill-holes={release}", "--keep=1"
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                _, values = self.manifest(result.stdout)
+                self.assertEqual(values["mode"], "control")
+                self.assertEqual(values["header_cut_reached"], "0")
+                self.assertEqual(values["checkpoint_verified"], "1")
+                self.assertEqual(values["verifier_code"], "3")
+                self.assertEqual(values["writer_status"], "0")
+                self.assertEqual(values["flushed"], "1")
+                self.assertEqual(values["matched_prefix"], "1")
+                self.assertEqual(values["headers_unchanged"], "0")
+
+    def test_header_boundary_verdict_and_replay_match_recovered_contents(self):
+        for release in (0, 1):
+            with self.subTest(release=release):
+                result = self.run_header_cut(f"--fill-holes={release}", "--keep=1")
+                self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+                directory, values = self.manifest(result.stdout)
+                self.assertEqual(values["mode"], "header-boundary")
+                self.assertEqual(values["checkpoint_verified"], "1")
+                self.assertEqual(values["header_cut_reached"], "1")
+                self.assertEqual(values["headers_unchanged"], "1")
+                self.assertEqual(values["completed"], "1")
+                self.assertEqual(values["flushed"], "0")
+                self.assertEqual(values["verifier_status"], "0")
+                self.assertEqual(values["verifier_code"], "0")
+                status = int(values["writer_status"])
+                self.assertTrue(os.WIFSIGNALED(status))
+                self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
+                preserved = (
+                    values["read_size"] == values["checkpoint_size"]
+                    and values["read_hash"] == values["checkpoint_hash"]
+                )
+                # Check harness classification without requiring the known COW gap.
+                self.assertEqual(result.returncode, 0 if preserved else 1)
+                self.assertEqual(values["outcome"], "consistent" if preserved else "lost_flushed")
+                self.assertEqual(values["matched_prefix"], "0" if preserved else "-1")
+                if not preserved:
+                    self.assertEqual(values["root_unchanged"], "0")
+                original = (directory / "archive.compio").read_bytes()
+                checkpoint = (directory / "checkpoint.compio").read_bytes()
+                replay = subprocess.run(
+                    shlex.split(values["replay"]), capture_output=True, text=True, timeout=45
+                )
+                self.assertEqual(replay.returncode, result.returncode, replay.stdout + replay.stderr)
+                replay_directory, replay_values = self.manifest(replay.stdout)
+                self.assertNotEqual(directory, replay_directory)
+                for key in (
+                    "scenario", "mode", "fill_holes", "checkpoint_hash", "header_cut_reached",
+                    "headers_unchanged", "root_unchanged", "read_hash", "outcome",
+                ):
+                    self.assertEqual(values[key], replay_values[key], key)
+                self.assertEqual((directory / "archive.compio").read_bytes(), original)
+                self.assertEqual((directory / "checkpoint.compio").read_bytes(), checkpoint)
+
     def test_invalid_options_fail_before_creating_artifacts(self):
         for arguments in (
             ("--ops=-1",),
@@ -225,6 +291,9 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
             ("--keep=0", "--keep=1"),
             ("--scenario=unknown",),
             ("--fill-holes=2",),
+            ("--scenario=checkpoint-remove-flush", "--wal=1"),
+            ("--scenario=checkpoint-remove-flush", "--stop-after=1"),
+            ("--scenario=checkpoint-remove-flush", "--flush-every=1"),
             ("--scenario=checkpoint-remove", "--wal=1"),
             ("--scenario=checkpoint-remove", "--ops=1"),
             ("--scenario=checkpoint-remove", "--stop-after=1"),

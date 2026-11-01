@@ -66,7 +66,7 @@ build_check/tests/crash_consistency --scenario=checkpoint-remove --trials=1 \
     --fill-holes=1 --control=1 --keep=1
 ```
 
-This scenario uses no compression, disables automatic compaction and requires
+This scenario uses no compression, disables automatic batching and compaction, and requires
 WAL off (the scenario default). It rejects `--ops`, `--mix`, `--flush-every`,
 `--init-kb`, `--stop-after`, `--max-delay-ms` and `--sync`: its workload and stop
 boundary are fixed. `--seed`, `--trial-start`, `--trials`, `--block` and `--degree`
@@ -74,6 +74,45 @@ still configure the initial data or archive. `--fill-holes` maps to
 `fill_holes_with_zeros` and is also available in the default `operations` scenario;
 when omitted it keeps the library default. It permits hole punching with zeroing
 as a fallback, so these runs do not distinguish the two physical release methods.
+
+## File removal interrupted during flush
+
+On Linux with GNU/Clang, `checkpoint-remove-flush` reuses the removal workload
+but stops inside `compio_flush`: after the archive data has been synchronized,
+just before seeking to the alternate header slot. Link-time wrappers in the
+harness executable intercept `fsync` and `fseeko`; the library has no test hooks.
+The child reports the stop boundary only after a successful archive `fsync`,
+then pauses until the parent sends SIGKILL. If the boundary is not reached or
+synchronization has not succeeded, the writer fails.
+
+```sh
+build_check/tests/crash_consistency --scenario=checkpoint-remove-flush --trials=1 \
+    --fill-holes=0 --keep=1
+build_check/tests/crash_consistency --scenario=checkpoint-remove-flush --trials=1 \
+    --fill-holes=1 --keep=1
+build_check/tests/crash_consistency --scenario=checkpoint-remove-flush --trials=1 \
+    --fill-holes=1 --control=1 --keep=1
+```
+
+Both header slots must remain byte-for-byte identical to the saved checkpoint;
+otherwise the writer is classified as failed. Recovery must return the initial
+file, as in `checkpoint-remove`. The clean control performs no interception and
+requires the removed file to remain absent after flush and close. The same
+option restrictions apply. Other platforms reject this scenario before creating
+artifacts.
+
+Currently, interrupted runs return `lost_flushed` (exit 1) with both physical
+release settings: the headers are intact, but their B-tree root was overwritten
+in place. Copy-on-write for index nodes is still required. The integration tests
+check boundary selection, classification against recovered size/hash, and replay;
+they allow this known failure and will also accept preserved data after a fix.
+This test covers process termination and does not simulate power loss.
+
+The manifest adds `header_cut_reached`, `headers_unchanged`, and `root_unchanged`.
+The root comparison uses its saved address and serialized node region. A changed
+root is diagnostic; recovery of the entire original file remains the criterion.
+In a clean control, header/root comparisons describe the completed update and
+are not preservation requirements.
 
 ## Artifacts and replay
 

@@ -12,7 +12,7 @@
 // ordering problems in the library, not lost writes after a power failure.
 //
 // Usage: crash_consistency [--key=value ...]
-//   --scenario=NAME   operations (default) | checkpoint-remove
+//   --scenario=NAME   operations (default) | checkpoint-remove | checkpoint-remove-flush
 //   --fill-holes=0|1  release freed storage (default: library default)
 //   --dir=PATH        directory for the archive (default: system temp dir)
 //   --trials=N        number of kills (default 40)
@@ -38,6 +38,7 @@
 // checkpoint-remove uses one unflushed deletion, a 16 KiB initial file, no
 // compression or automatic compaction, and requires WAL off. A crash must
 // preserve the initial file; a clean control must preserve its deletion.
+// checkpoint-remove-flush stops before header publication after data fsync.
 //
 // Exit code is 0 if every trial was consistent.
 
@@ -66,8 +67,13 @@
 #include <vector>
 
 #include "compio.h"
+#include "compio/compio_file.hpp"
 
 namespace {
+
+using compio::index_node;
+using compio::tree_key;
+using compio::tree_val;
 
 enum class op_kind { overwrite, insert, erase, append };
 
@@ -166,6 +172,43 @@ void report_progress(int fd, progress_report report) {
         written = write(fd, &report, sizeof(report));
     } while (written < 0 && errno == EINTR);
     if (written != static_cast<ssize_t>(sizeof(report))) _exit(14);
+}
+
+#ifdef COMPIO_CRASH_HEADER_CUT
+struct header_cut {
+    FILE *stream = nullptr;
+    off_t offset = -1;
+    int progress_fd = -1;
+    bool synced = false;
+} cut;
+
+extern "C" int __real_fsync(int);
+extern "C" int __real_fseeko(FILE *, off_t, int);
+
+extern "C" int __wrap_fsync(int fd) {
+    const int result = __real_fsync(fd);
+    if (cut.stream && fd == fileno(cut.stream) && result == 0) cut.synced = true;
+    return result;
+}
+
+extern "C" int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
+    if (stream == cut.stream && whence == SEEK_SET && offset == cut.offset) {
+        if (!cut.synced) _exit(16);
+        // The parent kills only after this report, before the header seek happens.
+        report_progress(cut.progress_fd, {1, 0});
+        for (;;) pause();
+    }
+    return __real_fseeko(stream, offset, whence);
+}
+#endif
+
+std::vector<char> read_region(const std::string &path, uint64_t offset, size_t size) {
+    std::ifstream input(path, std::ios::binary);
+    input.exceptions(std::ios::failbit | std::ios::badbit);
+    input.seekg(static_cast<std::streamoff>(offset));
+    std::vector<char> bytes(size);
+    input.read(bytes.data(), static_cast<std::streamsize>(size));
+    return bytes;
 }
 
 // Drain progress while waiting so a long workload cannot fill the pipe.
@@ -336,15 +379,20 @@ int run(int argc, char **argv) {
         seen.push_back(key);
     }
     const std::string scenario = option(argc, argv, "scenario", "operations");
-    if (scenario != "operations" && scenario != "checkpoint-remove") {
+    if (scenario != "operations" && scenario != "checkpoint-remove" &&
+        scenario != "checkpoint-remove-flush") {
         throw std::invalid_argument("unknown scenario");
     }
-    const bool checkpoint_remove = scenario == "checkpoint-remove";
+    const bool header_boundary = scenario == "checkpoint-remove-flush";
+#ifndef COMPIO_CRASH_HEADER_CUT
+    if (header_boundary) throw std::invalid_argument("checkpoint-remove-flush requires Linux with GNU/Clang");
+#endif
+    const bool checkpoint_remove = scenario != "operations";
     if (checkpoint_remove) {
         for (const char *key : {"ops", "mix", "flush-every", "init-kb", "stop-after",
                                 "max-delay-ms", "sync"}) {
             if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
-                throw std::invalid_argument(std::string("checkpoint-remove excludes --") + key);
+                throw std::invalid_argument(scenario + " excludes --" + key);
             }
         }
     }
@@ -389,9 +437,10 @@ int run(int argc, char **argv) {
     cfg.enable_wal = number(argc, argv, "wal", checkpoint_remove ? 0 : 1, 1) != 0;
     cfg.fill_holes_with_zeros = number(argc, argv, "fill-holes", cfg.fill_holes_with_zeros, 1) != 0;
     if (checkpoint_remove) {
-        if (cfg.enable_wal) throw std::invalid_argument("checkpoint-remove requires --wal=0");
+        if (cfg.enable_wal) throw std::invalid_argument(scenario + " requires --wal=0");
         compio_build_dummy_compressor(&cfg.compressor);
         cfg.fragmentation_threshold = 100;
+        cfg.auto_batch_size = 0;
     }
     cfg.wal_sync_mode = sync == "always" ? COMPIO_WAL_SYNC_ALWAYS
                         : sync == "off"  ? COMPIO_WAL_SYNC_OFF
@@ -470,7 +519,8 @@ int run(int argc, char **argv) {
         std::ofstream manifest(trial_dir / "replay.txt");
         manifest.exceptions(std::ios::failbit | std::ios::badbit);
         manifest << "scenario=" << scenario << "\nfill_holes=" << cfg.fill_holes_with_zeros << '\n'
-                 << "mode=" << (control ? "control" : boundary >= 0 ? "boundary" : "timed") << '\n'
+                 << "mode=" << (control ? "control" : header_boundary ? "header-boundary"
+                                                 : boundary >= 0 ? "boundary" : "timed") << '\n'
                  << "trial=" << trial << "\nseed=" << seed << "\ndelay_us=" << delay_us << '\n'
                  << "replay=" << replay << '\n';
         if (checkpoint_remove) {
@@ -493,6 +543,9 @@ int run(int argc, char **argv) {
                 throw std::runtime_error("cannot close initial archive " + path);
             }
         }
+        uint64_t root_offset = 0;
+        std::vector<char> saved_headers;
+        std::vector<char> saved_root;
         if (checkpoint_remove) {
             const std::string checkpoint_path = (trial_dir / "checkpoint.compio").string();
             std::filesystem::copy_file(path, checkpoint_path);
@@ -501,6 +554,17 @@ int run(int argc, char **argv) {
                 WEXITSTATUS(checkpoint.status) != 0 || checkpoint.data.code != 0 ||
                 states[0] != std::make_pair(checkpoint.data.hash, checkpoint.data.size)) {
                 throw std::runtime_error("initial checkpoint verification failed: " + checkpoint_path);
+            }
+            if (header_boundary) {
+                auto *snapshot = compio_open_archive(checkpoint_path.c_str(), "r", &cfg);
+                if (!snapshot) throw std::runtime_error("cannot inspect checkpoint header");
+                root_offset = readonly(snapshot->header, compio::header)->index_root;
+                const auto reserved = readonly(snapshot->header, compio::header)->reserved_size();
+                if (compio_close_archive(snapshot) != COMPIO_SUCCESS) {
+                    throw std::runtime_error("cannot close checkpoint inspection");
+                }
+                saved_headers = read_region(path, 0, reserved);
+                saved_root = read_region(path, root_offset, INDEX_NODE_SIZE(cfg.b_tree_degree));
             }
             manifest << "checkpoint_verified=1\n";
             manifest.flush();
@@ -528,6 +592,17 @@ int run(int argc, char **argv) {
                 } else if (!apply_to_file(file, ops[static_cast<size_t>(i)])) {
                     _exit(13);
                 }
+#ifdef COMPIO_CRASH_HEADER_CUT
+                if (header_boundary && !control) {
+                    cut.stream = archive->file;
+                    cut.offset = (1 - archive->current_header_slot) * archive->header->reserved_size() / 2;
+                    cut.progress_fd = progress[1];
+                }
+#endif
+                if (header_boundary && !control) {
+                    compio_flush(archive);
+                    _exit(17); // The header interception must be reached.
+                }
                 report.completed = i + 1;
                 if (flush_every > 0 && (i + 1) % flush_every == 0) {
                     compio_flush(archive);
@@ -554,11 +629,20 @@ int run(int argc, char **argv) {
         int writer_status = 0;
         const progress_report completed =
             monitor_writer(writer, progress[0], boundary, control, delay_us, writer_status);
+        bool headers_unchanged = true;
+        if (header_boundary) {
+            headers_unchanged = saved_headers == read_region(path, 0, saved_headers.size());
+            manifest << "headers_unchanged=" << headers_unchanged
+                     << "\nroot_unchanged=" << (saved_root == read_region(path, root_offset, saved_root.size()))
+                     << "\nheader_cut_reached=" << (!control && completed.completed == 1)
+                     << '\n';
+        }
         const bool writer_ok =
             control ? WIFEXITED(writer_status) && WEXITSTATUS(writer_status) == 0 &&
                           completed.completed == n_ops && completed.flushed == n_ops
                     : WIFSIGNALED(writer_status) && WTERMSIG(writer_status) == SIGKILL &&
-                          (boundary < 0 || completed.completed == boundary);
+                          (boundary < 0 || completed.completed == boundary) &&
+                          (!header_boundary || headers_unchanged);
         manifest << "completed=" << completed.completed << "\nflushed=" << completed.flushed
                  << "\nwriter_status=" << writer_status << '\n';
         manifest.flush();

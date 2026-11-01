@@ -61,6 +61,10 @@ target_include_directories(compio_gtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 if (UNIX)
     add_executable(crash_consistency crash/crash_consistency.cpp)
     target_link_libraries(crash_consistency PRIVATE compio)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(crash_consistency PRIVATE COMPIO_CRASH_HEADER_CUT)
+        target_link_options(crash_consistency PRIVATE -Wl,--wrap=fseeko -Wl,--wrap=fsync)
+    endif()
 
     find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
     if (Python3_Interpreter_FOUND)
