@@ -27,6 +27,10 @@ struct compio_archive {
     std::shared_mutex allocator_mutex;
 
     int current_header_slot; // 0 for A (offset 0), 1 for B (offset disk_size)
+    // The mutable header may already point to an unpublished allocator state.
+    uint64_t published_allocator_state_offset = 0;
+    uint64_t published_allocator_state_size = 0;
+    uint64_t published_file_size = 0;
     FILE *file;
     const compio_config config;
     smart_infile_object<compio::header> header;

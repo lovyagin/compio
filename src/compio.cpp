@@ -81,7 +81,7 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
 
 static uint32_t files_table_checksum(const compio::files_table &table);
 static bool fsync_archive(FILE *file);
-static void flush_header_double_buffered(compio_archive *archive);
+static bool flush_header_double_buffered(compio_archive *archive);
 
 static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
     if (is_file_empty(file)) {
@@ -141,6 +141,9 @@ compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *fi
       wal(std::move(wal)),
       mode_b(mode_b),
       open_files_count(0) {
+    published_allocator_state_offset = readonly(header, compio::header)->allocator_state_offset;
+    published_allocator_state_size = readonly(header, compio::header)->allocator_state_size;
+    published_file_size = readonly(header, compio::header)->file_size;
     // btree constructor is called in compio_open_archive to break
     // the dependence cycle (archive -> index -> allocator -> archive)
     //
@@ -333,8 +336,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     archive->publish_header = [archive]() {
         if (!fsync_archive(archive->file)) return false;
-        flush_header_double_buffered(archive);
-        return fsync_archive(archive->file);
+        return flush_header_double_buffered(archive);
     };
 
     // is_new_file already computed above
@@ -674,8 +676,9 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 
 // Forward declarations
 static void end_auto_batch_if_active(compio_file *file);
-static void flush_header_double_buffered(compio_archive *archive);
-static void flush_impl(compio_archive *archive);
+static bool flush_header_double_buffered(compio_archive *archive);
+static bool flush_impl(compio_archive *archive);
+static bool flush_archive_impl(compio_archive *archive);
 // Commit a batch and publish the header. Caller must hold archive->mutex.
 static bool end_batch_impl(compio_archive *archive);
 
@@ -756,12 +759,13 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
 }
 
 // Commit the batch that was opened automatically for this file.
-static void end_auto_batch(compio_file *file) {
-    end_batch_impl(file->archive); // Best effort - lock already held
+static bool end_auto_batch(compio_file *file) {
+    const bool durable = end_batch_impl(file->archive); // Lock already held
     file->is_auto_batching = false;
     file->auto_batch_count = 0;
     auto &batching = file->archive->auto_batching_files;
     batching.erase(std::remove(batching.begin(), batching.end(), file), batching.end());
+    return durable;
 }
 
 /**
@@ -890,36 +894,21 @@ int compio_begin_batch(compio_archive *archive) {
 // already under it; the public wrapper takes it). Header publication is safe
 // here because flush_header_double_buffered re-syncs the btree's header copy.
 static bool end_batch_impl(compio_archive *archive) {
-    if (!archive->wal) {
-        // No journal: block data is already written straight to the archive.
-        // Mirror the journaled path's batch boundary by syncing the data and
-        // publishing the header so on-disk metadata stays consistent.
-        if (fsync_archive(archive->file)) {
-            flush_header_double_buffered(archive);
-            fsync_archive(archive->file);
-            truncate_after_header_publish(archive);
+    if (archive->wal) {
+        // flush_impl checkpoints only after all writes and header publication succeed.
+        if (!archive->wal->end_batch()) {
+            if (errno == 0) {
+                errno = EIO;
+            }
+            return false;
         }
-        return true;
-    }
-    bool success = archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes);
-    if (!success) {
-        if (errno == 0) {
-            errno = EIO;
+        if (archive->wal->get_batch_depth() > 0) {
+            return true;
         }
-        return false;
     }
 
-    if (archive->wal->get_batch_depth() == 0) {
-        // fsync the batch's data to disk BEFORE publishing the header, so the
-        // header is never durable ahead of the data it references; then fsync
-        // again to make the header itself durable.
-        if (fsync_archive(archive->file)) {
-            flush_header_double_buffered(archive);
-            fsync_archive(archive->file);
-            truncate_after_header_publish(archive);
-        }
-    }
-    return true;
+    // Publish an up-to-date allocator snapshot together with the batch's data.
+    return flush_impl(archive);
 }
 
 int compio_end_batch(compio_archive *archive) {
@@ -963,16 +952,18 @@ int compio_defragment(compio_archive *archive) {
 
     // Write out pending changes first, so that the compaction works on the
     // final layout and the files table is not rewritten behind it afterwards.
-    flush_impl(archive);
+    if (!flush_impl(archive)) return COMPIO_ERROR;
     archive->allocator->force_defragmentation();
     // Publish the compacted layout right away: the file is only cut down to
     // its new size once a header describing that layout is durable.
-    flush_impl(archive);
-    return COMPIO_SUCCESS;
+    return flush_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
 }
 
-static void flush_header_double_buffered(compio_archive *archive) {
-    if (!archive || !archive->header) return;
+static bool flush_header_double_buffered(compio_archive *archive) {
+    if (!archive || !archive->header) {
+        errno = EINVAL;
+        return false;
+    }
 
     // Double-buffered Header Write. Persist whenever the archive is writable.
     // Read-only is pure 'r' (r bit set, no '+'); 'r+' also sets the r bit but
@@ -988,14 +979,22 @@ static void flush_header_double_buffered(compio_archive *archive) {
         // Create new header data based on current in-memory header
         compio::header* new_h_data = new compio::header(*archive->header);
         new_h_data->sequence_id++;
-        new_h_data->compute_checksum(new_h_data->checksum); // Ensure checksum is fresh
 
         // Write to the target (alternate) slot
         smart_infile_object<compio::header> new_header_obj(archive->file, target_addr, new_h_data, &archive->io_mutex, true);
-        new_header_obj.write();
+        {
+            std::lock_guard<std::mutex> io_lock(archive->io_mutex);
+            if (!new_h_data->write_checked(archive->file, target_addr) ||
+                !fsync_archive(archive->file)) {
+                return false;
+            }
+        }
 
         // Switch internal state to point to the new slot
         archive->current_header_slot = target_slot;
+        archive->published_allocator_state_offset = new_h_data->allocator_state_offset;
+        archive->published_allocator_state_size = new_h_data->allocator_state_size;
+        archive->published_file_size = new_h_data->file_size;
         
         // Mark old header object as unmodified so it doesn't write on destruction
         archive->header.unmodify();
@@ -1014,6 +1013,7 @@ static void flush_header_double_buffered(compio_archive *archive) {
              archive->index->set_header(archive->header);
         }
     }
+    return true;
 }
 
 int compio_close_file(compio_file *file) {
@@ -1040,83 +1040,62 @@ int compio_close_archive(compio_archive *archive) {
         return -1;
     }
 
-    // 1) flush cached data to file (writes all dirty blocks; keeps block_reader valid)
-    compio_flush(archive);
+    bool durable = flush_archive_impl(archive);
+    int close_error = durable ? 0 : (errno ? errno : EIO);
 
-    // 2) run maintenance (defragmentation) before saving allocator state.
-    //    Must happen while block_reader and index are still alive.
-    if (!archive->is_readonly() && archive->allocator) {
+    // Maintenance may change the layout after the initial flush.
+    if (durable && !archive->is_readonly() && archive->allocator) {
         archive->allocator->maintenance(true);
     }
 
-    // 3) now safe to delete block_reader
+    if (archive->block_reader && !archive->block_reader->flush_cache()) {
+        durable = false;
+        if (!close_error) close_error = errno ? errno : EIO;
+    }
     delete archive->block_reader;
     archive->block_reader = nullptr;
 
-    // 4) save allocator state to the end of the file, if not read-only mode
-    if (!archive->is_readonly() && archive->allocator) {
-        if (!archive->allocator->save_state(archive)) {
-            WARNING_PRINT("warning: failed to save allocator state\n");
-            return -3;
-        }
+    if (durable && !archive->is_readonly() && archive->allocator &&
+        !archive->allocator->save_state(archive)) {
+        WARNING_PRINT("warning: failed to save allocator state\n");
+        durable = false;
+        close_error = errno ? errno : EIO;
     }
 
-    // 5) delete allocator
-    delete archive->allocator;
-    archive->allocator = nullptr;
+    if (archive->index && !archive->index->flush_cache()) {
+        durable = false;
+        if (!close_error) close_error = errno ? errno : EIO;
+    }
 
-    // 6) delete btree (it actually depends on allocator, but allocator also depends on index,
-    // however they don't call each other in their destructors, so their destruction order does not
-    // matter)
     delete archive->index;
     archive->index = nullptr;
 
-    // 7) flush header safely using double-buffering
-    // This ensures that the final state (including allocator updates) is written atomically to the alternate slot.
-    // If we crash during this write, the previous valid header (in the other slot) is preserved.
-    flush_header_double_buffered(archive);
-
-    // Ensure all data is physically on disk before clearing WAL.
-    // This prevents data loss if power fails between WAL clear and fclose.
-    if (fflush(archive->file) != 0) {
-        WARNING_PRINT("warning: fflush failed in compio_close_archive\n");
+    if (durable && !archive->is_readonly()) {
+        durable = fsync_archive(archive->file) && flush_header_double_buffered(archive);
+        if (!durable) close_error = errno ? errno : EIO;
     }
-#ifdef _WIN32
-    if (_commit(_fileno(archive->file)) != 0) {
-        WARNING_PRINT("warning: _commit failed in compio_close_archive\n");
-    }
-#else
-    if (fsync(fileno(archive->file)) != 0) {
-        WARNING_PRINT("warning: fsync failed in compio_close_archive\n");
-    }
-#endif
-    truncate_after_header_publish(archive);
-
-    // If WAL is enabled and we are closing cleanly, we should clear the WAL.
-    // At this point, all data is synced to the archive file (via flush and header update).
-    // The WAL is redundant now.
-    if (archive->wal) {
-        // Commit any pending transaction before clearing (though close logic usually implies clean state)
-        // Actually, we don't need commit here, as flush_header_double_buffered creates its own atomic write.
-        // And compio_flush called earlier committed its changes.
-        archive->wal->clear();
+    if (durable && !archive->is_readonly()) {
+        if (archive->allocator) archive->allocator->commit_state();
+        truncate_after_header_publish(archive);
+        if (archive->wal && !archive->wal->clear()) {
+            durable = false;
+            close_error = errno ? errno : EIO;
+        }
     }
 
-    // Destroy the header object. It is now clean (unmodified) because flush_header_double_buffered just wrote it.
+    delete archive->allocator;
+    archive->allocator = nullptr;
+
+    // Never let destructor write-back bypass checked header publication,
+    // including when publication failed and the old header is still dirty.
+    archive->header.unmodify();
     archive->header = {};
 
-    // 8) finally we close the file (block_reader, allocator and index are all deleted, so no
-    // fwrites will be called after this)
-    if (fclose(archive->file)) {
-        WARNING_PRINT("warning: failed to close file in compio_close_archive\n");
-        return -2;
-    }
-    DEBUG_PRINT("[cca]: closed file\n");
-
-    // 9) and delete archive structure
+    const bool closed = fclose(archive->file) == 0;
+    if (!closed && close_error == 0) close_error = errno ? errno : EIO;
     delete archive;
-
-    return COMPIO_SUCCESS;
+    if (close_error) errno = close_error;
+    return durable && closed ? COMPIO_SUCCESS : COMPIO_ERROR;
 }
 
 int compio_seek(compio_file *file, int64_t offset, uint8_t origin) {
@@ -1227,9 +1206,11 @@ struct WalTransactionGuard {
         }
     }
 
-    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
+    bool commit(compio_archive *archive) {
         if (!active || !wal) return true;
-        bool result = wal->commit_transaction(archive_file, max_wal_size);
+        // An earlier eviction failure must reach flush before the journal is cleared.
+        FILE *checkpoint_file = archive->block_reader->has_write_error() ? nullptr : archive->file;
+        bool result = wal->commit_transaction(checkpoint_file, archive->config.wal_max_size_bytes);
         active = false;
         return result;
     }
@@ -1588,7 +1569,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive)) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -2079,7 +2060,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive)) {
         errno = EIO;
         return 0;
     }
@@ -2331,7 +2312,7 @@ after_merge:
 
     validate_tree(archive->index, file, true);
 
-    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive)) {
         errno = EIO;
         return 0;
     }
@@ -2347,11 +2328,11 @@ static uint32_t files_table_checksum(const compio::files_table &table) {
                   static_cast<size_t>(table.max_files) * sizeof(compio::files_table::file));
 }
 
-static void sync_files_table(compio_archive *archive) {
-    if (!archive || !archive->header) return;
+static bool sync_files_table(compio_archive *archive) {
+    if (!archive || !archive->header) return false;
 
     // Only applies to v5 format
-    if (readonly(archive->header, header)->magic_number != COMPIO_MAGIC_NUMBER) return;
+    if (readonly(archive->header, header)->magic_number != COMPIO_MAGIC_NUMBER) return true;
 
     // The table is rewritten as a whole, so skip it when nothing in it changed
     // since it was last written.
@@ -2360,22 +2341,19 @@ static void sync_files_table(compio_archive *archive) {
         readonly(archive->header, header)->files_table_addr != 0 &&
         readonly(archive->header, header)->files_table_capacity ==
             readonly(archive->header, header)->ftable.max_files) {
-        return;
+        return true;
     }
 
     // Copy-on-write for the files table:
     // Copy-on-write: allocate a fresh block for the table, write into it, then
     // point the header at the new region. The previous table block is freed
-    // afterwards. This is crash safe: deallocate() only mutates the in-memory
-    // free list, which becomes durable atomically together with the new header
-    // (allocator save_state + double-buffered header + WAL commit happen later
-    // in compio_flush). A crash before that rolls back to the previous header,
-    // whose table block is still marked allocated and intact on disk. The new
+    // afterwards. deallocate() defers reuse and physical release of the old
+    // table until the allocator snapshot and new header are durable. The new
     // block is allocated before the old one is freed, so they never overlap.
 
     uint32_t current_capacity = archive->header->ftable.max_files;
     if (current_capacity == 0) {
-        return;
+        return true;
     }
 
     const uint64_t old_addr     = archive->header->files_table_addr;
@@ -2405,12 +2383,16 @@ static void sync_files_table(compio_archive *archive) {
     }
     
     if (new_addr != 0 && new_addr != UINT64_MAX) {
-        // Update header to point to the newly allocated table.
+        // Keep the old table and dirty checksum until the replacement is written.
+        if (!readonly(archive->header, header)->ftable.write_to(archive->file, new_addr) ||
+            fflush(archive->file) != 0) {
+            const int write_error = errno ? errno : EIO;
+            if (archive->allocator) archive->allocator->deallocate(new_addr, needed_size, false);
+            errno = write_error;
+            return false;
+        }
         archive->header->files_table_addr = new_addr;
         archive->header->files_table_capacity = current_capacity;
-
-        // Write the table content at the new address.
-        archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
         archive->files_table_checksum = checksum;
         archive->files_table_checksum_valid = true;
 
@@ -2424,21 +2406,18 @@ static void sync_files_table(compio_archive *archive) {
         }
     } else {
          WARNING_PRINT("warning: failed to allocate space for files table\n");
+         if (!errno) errno = ENOSPC;
+         return false;
     }
+    return true;
 }
 
 // Caller must hold archive->mutex.
-static void flush_impl(compio_archive *archive) {
-    // Check if we have write permission (w, a, or + modes)
-    // mode_bit::r is set for 'r' and 'r+'. 'w'/'a' don't set 'r'.
-    // So we need explicit check for write capability.
-    bool can_write = (archive->mode_b & mode_bit::w) || 
-                     (archive->mode_b & mode_bit::a) || 
-                     (archive->mode_b & mode_bit::plus);
+static bool flush_impl(compio_archive *archive) {
+    if (archive->is_readonly()) return true;
 
     // Start atomic transaction for the entire flush operation
-    // Pass nullptr if we shouldn't use WAL
-    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::WalManager* wal_ptr = archive->wal.get();
     
     if (wal_ptr && wal_ptr->get_batch_depth() == 0) {
         wal_ptr->begin_transaction();
@@ -2451,18 +2430,16 @@ static void flush_impl(compio_archive *archive) {
 
     // Dirty blocks first: writing them updates the index nodes. Both caches
     // keep their contents, so a flush does not cost the reads that follow.
-    if (archive->block_reader) archive->block_reader->flush_cache();
+    if (archive->block_reader && !archive->block_reader->flush_cache()) durable = false;
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
-    if (archive->index) archive->index->flush_cache();
+    if (archive->index && !archive->index->flush_cache()) durable = false;
 
     // Sync files table (allocate if needed, write to disk)
-    if (can_write) {
-        sync_files_table(archive);
-    }
+    if (!sync_files_table(archive)) durable = false;
 
     // Save allocator state (updates header fields)
-    if (archive->allocator && can_write) {
-         archive->allocator->save_state(archive);
+    if (archive->allocator) {
+        if (!archive->allocator->save_state(archive)) durable = false;
     }
 
     // Commit the transaction FIRST, so the data, allocator state and files table
@@ -2471,7 +2448,7 @@ static void flush_impl(compio_archive *archive) {
     // before the commit risks a crash that leaves a durable header referencing
     // writes the WAL later rolls back (header valid but pointing past EOF).
     if (wal_active && wal_ptr->get_batch_depth() == 0) {
-        if (!wal_ptr->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
+        if (!wal_ptr->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
             durable = false;
         }
@@ -2495,13 +2472,11 @@ static void flush_impl(compio_archive *archive) {
             WARNING_PRINT("warning: data fsync failed before header write\n");
             durable = false;
         } else {
-            flush_header_double_buffered(archive);
-            // The header is what makes this flush visible after a crash, so it
-            // has to reach the disk as well, with or without a journal.
-            if (can_write ? !fsync_archive(archive->file) : fflush(archive->file) != 0) {
+            if (!flush_header_double_buffered(archive)) {
                 WARNING_PRINT("warning: failed to sync the header\n");
                 durable = false;
             } else {
+                if (archive->allocator) archive->allocator->commit_state();
                 truncate_after_header_publish(archive);
             }
         }
@@ -2514,23 +2489,26 @@ static void flush_impl(compio_archive *archive) {
             WARNING_PRINT("warning: skipping WAL checkpoint due to earlier durability failure\n");
         } else if (!archive->wal->checkpoint()) {
             WARNING_PRINT("warning: WAL checkpoint failed\n");
+            durable = false;
         }
     }
+    return durable;
+}
+
+static bool flush_archive_impl(compio_archive *archive) {
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+
+    // Finish automatic batches; explicit batches keep deferring publication.
+    bool durable = true;
+    while (!archive->auto_batching_files.empty()) {
+        if (!end_auto_batch(archive->auto_batching_files.back())) durable = false;
+    }
+    if (!durable) return false;
+    return flush_impl(archive);
 }
 
 void compio_flush(compio_archive *archive) {
-    if (!archive) return;
-    std::unique_lock<std::shared_mutex> lock(archive->mutex);
-
-    // A batch opened automatically for sequential writes defers the commit and
-    // the header. The caller did not ask for that batch and expects a flush to
-    // make everything durable, so such batches end here. A batch the caller
-    // opened with compio_begin_batch keeps deferring, as documented.
-    while (!archive->auto_batching_files.empty()) {
-        end_auto_batch(archive->auto_batching_files.back());
-    }
-
-    flush_impl(archive);
+    if (archive) flush_archive_impl(archive);
 }
 
 int compio_repair(const char *path, const char *output_dir) {

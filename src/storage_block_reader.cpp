@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
+#include <cstring>
 #include <mutex>
 #include <cinttypes>
 #include <algorithm>
@@ -98,17 +100,12 @@ block::block(context_t &context, const tree_key &key, uint64_t size, bool unused
     UNUSED(unused);
 }
 
-block::~block() {
-    DEBUG_PRINT("[B][destructor]: called destructor for {%lu, %lu} (is_modified=%d, is_removed=%d)\n", _key.hash, _key.pos, _is_modified, _is_removed);
-    // A removed block has nothing to write: storage_block_reader::remove_block
-    // has already taken it out of the index and released its place.
-    write_back();
-}
-
-void block::write_back() {
-    if (!_is_valid || !_is_modified || _is_removed) {
-        return;
+bool block::write_back() {
+    if (!_is_valid) {
+        errno = EIO;
+        return false;
     }
+    if (!_is_modified || _is_removed) return true;
 
     storage_block b(context.compressor->get_bufsize(context.compressor, _size));
     b.original_size = _size;
@@ -122,7 +119,8 @@ void block::write_back() {
         }
 
         b.is_compressed = false;
-        b.data = std::move(_data);
+        b.data = std::make_unique<uint8_t[]>(_size);
+        std::memcpy(b.data.get(), _data.get(), _size);
         b.size = _size;
     } else {
 #ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
@@ -131,49 +129,33 @@ void block::write_back() {
         b.is_compressed = true;
     }
 
-    if (_addr != 0) {
-        // block was read from file, so addr was already allocated from allocator previously
-
-        // if (c_size >= b.size) {
-        //     // we can reuse previous memory block in file
-        // }
-
-        // though it would be better to pass this logic to allocator, and allocate memory again
-        // Disable maintenance during flush: defrag reads the btree index, but the index
-        // is only partially updated while clear_cache() destructors are still running.
-        // Running defrag mid-flush would see stale block addresses and corrupt the archive.
-        context.allocator->deallocate(_addr, _c_size + _disk_meta_size, false);
+    const uint64_t disk_size = STORAGE_BLOCK_METASIZE_V2 + b.size;
+    const uint64_t new_addr = context.allocator->allocate(disk_size);
+    if (new_addr == UINT64_MAX) {
+        if (!errno) errno = ENOSPC;
+        return false;
     }
 
-    uint64_t new_addr = context.allocator->allocate(STORAGE_BLOCK_METASIZE_V2 + b.size);
-    DEBUG_PRINT(
-        "[B][destructor]: writing to file "
-        "(new_addr=%" PRIu64 ",addr=%" PRIu64 ",original_size=%" PRIu64 ",size=%" PRIu64 ",is_compressed=%d,key.pos=%" PRIu64 ")\n",
-        new_addr, _addr, b.original_size, b.size, b.is_compressed, _key.pos);
-
+    bool written;
     if (context.io_mutex) {
         std::lock_guard<std::mutex> lock(*context.io_mutex);
-        b.write_to(context.file, new_addr, context.wal);
+        written = b.write_to(context.file, new_addr, context.wal);
     } else {
-        b.write_to(context.file, new_addr, context.wal);
+        written = b.write_to(context.file, new_addr, context.wal);
     }
 
-    // block already in btree thanks to storage_block_reader
-    // we just need to update it's file address
-    bool update_res = false;
-    if (tl_maintenance_mode) {
-         context.index->_update_impl(_key, {new_addr, _size});
-         update_res = true; // _update_impl returns void or we assume it works? Check btree.hpp
-    } else {
-         update_res = context.index->update(_key, {new_addr, _size});
+    const bool updated = written && (tl_maintenance_mode
+        ? context.index->_update_impl(_key, {new_addr, _size})
+        : context.index->update(_key, {new_addr, _size}));
+    if (!updated) {
+        const int error = errno ? errno : EIO;
+        context.allocator->deallocate(new_addr, disk_size, false);
+        errno = error;
+        return false;
     }
-
-    if (!update_res) {
-        WARNING_PRINT("[B][destructor] ERROR: failed to update index for key {%" PRIu64 ", %" PRIu64 "} with addr %" PRIu64 "\n",
-                      _key.hash, _key.pos, new_addr);
-        // This is a critical consistency error. The block is written to disk, but the index
-        // still points to addr=0 (or old addr). Future reads will fail.
-        assert(false && "Failed to update index in block destructor");
+    // Preserve the old allocation until the replacement is written and indexed.
+    if (_addr != 0) {
+        context.allocator->deallocate(_addr, _c_size + _disk_meta_size, false);
     }
 
     {
@@ -184,15 +166,11 @@ void block::write_back() {
         }
     }
 
-    // The block now lives at the new address. An incompressible block lent its
-    // buffer to the stored copy; take it back.
-    if (!b.is_compressed) {
-        _data = std::move(b.data);
-    }
     _addr = new_addr;
     _c_size = b.size;
     _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
     _is_modified = false;
+    return true;
 }
 
 const uint8_t *block::data() const { return _data.get(); }
@@ -208,11 +186,7 @@ void block::shrink(uint64_t new_size) {
     assert(new_size < _size);
     _is_modified = true;
     _size = new_size;
-    // we're not updating size in btree, because while this block is in cache, read_block()->size()
-    // will return correct size, and if block is not in cache, then destructor already updated size
-    //
-    // UPD: we are updating size in btree, because otherwise we can't use btree::get_block in
-    // compio_insert
+    // Range operations need the new logical size before write-back.
     context.index->update(_key, {_addr, new_size});
 }
 
@@ -261,7 +235,8 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
                                            const compio_compressor *compressor, int max_size,
                                            std::mutex *io_mutex, compio::WalManager *wal,
                                            compio_checksum_type checksum_type)
-    : cache(max_size),
+    : cache(max_size, shard_by_hash{},
+            [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }),
       context{file, allocator, index, compressor, io_mutex, wal, checksum_type} {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
@@ -332,8 +307,7 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
     cache.put(key, b);
 
     // adding element to btree, but without file address (we didn't allocate memory block yet)
-    // block::~block will update this element in btree with new address (or delete it if block will
-    // be removed, thought we don't remove newly created blocks anywhere)
+    // Checked write-back fills in the address before eviction or checkpoint.
     context.index->insert(key, {0, size});
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
     ++bm_n_blocks;
@@ -342,7 +316,7 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 }
 
 // Order in which blocks are written out. Blocks that already have a place go
-// first, by address: they release it, and adjacent holes merge. New blocks
+// first, by address. New blocks
 // follow in logical order, so that a file written in one go is laid out front
 // to back and reads sequentially on disk.
 static void sort_for_write_back(std::vector<std::shared_ptr<block>> &blocks) {
@@ -361,28 +335,40 @@ static void sort_for_write_back(std::vector<std::shared_ptr<block>> &blocks) {
     });
 }
 
-void storage_block_reader::clear_cache() {
-    DEBUG_PRINT("[SBR][clear_cache]\n");
-
-    auto blocks = cache.extract_all();
-    sort_for_write_back(blocks);
-
-    // The order of destruction of vector elements is not specified, so the
-    // blocks are released one by one in the order chosen above.
-    for (auto& b : blocks) {
-        b.reset();
-    }
-    blocks.clear();
+bool storage_block_reader::prepare_eviction(const std::shared_ptr<block> &b) {
+    if (b.use_count() != 1) return false;
+    if (b->write_back()) return true;
+    int expected = 0;
+    write_error.compare_exchange_strong(expected, errno ? errno : EIO);
+    return false;
 }
 
-void storage_block_reader::flush_cache() {
-    DEBUG_PRINT("[SBR][flush_cache]\n");
+bool storage_block_reader::clear_cache() {
+    if (!flush_cache()) {
+        int expected = 0;
+        write_error.compare_exchange_strong(expected, errno ? errno : EIO);
+        return false;
+    }
+    // Keep externally held blocks canonical: callers may still modify them.
+    for (const auto &b : cache.values()) {
+        if (b.use_count() == 2) cache.remove(b->key());
+    }
+    return true;
+}
 
+bool storage_block_reader::flush_cache() {
+    int error = write_error.exchange(0);
     auto blocks = cache.values();
     sort_for_write_back(blocks);
     for (auto &b : blocks) {
-        b->write_back();
+        if (!b->write_back() && !error) error = errno ? errno : EIO;
     }
+    flush_failed.store(error != 0);
+    if (error) {
+        errno = error;
+        return false;
+    }
+    return true;
 }
 
 void storage_block_reader::set_maintenance_mode(bool enabled) {

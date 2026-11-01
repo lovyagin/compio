@@ -57,6 +57,9 @@ void free_blocks_manager::clear_regions() {
     next_fit_cursor_ = 0;
     total_free_ = 0;
     fragmentation_dirty_ = true;
+    deferred_.clear();
+    saved_deferred_.clear();
+    saved_state_offset_ = saved_state_size_ = 0;
 }
 
 bool free_blocks_manager::add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset,
@@ -338,48 +341,72 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
                offset + size <= logical_end;
     };
 
-    uint64_t current_offset = readonly(archive->header, header)->allocator_state_offset;
-    uint64_t current_size = readonly(archive->header, header)->allocator_state_size;
-    if (!is_slot(current_offset, current_size)) {
-        current_offset = current_size = 0;
+    const uint64_t published_offset = archive->published_allocator_state_offset;
+    const uint64_t published_size = archive->published_allocator_state_size;
+    if (published_size > UINT64_MAX - published_offset) {
+        errno = EINVAL;
+        return false;
     }
-    if (!is_slot(spare_slot_offset_, spare_slot_size_)) {
-        spare_slot_offset_ = spare_slot_size_ = 0;
+    auto overlaps_published = [&](uint64_t offset, uint64_t size) {
+        if (published_size == 0 || size == 0) return false;
+        return offset <= published_offset ? size > published_offset - offset
+                                          : published_size > offset - published_offset;
+    };
+
+    // Prepare slot rotation and free-list changes locally. Failed writes must
+    // not change which slots are reserved or available for allocation.
+    free_blocks_manager staged(*this);
+    uint64_t pos = readonly(archive->header, header)->allocator_state_offset;
+    uint64_t slot_size = readonly(archive->header, header)->allocator_state_size;
+    if (!is_slot(pos, slot_size) || overlaps_published(pos, slot_size)) {
+        pos = spare_slot_offset_;
+        slot_size = spare_slot_size_;
+    }
+    if (!is_slot(pos, slot_size) || overlaps_published(pos, slot_size)) {
+        pos = slot_size = 0;
     }
 
-    // Sized for the list as it will be if the spare slot has to be released
-    // below, which adds at most one entry.
+    // Include deferred frees and at most one released spare slot.
     const uint64_t needed = sizeof(uint64_t) +
-                            (static_cast<uint64_t>(free_region_count()) + 1) * STATE_ENTRY_SIZE +
+                            (static_cast<uint64_t>(free_region_count()) + deferred_.size() + 1) * STATE_ENTRY_SIZE +
                             STATE_TRAILER_SIZE;
     if (needed > UINT32_MAX / 2) {
         WARNING_PRINT("warning: allocator state is too large to save\n");
         return false;
     }
 
-    // The state alternates between two slots, like the double-buffered header:
-    // the durable header references the current slot until the next header is
-    // published, so the new copy goes to the spare one. Both slots stay
-    // allocated, which keeps repeated saves from growing the archive.
-    uint64_t pos = spare_slot_offset_;
-    uint64_t slot_size = spare_slot_size_;
+    // Reuse the unpublished slot until a header actually publishes it.
     bool appended = false;
     if (slot_size < needed) {
         if (slot_size != 0) {
-            add_free_block(spare_slot_offset_, spare_slot_size_);
+            staged.add_free_block(pos, slot_size);
         }
         slot_size = MIN_STATE_SLOT_SIZE;
         while (slot_size < needed) {
             slot_size *= 2;
         }
         pos = std::max(logical_end, reserved_end);
+        if (overlaps_published(pos, slot_size)) {
+            pos = published_offset + published_size;
+        }
         appended = true;
     }
-    spare_slot_offset_ = current_offset;
-    spare_slot_size_ = current_size;
+    if (slot_size > UINT64_MAX - pos) {
+        errno = EOVERFLOW;
+        return false;
+    }
+    staged.spare_slot_offset_ = published_offset;
+    staged.spare_slot_size_ = published_size;
 
+    free_blocks_manager snapshot(staged);
+    for (const auto &[offset, size] : deferred_) {
+        if (!snapshot.add_free_block(offset, size)) {
+            errno = EINVAL;
+            return false;
+        }
+    }
     std::vector<uint8_t> buffer;
-    serialize(buffer);
+    snapshot.serialize(buffer);
     assert(buffer.size() <= slot_size);
     buffer.resize(slot_size, 0);
     const uint32_t size = static_cast<uint32_t>(slot_size);
@@ -419,21 +446,25 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         }
         return false;
     }
-    archive->header->allocator_state_offset = pos;
-    archive->header->allocator_state_size = size;
-    if (appended) {
-        archive->header->file_size = pos + size;
+    if (fflush(archive->file) != 0) {
+        if (!in_batch && archive->wal) archive->wal->rollback_transaction();
+        return false;
     }
 
-    fflush(archive->file);
-
     if (!in_batch && archive->wal) {
-        if (!archive->wal->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
+        if (!archive->wal->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
             return false;
         }
     }
 
+    staged.saved_deferred_ = deferred_;
+    staged.saved_state_offset_ = pos;
+    staged.saved_state_size_ = size;
+    *this = std::move(staged);
+    archive->header->allocator_state_offset = pos;
+    archive->header->allocator_state_size = size;
+    if (appended) archive->header->file_size = pos + size;
     return true;
 }
 
@@ -611,7 +642,7 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size) {
 }
 
 void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_maintenance) {
-    if (offset == UINT64_MAX || size == 0 || !archive_ || !archive_->header) {
+    if (size == 0 || size > UINT64_MAX - offset || !archive_ || !archive_->header) {
         return;
     }
 
@@ -619,38 +650,41 @@ void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_ma
     {
         std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
 
-        // Validate bounds using the cached file size pointer to avoid locking header_mutex
-    // (which could cause deadlocks if held by caller).
-    const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
-    if (file_size_ptr) {
-        if (size > UINT64_MAX - offset ||
-            offset + size > *file_size_ptr) {
+        // The caller may hold header_mutex, so use the cached size pointer.
+        const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
+        if ((file_size_ptr && offset + size > *file_size_ptr) ||
+            offset < readonly(archive_->header, header)->reserved_size()) {
             return;
         }
-    }
 
-    if (blocks_manager_.is_region_free(offset, size)) {
-        return;
-    }
+        auto overlaps = [&](const auto &regions) {
+            auto next = regions.lower_bound(offset);
+            return (next != regions.end() && next->first < offset + size) ||
+                   (next != regions.begin() && std::prev(next)->first + std::prev(next)->second > offset);
+        };
+        if (overlaps(blocks_manager_.by_offset_) || overlaps(blocks_manager_.deferred_)) return;
 
-    uint64_t merged_offset = offset;
-    uint64_t merged_size = size;
-    if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
-        return;
-    }
-    if (wal_) {
-             // Similar to allocate, strict WAL logging of every free list change is expensive.
-             // We rely on periodic checkpoints of the allocator state.
-    }
+        // The old checkpoint cannot reference allocations beyond its logical end.
+        // Everything below it stays reserved until a full checkpoint is published.
+        if (offset < archive_->published_file_size) {
+            blocks_manager_.deferred_.emplace(offset, size);
+            return;
+        }
 
-    if (archive_->config.fill_holes_with_zeros && archive_->file) {
-        release_to_filesystem(offset, size, merged_offset, merged_size);
-    }
+        uint64_t merged_offset = offset;
+        uint64_t merged_size = size;
+        if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+            return;
+        }
 
-    // Check if defragmentation is needed (throttled to avoid O(N) cost on every dealloc)
-    if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
-        run_maintenance = true;
-    }
+        if (archive_->config.fill_holes_with_zeros && archive_->file) {
+            release_to_filesystem(offset, size, merged_offset, merged_size);
+        }
+
+        // Throttle maintenance to avoid O(N) work on every deallocation.
+        if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
+            run_maintenance = true;
+        }
     }
 
     if (run_maintenance) {
@@ -688,7 +722,7 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
 
     // Buffered writes into the region must reach the file first, otherwise they
     // would land after the hole is punched and bring the blocks back.
-    fflush(archive_->file);
+    if (fflush(archive_->file) != 0) return;
 
     if (hole_punching_supported_) {
         if (punch_hole(offset, size, merged_offset, merged_size)) {
@@ -702,7 +736,7 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
     static constexpr size_t BUFFER_SIZE = 4096;
     static uint8_t zeros[BUFFER_SIZE] = {0};
 
-    fseek64(archive_->file, offset, SEEK_SET);
+    if (fseek64(archive_->file, offset, SEEK_SET) != 0) return;
 
     size_t remaining = size;
     while (remaining > 0) {
@@ -718,13 +752,19 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
 
 void block_allocator::force_defragmentation() {
     // Flush caches before locking allocator/index to avoid deadlock.
-    // block::~block() calls allocate/deallocate/update which lock allocator_mutex and index->mutex.
+    // Block write-back locks allocator/index; pinned blocks cannot be relocated.
     if (archive_->file) {
         archive_->block_reader->set_maintenance_mode(true);
-        archive_->block_reader->clear_cache();
+        if (!archive_->block_reader->clear_cache() || !archive_->block_reader->cache_empty()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            return;
+        }
         // Use public clear_cache which handles its own locking if needed, 
         // or just relies on the fact we are the only thread (compio_defragment holds archive mutex).
-        archive_->index->clear_cache();
+        if (!archive_->index->clear_cache()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            return;
+        }
     }
 
     auto index_lock = archive_->index->get_lock();
@@ -768,11 +808,17 @@ void block_allocator::maintenance(bool at_checkpoint) {
         }
 
         // Flush caches before locking allocator to avoid deadlock.
-        // block::~block() calls allocate/deallocate which lock allocator_mutex.
+        // Block write-back calls allocate/deallocate which lock allocator_mutex.
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(true);
-            archive_->block_reader->clear_cache();
-            archive_->index->_clear_cache();
+            if (!archive_->block_reader->clear_cache() || !archive_->block_reader->cache_empty()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return;
+            }
+            if (!archive_->index->_clear_cache()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return;
+            }
         }
 
         std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
@@ -820,7 +866,7 @@ bool block_allocator::save_state(compio_archive *archive) {
         // Since the allocator state can be large, we typically don't put it *inside* the WAL log.
         // Instead we write it to the archive file and sync it.
         // But we MUST ensure any previous WAL entries are flushed first.
-        wal_->sync();
+        if (!wal_->sync()) return false;
     }
     
     bool result = blocks_manager_.save_to_file(archive);
@@ -829,9 +875,9 @@ bool block_allocator::save_state(compio_archive *archive) {
         // After writing allocator state to disk, we must ensure it hits physical storage
         // before we might update the header pointing to it.
         #ifdef _WIN32
-        _commit(_fileno(archive->file));
+        result = _commit(_fileno(archive->file)) == 0;
         #else
-        fsync(fileno(archive->file));
+        result = fsync(fileno(archive->file)) == 0;
         #endif
     }
     
@@ -846,6 +892,28 @@ bool block_allocator::load_state(compio_archive *archive) {
     std::lock_guard<std::mutex> head_lock(archive->header_mutex);
     std::lock_guard<std::mutex> io_lock(archive->io_mutex);
     return blocks_manager_.load_from_file(archive);
+}
+
+void block_allocator::commit_state() {
+    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+    std::lock_guard<std::mutex> io_lock(archive_->io_mutex);
+    if (blocks_manager_.saved_state_offset_ != archive_->published_allocator_state_offset ||
+        blocks_manager_.saved_state_size_ != archive_->published_allocator_state_size) return;
+
+    for (const auto &[offset, size] : blocks_manager_.saved_deferred_) {
+        uint64_t merged_offset = offset;
+        uint64_t merged_size = size;
+        if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+            // A failed invariant must leak space rather than release live data.
+            WARNING_PRINT("warning: failed to release a checkpoint's deferred region\n");
+            continue;
+        }
+        blocks_manager_.deferred_.erase(offset);
+        if (archive_->config.fill_holes_with_zeros) {
+            release_to_filesystem(offset, size, merged_offset, merged_size);
+        }
+    }
+    blocks_manager_.saved_deferred_.clear();
 }
 
 // Private methods
@@ -863,6 +931,9 @@ static bool sync_file(FILE *file) {
 }
 
 void block_allocator::perform_defragmentation(bool relocate_files_table) {
+    // Compaction writes gaps in place. A gap can still belong to the previous
+    // checkpoint even though it is absent from the current index.
+    if (!blocks_manager_.deferred_.empty()) return;
     // Flush all cached/dirty blocks to disk first so that every index entry
     // has a real physical address before we start moving data.
     // NOTE: This must be done by the caller (maintenance/force_defragmentation)
@@ -1079,7 +1150,7 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
 
     // Flush all updated index nodes to disk BEFORE truncating the file.
     // If we crash after truncation but before index write, we lose data.
-    archive_->index->_clear_cache();
+    if (!archive_->index->_clear_cache()) return;
 
     if (fflush(archive_->file) != 0 || !sync_file(archive_->file)) {
         WARNING_PRINT("warning: perform_defragmentation: failed to sync moved blocks\n");
@@ -1103,8 +1174,8 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
         }
 
         auto write_table = [&](uint64_t pos) {
-            readonly(archive_->header, header)->ftable.write_to(archive_->file, pos);
-            return fflush(archive_->file) == 0 && sync_file(archive_->file);
+            return readonly(archive_->header, header)->ftable.write_to(archive_->file, pos) &&
+                   fflush(archive_->file) == 0 && sync_file(archive_->file);
         };
 
         if (table_pos < ft_addr) {

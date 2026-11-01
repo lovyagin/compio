@@ -7,6 +7,7 @@ add_executable(compio_gtest
     src/test_allocator_advanced.cpp
     src/test_allocator_edge_cases.cpp
     src/test_allocator_serialization.cpp
+    src/test_deferred_free.cpp
     src/test_allocator_strategies.cpp
     src/test_allocator_drift.cpp
     src/test_api_limits.cpp
@@ -36,6 +37,7 @@ add_executable(compio_gtest
     src/test_crash_sigkill.cpp
     src/test_flush_files_table.cpp
     src/test_flush_durability.cpp
+    src/test_batch_durability.cpp
     src/test_wal_recovery.cpp
     src/test_wal_format.cpp
     src/test_auto_checkpoint.cpp
@@ -59,6 +61,18 @@ target_include_directories(compio_gtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/incl
 if (UNIX)
     add_executable(crash_consistency crash/crash_consistency.cpp)
     target_link_libraries(crash_consistency PRIVATE compio)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(crash_consistency PRIVATE COMPIO_CRASH_HEADER_CUT)
+        target_link_options(crash_consistency PRIVATE -Wl,--wrap=fseeko -Wl,--wrap=fsync)
+    endif()
+
+    find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME crash_consistency_harness
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/crash/test_crash_consistency.py
+                    $<TARGET_FILE:crash_consistency>)
+        set_tests_properties(crash_consistency_harness PROPERTIES TIMEOUT 120)
+    endif()
 
     add_executable(index_corruption crash/index_corruption.cpp)
     target_link_libraries(index_corruption PRIVATE compio)
@@ -67,3 +81,13 @@ endif()
 enable_testing()
 
 add_test(NAME compio_gtest_tests COMMAND compio_gtest)
+
+# Link-time I/O faults stay confined to this executable and out of the library.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(header_publication_tests src/test_header_publication.cpp)
+    target_link_libraries(header_publication_tests PRIVATE compio GTest::GTest GTest::Main)
+    target_include_directories(header_publication_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_options(header_publication_tests PRIVATE
+        -Wl,--wrap=fseeko -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fsync)
+    add_test(NAME header_publication_tests COMMAND header_publication_tests)
+endif()

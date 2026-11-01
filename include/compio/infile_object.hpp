@@ -98,8 +98,9 @@ public:
      * @param file File stream to write to
      * @param addr File address (offset) where the object data should be stored
      * @param wal_manager Optional pointer to WAL manager for transaction logging
+     * @return true if the complete object was written, false on I/O or WAL failure
      */
-    virtual void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const = 0;
+    virtual bool write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const = 0;
 
     /**
      * @brief Virtual destructor
@@ -259,12 +260,12 @@ private:
          *
          * Calls the object's write_to method to save data to file.
          */
-        void write() {
+        bool write() {
             if (io_mutex) {
                 std::lock_guard<std::mutex> lock(*io_mutex);
-                data->write_to(file, addr, wal);
+                return data->write_to(file, addr, wal);
             } else {
-                data->write_to(file, addr, wal);
+                return data->write_to(file, addr, wal);
             }
         }
     };
@@ -507,18 +508,21 @@ public:
      * Immediately writes the current object state to file, regardless of
      * the modified flag.
      */
-    void write() { S->write(); }
+    bool write() { return S->write(); }
+
+    int use_count() const { return S ? S->ref_count.load() : 0; }
 
     /**
      * @brief Write the object to file if it has unsaved modifications
      *
-     * The object stays loaded and is considered unmodified afterwards.
+     * The object stays loaded and becomes unmodified only on success.
      */
-    void flush() {
+    bool flush() {
         if (S->modified && !S->removed) {
-            S->write();
+            if (!S->write()) return false;
             S->modified = false;
         }
+        return true;
     }
 };
 

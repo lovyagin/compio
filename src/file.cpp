@@ -2,6 +2,7 @@
 #include "compio/wal.hpp"
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cstring>
 #include <inttypes.h>
 #include <vector>
@@ -79,10 +80,10 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64
     return true;
 }
 
-void files_table::write_to(FILE *file, uint64_t addr) const {
+bool files_table::write_to(FILE *file, uint64_t addr) const {
     if (fseek64(file, addr, SEEK_SET) != 0) {
         WARNING_PRINT("warning: fseek failed in files_table::write_to\n");
-        return;
+        return false;
     }
 
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t) + sizeof(uint64_t);
@@ -96,8 +97,10 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
         size_t entries_to_write = this->max_files;
         if (fwrite(this->files.data(), ENTRY_SIZE, entries_to_write, file) != entries_to_write) {
             WARNING_PRINT("warning: short write in files table (bulk)\n");
+            if (!errno) errno = EIO;
+            return false;
         }
-        return;
+        return true;
     }
 
     const size_t BATCH_SIZE = 4096;
@@ -124,11 +127,13 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
         size_t bytes_to_write = count * ENTRY_SIZE;
         if (lendian_fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
             WARNING_PRINT("warning: short write in files table\n");
-            return;
+            if (!errno) errno = EIO;
+            return false;
         }
         current_idx += count;
         remaining -= count;
     }
+    return true;
 }
 
 
@@ -310,46 +315,32 @@ bool header::read_from(FILE *file, uint64_t addr) {
 }
 
 // The header is never journaled: its two slots already make the update atomic.
-void header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
-    DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
-    
-    // Auto-update checksum before writing
-    // We cast away const because we want the on-disk structure to be correct, 
-    // and updating the checksum member is logically part of the serialization process.
-    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
+bool header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
+    return write_checked(file, addr);
+}
 
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-        
-    lendian_fwrite_member(magic_number, file);
-    lendian_fwrite(checksum, 1, sizeof(checksum), file);
-    lendian_fwrite_member(sequence_id, file);
-    
-    lendian_fwrite_member(index_root, file);
-    lendian_fwrite_member(file_size, file);
-    lendian_fwrite_member(allocator_state_offset, file);
-    lendian_fwrite_member(allocator_state_size, file);
-    lendian_fwrite_member(compression_type, file);
-    lendian_fwrite_member(block_size, file);
-    lendian_fwrite_member(b_tree_degree, file);
-
-    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
-        lendian_fwrite_member(files_table_addr, file);
-        lendian_fwrite_member(files_table_capacity, file);
-        lendian_fwrite_member(ftable.n_files, file);
-    } else {
-        // Non-v5 (legacy) archives are not supported for writing in this version.
-        // The previous implementation here was explicitly marked as "Broken v4 write"
-        // and did not serialize the inline files table correctly, which could lead
-        // to stale or inconsistent metadata on subsequent opens.
-        WARNING_PRINT("error: attempting to write header for non-v5 archive (magic=%" PRIu32 "); "
-                      "writing legacy/v4 archives is not supported\n", magic_number);
-        // Fail fast in debug builds to surface incorrect usage early.
-        assert(false && "writing legacy/v4 archives is not supported");
-        // In release builds, return after logging to avoid performing an incomplete
-        // or inconsistent v4-specific header update.
-        return;
+bool header::write_checked(FILE *file, uint64_t addr) const {
+    // Reject legacy writes before touching either header slot.
+    if (magic_number != COMPIO_MAGIC_NUMBER) {
+        errno = EINVAL;
+        return false;
     }
+    if (ferror(file) || fseek64(file, addr, SEEK_SET) != 0) return false;
+
+    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
+    return lendian_fwrite_member(magic_number, file) == 1 &&
+           lendian_fwrite(checksum, 1, sizeof(checksum), file) == sizeof(checksum) &&
+           lendian_fwrite_member(sequence_id, file) == 1 &&
+           lendian_fwrite_member(index_root, file) == 1 &&
+           lendian_fwrite_member(file_size, file) == 1 &&
+           lendian_fwrite_member(allocator_state_offset, file) == 1 &&
+           lendian_fwrite_member(allocator_state_size, file) == 1 &&
+           lendian_fwrite_member(compression_type, file) == 1 &&
+           lendian_fwrite_member(block_size, file) == 1 &&
+           lendian_fwrite_member(b_tree_degree, file) == 1 &&
+           lendian_fwrite_member(files_table_addr, file) == 1 &&
+           lendian_fwrite_member(files_table_capacity, file) == 1 &&
+           lendian_fwrite_member(ftable.n_files, file) == 1 && !ferror(file);
 }
 
 bool index_node::read_from(FILE *file, uint64_t addr) {
@@ -437,7 +428,7 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
     return true;
 }
 
-void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
+bool index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, (uint64_t)INDEX_NODE_SIZE(tree_degree));
     validate();
     
@@ -507,19 +498,23 @@ void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
     if (wal_manager) {
         wal_manager->begin_transaction();
         if (!wal_manager->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size())) {
-            WARNING_PRINT("error: WAL log_write failed for index_node at addr=%" PRIu64 "\n", addr);
+            wal_manager->rollback_transaction();
+            if (!errno) errno = EIO;
+            return false;
         }
         if (!wal_manager->commit_transaction()) {
-            WARNING_PRINT("error: WAL commit failed for index_node at addr=%" PRIu64 "\n", addr);
+            if (!errno) errno = EIO;
+            return false;
         }
     }
 
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-    
-    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size()) {
-        DEBUG_PRINT("warning: fwrite failed\n");
+    clearerr(file);
+    if (fseek64(file, addr, SEEK_SET) != 0) return false;
+    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size() || ferror(file)) {
+        if (!errno) errno = EIO;
+        return false;
     }
+    return fflush(file) == 0;
 }
 
 #define DEBUG_VAL (INT64_MAX - 123)
@@ -665,7 +660,7 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
     return true;
 }
 
-void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
+bool storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE_V2 + size);
     assert(addr != 0);
     assert(size > 0);
@@ -704,32 +699,28 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
 
     if (wal_manager) {
         wal_manager->begin_transaction();
-
         std::vector<compio::WalManager::iovec_buf> buffers;
         buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE_V2});
-        if (size > 0 && data) {
-            buffers.push_back({data.get(), size});
-        }
-
+        if (size > 0 && data) buffers.push_back({data.get(), size});
         if (!wal_manager->log_write_vectored(WalRecordType::BLOCK, addr, buffers)) {
-            WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
+            wal_manager->rollback_transaction();
+            if (!errno) errno = EIO;
+            return false;
         }
         if (!wal_manager->commit_transaction()) {
-            WARNING_PRINT("error: WAL commit failed for storage_block at addr=%" PRIu64 "\n", addr);
+            if (!errno) errno = EIO;
+            return false;
         }
     }
 
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-
-    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2) {
-        DEBUG_PRINT("warning: fwrite failed for metadata\n");
+    clearerr(file);
+    if (fseek64(file, addr, SEEK_SET) != 0) return false;
+    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2 ||
+        (size > 0 && data && fwrite(data.get(), 1, size, file) != size) || ferror(file)) {
+        if (!errno) errno = EIO;
+        return false;
     }
-    if (size > 0 && data) {
-        if (fwrite(data.get(), 1, size, file) != size) {
-            DEBUG_PRINT("warning: fwrite failed for dataBody\n");
-        }
-    }
+    return fflush(file) == 0;
 }
 
 index_node::index_node(int tree_degree)

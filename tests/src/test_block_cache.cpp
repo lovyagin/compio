@@ -495,3 +495,38 @@ TEST(BlockCacheTest, FlushPlacesNewBlocksInLogicalOrder) {
     remove(fn);
     remove((std::string(fn) + ".wal").c_str());
 }
+
+TEST(TwoQueueCacheTest, GuardRetainsRejectedEntriesAndEvictsOtherCandidates) {
+    plain_cache c(2, [](const int &value) { return value != 0; });
+    c.put(0, 0);
+    c.put(1, 1);
+    c.put(2, 2);
+    EXPECT_TRUE(c.exists(0));
+    EXPECT_FALSE(c.exists(1));
+    EXPECT_TRUE(c.exists(2));
+    EXPECT_EQ(c.size(), 2u);
+}
+
+TEST(TwoQueueCacheTest, RejectedEntriesCanExceedBudgetUntilEvictionSucceeds) {
+    bool allow_eviction = false;
+    plain_cache c(2, [&](const int &) { return allow_eviction; });
+    for (int i = 0; i < 4; ++i) c.put(i, i);
+    EXPECT_EQ(c.size(), 4u);
+    EXPECT_FALSE(c.evict_one());
+    allow_eviction = true;
+    c.put(4, 4);
+    EXPECT_EQ(c.size(), 2u);
+    EXPECT_TRUE(c.exists(3));
+    EXPECT_TRUE(c.exists(4));
+}
+
+TEST(SharedCacheBudgetTest, RejectedShardDoesNotPreventEvictionFromOtherShards) {
+    test_cache c(2, by_first{}, [](const int &value) { return value != 0; });
+    c.put({0, 0}, 0);
+    c.put({1, 1}, 1);
+    c.put({1, 2}, 2);
+    EXPECT_EQ(c.size(), 2u);
+    EXPECT_TRUE(c.exists({0, 0}));
+    EXPECT_FALSE(c.exists({1, 1}));
+    EXPECT_TRUE(c.exists({1, 2}));
+}
