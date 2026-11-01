@@ -890,35 +890,28 @@ int compio_begin_batch(compio_archive *archive) {
 // already under it; the public wrapper takes it). Header publication is safe
 // here because flush_header_double_buffered re-syncs the btree's header copy.
 static bool end_batch_impl(compio_archive *archive) {
-    if (!archive->wal) {
-        // No journal: block data is already written straight to the archive.
-        // Mirror the journaled path's batch boundary by syncing the data and
-        // publishing the header so on-disk metadata stays consistent.
-        if (fsync_archive(archive->file)) {
-            flush_header_double_buffered(archive);
-            fsync_archive(archive->file);
-            truncate_after_header_publish(archive);
+    if (archive->wal) {
+        if (!archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes)) {
+            if (errno == 0) {
+                errno = EIO;
+            }
+            return false;
         }
-        return true;
-    }
-    bool success = archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes);
-    if (!success) {
-        if (errno == 0) {
-            errno = EIO;
+        if (archive->wal->get_batch_depth() > 0) {
+            return true;
         }
-        return false;
     }
 
-    if (archive->wal->get_batch_depth() == 0) {
-        // fsync the batch's data to disk BEFORE publishing the header, so the
-        // header is never durable ahead of the data it references; then fsync
-        // again to make the header itself durable.
-        if (fsync_archive(archive->file)) {
-            flush_header_double_buffered(archive);
-            fsync_archive(archive->file);
-            truncate_after_header_publish(archive);
-        }
+    // Data must be durable before publishing the header, and the header must
+    // be durable before reporting success or permitting physical truncation.
+    if (!fsync_archive(archive->file)) {
+        return false;
     }
+    flush_header_double_buffered(archive);
+    if (!fsync_archive(archive->file)) {
+        return false;
+    }
+    truncate_after_header_publish(archive);
     return true;
 }
 
