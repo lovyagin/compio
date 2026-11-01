@@ -12,6 +12,8 @@
 // ordering problems in the library, not lost writes after a power failure.
 //
 // Usage: crash_consistency [--key=value ...]
+//   --scenario=NAME   operations (default) | checkpoint-remove
+//   --fill-holes=0|1  release freed storage (default: library default)
 //   --dir=PATH        directory for the archive (default: system temp dir)
 //   --trials=N        number of kills (default 40)
 //   --ops=N           operations per trial (default 400)
@@ -33,6 +35,9 @@
 // failed trials retain the original archive, WAL and a replay command.
 // --stop-after repeats an operation boundary, not a point inside an I/O call.
 // A timed trial's replay command repeats the workload, not the kill timing.
+// checkpoint-remove uses one unflushed deletion, a 16 KiB initial file, no
+// compression or automatic compaction, and requires WAL off. A crash must
+// preserve the initial file; a clean control must preserve its deletion.
 //
 // Exit code is 0 if every trial was consistent.
 
@@ -95,7 +100,7 @@ struct progress_report {
 };
 
 struct verdict {
-    int code;       // 0 read back, 1 open failed, 2 read error
+    int code;       // 0 read back, 1 open failed, 2 read error, 3 file missing
     uint64_t size;
     uint64_t hash;
 };
@@ -241,13 +246,16 @@ bool apply_to_file(compio_file *file, const operation &op) {
 }
 
 // Runs in a child: reopen, read the file back, report through the pipe.
-void verify_and_exit(const std::string &path, const compio_config &cfg, int pipe_fd, uint64_t max_size) {
+void verify_and_exit(const std::string &path, const compio_config &cfg, int pipe_fd, uint64_t max_size,
+                     bool checkpoint_remove) {
     alarm(10);
     verdict v{0, 0, 0};
-    compio_archive *archive = compio_open_archive(path.c_str(), "r+", &cfg);
+    // The removal scenario has no WAL and needs a read-only open: r+ would
+    // create a missing logical file and hide whether deletion persisted.
+    compio_archive *archive = compio_open_archive(path.c_str(), checkpoint_remove ? "r" : "r+", &cfg);
     compio_file *file = archive ? compio_open_file("data", archive) : nullptr;
     if (!file) {
-        v.code = 1;
+        v.code = archive && checkpoint_remove ? 3 : 1;
     } else {
         v.size = compio_get_size(file);
         if (v.size > max_size) {
@@ -274,10 +282,44 @@ void verify_and_exit(const std::string &path, const compio_config &cfg, int pipe
     _exit(0);
 }
 
+struct verification_result {
+    verdict data{};
+    int status = 0;
+    bool reported = false;
+};
+
+verification_result verify_archive(const std::string &path, const compio_config &cfg,
+                                   uint64_t max_size, bool checkpoint_remove) {
+    int descriptors[2];
+    system_check(pipe(descriptors) == 0, "create result pipe");
+    fflush(nullptr);
+    const pid_t verifier = fork();
+    system_check(verifier >= 0, "fork verifier");
+    if (verifier == 0) {
+        close(descriptors[0]);
+        verify_and_exit(path, cfg, descriptors[1], max_size, checkpoint_remove);
+    }
+    close(descriptors[1]);
+    verification_result result;
+    ssize_t bytes;
+    do {
+        bytes = read(descriptors[0], &result.data, sizeof(result.data));
+    } while (bytes < 0 && errno == EINTR);
+    result.reported = bytes == static_cast<ssize_t>(sizeof(result.data));
+    close(descriptors[0]);
+    pid_t waited;
+    do {
+        waited = waitpid(verifier, &result.status, 0);
+    } while (waited < 0 && errno == EINTR);
+    system_check(waited == verifier, "wait for verifier");
+    return result;
+}
+
 int run(int argc, char **argv) {
     const std::vector<std::string> keys{
         "dir", "trials", "ops", "mix", "flush-every", "init-kb", "sync", "wal", "block",
-        "degree", "max-delay-ms", "seed", "trial-start", "stop-after", "control", "keep"};
+        "degree", "max-delay-ms", "seed", "trial-start", "stop-after", "control", "keep",
+        "scenario", "fill-holes"};
     std::vector<std::string> seen;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -293,18 +335,31 @@ int run(int argc, char **argv) {
         }
         seen.push_back(key);
     }
+    const std::string scenario = option(argc, argv, "scenario", "operations");
+    if (scenario != "operations" && scenario != "checkpoint-remove") {
+        throw std::invalid_argument("unknown scenario");
+    }
+    const bool checkpoint_remove = scenario == "checkpoint-remove";
+    if (checkpoint_remove) {
+        for (const char *key : {"ops", "mix", "flush-every", "init-kb", "stop-after",
+                                "max-delay-ms", "sync"}) {
+            if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+                throw std::invalid_argument(std::string("checkpoint-remove excludes --") + key);
+            }
+        }
+    }
     const std::string dir = option(argc, argv, "dir", std::filesystem::temp_directory_path().string());
     constexpr int int_max = std::numeric_limits<int>::max();
     const int trials = number(argc, argv, "trials", 40, int_max);
-    const int n_ops = number(argc, argv, "ops", 400, int_max - 1);
+    const int n_ops = number(argc, argv, "ops", checkpoint_remove ? 1 : 400, int_max - 1);
     const int trial_start = number(argc, argv, "trial-start", 0, int_max - trials);
     const std::string mix = option(argc, argv, "mix", "mixed");
-    const int flush_every = number(argc, argv, "flush-every", 1, int_max);
+    const int flush_every = number(argc, argv, "flush-every", checkpoint_remove ? 0 : 1, int_max);
     const std::string sync = option(argc, argv, "sync", "normal");
     const int block = number(argc, argv, "block", 4096, int_max / 2);
     const int max_delay_ms = number(argc, argv, "max-delay-ms", 60, (int_max - 1000) / 1000);
     const uint64_t seed = number(argc, argv, "seed", 1, UINT64_MAX);
-    const uint64_t init_kb = number(argc, argv, "init-kb", 1024, int_max);
+    const uint64_t init_kb = number(argc, argv, "init-kb", checkpoint_remove ? 16 : 1024, int_max);
     const uint64_t init_size = mix == "append" ? 0 : init_kb << 10;
     const bool control = number(argc, argv, "control", 0, 1) != 0;
     const bool keep = number(argc, argv, "keep", 0, 1) != 0;
@@ -321,6 +376,7 @@ int run(int argc, char **argv) {
         throw std::invalid_argument(
             "require trials > 0, block >= 4, max-delay-ms > 0; control excludes stop-after");
     }
+    const int boundary = checkpoint_remove && !control ? 1 : stop_after;
 
     compio_config cfg;
     compio_build_default_config(&cfg);
@@ -330,7 +386,13 @@ int run(int argc, char **argv) {
     cfg.block_size__maximum = block * 2;
     cfg.b_tree_degree = number(argc, argv, "degree", cfg.b_tree_degree, int_max / 96);
     if (cfg.b_tree_degree < 2) throw std::invalid_argument("degree must be at least 2");
-    cfg.enable_wal = number(argc, argv, "wal", 1, 1) != 0;
+    cfg.enable_wal = number(argc, argv, "wal", checkpoint_remove ? 0 : 1, 1) != 0;
+    cfg.fill_holes_with_zeros = number(argc, argv, "fill-holes", cfg.fill_holes_with_zeros, 1) != 0;
+    if (checkpoint_remove) {
+        if (cfg.enable_wal) throw std::invalid_argument("checkpoint-remove requires --wal=0");
+        compio_build_dummy_compressor(&cfg.compressor);
+        cfg.fragmentation_threshold = 100;
+    }
     cfg.wal_sync_mode = sync == "always" ? COMPIO_WAL_SYNC_ALWAYS
                         : sync == "off"  ? COMPIO_WAL_SYNC_OFF
                                          : COMPIO_WAL_SYNC_NORMAL;
@@ -353,7 +415,7 @@ int run(int argc, char **argv) {
         std::vector<operation> ops;
         std::vector<std::pair<uint64_t, uint64_t>> states{{content_hash(model), model.size()}};
         uint64_t max_size = model.size();
-        for (int i = 0; i < n_ops; i++) {
+        for (int i = 0; !checkpoint_remove && i < n_ops; i++) {
             operation op{op_kind::append, 0, 1024 + rng() % 7168, rng()};
             const uint64_t roll = rng() % 100;
             if (mix == "overwrite") {
@@ -388,23 +450,33 @@ int run(int argc, char **argv) {
 
         const int delay_us = 1000 + rng() % (static_cast<uint64_t>(max_delay_ms) * 1000);
         std::string replay = shell_quote(std::filesystem::absolute(argv[0]).string());
-        const std::vector<std::pair<std::string, std::string>> arguments{
+        std::vector<std::pair<std::string, std::string>> arguments{
             {"dir", std::filesystem::absolute(dir).string()}, {"trials", "1"},
-            {"trial-start", std::to_string(trial)}, {"ops", std::to_string(n_ops)},
-            {"seed", std::to_string(seed)}, {"mix", mix}, {"init-kb", std::to_string(init_kb)},
-            {"flush-every", std::to_string(flush_every)}, {"sync", sync},
+            {"trial-start", std::to_string(trial)}, {"scenario", scenario},
+            {"seed", std::to_string(seed)},
             {"wal", std::to_string(cfg.enable_wal)}, {"block", std::to_string(block)},
-            {"degree", std::to_string(cfg.b_tree_degree)}, {"max-delay-ms", std::to_string(max_delay_ms)},
+            {"fill-holes", std::to_string(cfg.fill_holes_with_zeros)},
+            {"degree", std::to_string(cfg.b_tree_degree)},
             {"control", std::to_string(control)}, {"keep", "1"}};
+        if (!checkpoint_remove) {
+            arguments.insert(arguments.end(), {{"ops", std::to_string(n_ops)}, {"mix", mix},
+                {"init-kb", std::to_string(init_kb)}, {"flush-every", std::to_string(flush_every)},
+                {"sync", sync}, {"max-delay-ms", std::to_string(max_delay_ms)}});
+        }
         for (const auto &argument : arguments) {
             replay += " " + shell_quote("--" + argument.first + "=" + argument.second);
         }
         if (stop_after >= 0) replay += " --stop-after=" + std::to_string(stop_after);
         std::ofstream manifest(trial_dir / "replay.txt");
         manifest.exceptions(std::ios::failbit | std::ios::badbit);
-        manifest << "mode=" << (control ? "control" : stop_after >= 0 ? "boundary" : "timed") << '\n'
+        manifest << "scenario=" << scenario << "\nfill_holes=" << cfg.fill_holes_with_zeros << '\n'
+                 << "mode=" << (control ? "control" : boundary >= 0 ? "boundary" : "timed") << '\n'
                  << "trial=" << trial << "\nseed=" << seed << "\ndelay_us=" << delay_us << '\n'
                  << "replay=" << replay << '\n';
+        if (checkpoint_remove) {
+            manifest << "checkpoint_size=" << initial.size()
+                     << "\ncheckpoint_hash=" << content_hash(initial) << '\n';
+        }
         manifest.flush();
         {
             compio_archive *archive = compio_open_archive(path.c_str(), "w", &cfg);
@@ -421,6 +493,18 @@ int run(int argc, char **argv) {
                 throw std::runtime_error("cannot close initial archive " + path);
             }
         }
+        if (checkpoint_remove) {
+            const std::string checkpoint_path = (trial_dir / "checkpoint.compio").string();
+            std::filesystem::copy_file(path, checkpoint_path);
+            const auto checkpoint = verify_archive(checkpoint_path, cfg, initial.size(), true);
+            if (!checkpoint.reported || !WIFEXITED(checkpoint.status) ||
+                WEXITSTATUS(checkpoint.status) != 0 || checkpoint.data.code != 0 ||
+                states[0] != std::make_pair(checkpoint.data.hash, checkpoint.data.size)) {
+                throw std::runtime_error("initial checkpoint verification failed: " + checkpoint_path);
+            }
+            manifest << "checkpoint_verified=1\n";
+            manifest.flush();
+        }
 
         int progress[2];
         system_check(pipe(progress) == 0, "create progress pipe");
@@ -430,28 +514,33 @@ int run(int argc, char **argv) {
         if (writer == 0) {
             close(progress[0]);
             compio_archive *archive = compio_open_archive(path.c_str(), "r+", &cfg);
-            compio_file *file = archive ? compio_open_file("data", archive) : nullptr;
-            if (!file) _exit(1);
+            if (!archive) _exit(1);
+            compio_file *file = checkpoint_remove ? nullptr : compio_open_file("data", archive);
+            if (!checkpoint_remove && !file) _exit(1);
             progress_report report{0, 0};
             report_progress(progress[1], report);
-            if (stop_after == 0) {
+            if (boundary == 0) {
                 for (;;) pause();
             }
             for (int i = 0; i < n_ops; i++) {
-                if (!apply_to_file(file, ops[static_cast<size_t>(i)])) _exit(13);
+                if (checkpoint_remove) {
+                    if (compio_remove_file(archive, "data") != COMPIO_SUCCESS) _exit(13);
+                } else if (!apply_to_file(file, ops[static_cast<size_t>(i)])) {
+                    _exit(13);
+                }
                 report.completed = i + 1;
                 if (flush_every > 0 && (i + 1) % flush_every == 0) {
                     compio_flush(archive);
                     report.flushed = i + 1;
                 }
                 report_progress(progress[1], report);
-                if (stop_after == i + 1) {
+                if (boundary == i + 1) {
                     for (;;) pause();
                 }
             }
             if (control) {
                 compio_flush(archive);
-                if (compio_close_file(file) != COMPIO_SUCCESS ||
+                if ((file && compio_close_file(file) != COMPIO_SUCCESS) ||
                     compio_close_archive(archive) != COMPIO_SUCCESS) {
                     _exit(15);
                 }
@@ -464,12 +553,12 @@ int run(int argc, char **argv) {
         close(progress[1]);
         int writer_status = 0;
         const progress_report completed =
-            monitor_writer(writer, progress[0], stop_after, control, delay_us, writer_status);
+            monitor_writer(writer, progress[0], boundary, control, delay_us, writer_status);
         const bool writer_ok =
             control ? WIFEXITED(writer_status) && WEXITSTATUS(writer_status) == 0 &&
                           completed.completed == n_ops && completed.flushed == n_ops
                     : WIFSIGNALED(writer_status) && WTERMSIG(writer_status) == SIGKILL &&
-                          (stop_after < 0 || completed.completed == stop_after);
+                          (boundary < 0 || completed.completed == boundary);
         manifest << "completed=" << completed.completed << "\nflushed=" << completed.flushed
                  << "\nwriter_status=" << writer_status << '\n';
         manifest.flush();
@@ -481,40 +570,30 @@ int run(int argc, char **argv) {
             std::filesystem::copy_file(path + ".wal", recovery_path + ".wal");
         }
 
-        int result[2];
-        system_check(pipe(result) == 0, "create result pipe");
-        fflush(nullptr);
-        const pid_t verifier = fork();
-        system_check(verifier >= 0, "fork verifier");
-        if (verifier == 0) {
-            close(result[0]);
-            verify_and_exit(recovery_path, cfg, result[1], max_size);
-        }
-        close(result[1]);
-        verdict v{};
-        ssize_t bytes;
-        do {
-            bytes = read(result[0], &v, sizeof(v));
-        } while (bytes < 0 && errno == EINTR);
-        const bool reported_back = bytes == static_cast<ssize_t>(sizeof(v));
-        close(result[0]);
-        int status = 0;
-        pid_t waited;
-        do {
-            waited = waitpid(verifier, &status, 0);
-        } while (waited < 0 && errno == EINTR);
-        system_check(waited == verifier, "wait for verifier");
+        const auto verification = verify_archive(recovery_path, cfg, max_size, checkpoint_remove);
+        const verdict &v = verification.data;
+        const int status = verification.status;
 
         outcome o;
         int matched_prefix = -1;
         if (!writer_ok) {
             o = outcome::writer_failed;
-        } else if (!reported_back || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        } else if (!verification.reported || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
             o = (WIFSIGNALED(status) && WTERMSIG(status) == SIGALRM) ? outcome::hung : outcome::crashed;
+        } else if (checkpoint_remove && control) {
+            o = v.code == 3 ? outcome::consistent
+                           : v.code == 1 ? outcome::open_failed : outcome::corrupt;
+            if (o == outcome::consistent) matched_prefix = 1;
         } else if (v.code == 1) {
             o = outcome::open_failed;
         } else if (v.code == 2) {
             o = outcome::read_error;
+        } else if (checkpoint_remove) {
+            // An unflushed removal must leave the entire saved checkpoint.
+            // Accepting the removed state would conceal checkpoint loss.
+            o = v.code == 0 && states[0] == std::make_pair(v.hash, v.size)
+                    ? outcome::consistent : outcome::lost_flushed;
+            if (o == outcome::consistent) matched_prefix = 0;
         } else {
             const int upper = control ? n_ops
                               : stop_after >= 0 ? stop_after
@@ -533,6 +612,7 @@ int run(int argc, char **argv) {
         }
         counts[o]++;
         manifest << "verifier_status=" << status << "\nmatched_prefix=" << matched_prefix
+                 << "\nverifier_code=" << v.code
                  << "\nread_size=" << v.size << "\nread_hash=" << v.hash
                  << "\noutcome=" << outcome_name(o) << '\n';
         manifest.close();
@@ -547,8 +627,9 @@ int run(int argc, char **argv) {
 
     if (std::filesystem::is_empty(run_dir)) std::filesystem::remove(run_dir);
 
-    printf("mix=%s flush_every=%d sync=%s wal=%d block=%d degree=%d trials=%d\n", mix.c_str(), flush_every,
-           sync.c_str(), cfg.enable_wal, block, cfg.b_tree_degree, trials);
+    printf("scenario=%s mix=%s flush_every=%d sync=%s wal=%d fill_holes=%d block=%d degree=%d trials=%d\n",
+           scenario.c_str(), mix.c_str(), flush_every, sync.c_str(), cfg.enable_wal,
+           cfg.fill_holes_with_zeros, block, cfg.b_tree_degree, trials);
     printf("  consistent              %d\n", counts[outcome::consistent]);
     printf("  lost flushed operations %d\n", counts[outcome::lost_flushed]);
     printf("  silent corruption       %d\n", counts[outcome::corrupt]);

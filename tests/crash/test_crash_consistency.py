@@ -1,7 +1,9 @@
 """Integration checks for the crash harness, independent of crash-safety fixes."""
 
 from pathlib import Path
+import os
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -17,13 +19,16 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
 
-    def run_harness(self, *arguments, expected=0):
-        result = subprocess.run(
+    def run_process(self, *arguments):
+        return subprocess.run(
             [str(EXECUTABLE), f"--dir={self.directory}", "--trials=1", *arguments],
             capture_output=True,
             text=True,
             timeout=45,
         )
+
+    def run_harness(self, *arguments, expected=0):
+        result = self.run_process(*arguments)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         return result.stdout
 
@@ -130,6 +135,81 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
             "completed=10000 flushed=10000 matched=10000 outcome=consistent", output
         )
 
+    def test_checkpoint_removal_control_requires_missing_file(self):
+        for release in (0, 1):
+            with self.subTest(release=release):
+                output = self.run_harness(
+                    "--scenario=checkpoint-remove",
+                    "--control=1",
+                    f"--fill-holes={release}",
+                    "--keep=1",
+                )
+                directory, values = self.manifest(output)
+                self.assertEqual(values["scenario"], "checkpoint-remove")
+                self.assertEqual(values["checkpoint_verified"], "1")
+                self.assertEqual(values["verifier_code"], "3")
+                self.assertEqual(values["writer_status"], "0")
+                self.assertEqual(values["matched_prefix"], "1")
+                self.assertEqual(values["flushed"], "1")
+                self.assertTrue((directory / "checkpoint.compio").is_file())
+                self.assertFalse((directory / "archive.compio.wal").exists())
+
+    def test_checkpoint_removal_without_release_preserves_initial_file(self):
+        output = self.run_harness(
+            "--scenario=checkpoint-remove", "--fill-holes=0", "--keep=1"
+        )
+        _, values = self.manifest(output)
+        self.assertEqual(values["mode"], "boundary")
+        self.assertEqual(values["checkpoint_verified"], "1")
+        self.assertEqual(values["completed"], "1")
+        self.assertEqual(values["flushed"], "0")
+        self.assertEqual(values["matched_prefix"], "0")
+        self.assertEqual(values["verifier_code"], "0")
+        self.assertEqual(values["read_size"], values["checkpoint_size"])
+        self.assertEqual(values["read_hash"], values["checkpoint_hash"])
+        status = int(values["writer_status"])
+        self.assertTrue(os.WIFSIGNALED(status))
+        self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
+
+    def test_checkpoint_removal_with_release_reports_observed_state_and_replays(self):
+        result = self.run_process(
+            "--scenario=checkpoint-remove", "--fill-holes=1", "--keep=1"
+        )
+        self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
+        directory, values = self.manifest(result.stdout)
+        self.assertEqual(values["checkpoint_verified"], "1")
+        self.assertEqual(values["verifier_status"], "0")
+        self.assertEqual(values["completed"], "1")
+        self.assertEqual(values["flushed"], "0")
+        self.assertNotEqual(values["outcome"], "writer_failed")
+        # Validate the oracle without requiring the current safety gap to stay.
+        preserved = (
+            values["verifier_code"] == "0"
+            and values["read_size"] == values["checkpoint_size"]
+            and values["read_hash"] == values["checkpoint_hash"]
+        )
+        self.assertEqual(result.returncode, 0 if preserved else 1)
+        self.assertEqual(values["outcome"] == "consistent", preserved)
+        self.assertEqual(values["matched_prefix"], "0" if preserved else "-1")
+        original = (directory / "archive.compio").read_bytes()
+        replay = subprocess.run(
+            shlex.split(values["replay"]), capture_output=True, text=True, timeout=45
+        )
+        self.assertEqual(
+            replay.returncode, result.returncode, replay.stdout + replay.stderr
+        )
+        replay_directory, replay_values = self.manifest(replay.stdout)
+        self.assertNotEqual(directory, replay_directory)
+        for key in (
+            "scenario",
+            "fill_holes",
+            "checkpoint_hash",
+            "read_hash",
+            "outcome",
+        ):
+            self.assertEqual(values[key], replay_values[key], key)
+        self.assertEqual((directory / "archive.compio").read_bytes(), original)
+
     def test_invalid_options_fail_before_creating_artifacts(self):
         for arguments in (
             ("--ops=-1",),
@@ -144,6 +224,16 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
             ("--wal=2",),
             ("--stop-aftr=2",),
             ("--keep=0", "--keep=1"),
+            ("--scenario=unknown",),
+            ("--fill-holes=2",),
+            ("--scenario=checkpoint-remove", "--wal=1"),
+            ("--scenario=checkpoint-remove", "--ops=1"),
+            ("--scenario=checkpoint-remove", "--stop-after=1"),
+            ("--scenario=checkpoint-remove", "--flush-every=1"),
+            ("--scenario=checkpoint-remove", "--mix=append"),
+            ("--scenario=checkpoint-remove", "--init-kb=0"),
+            ("--scenario=checkpoint-remove", "--max-delay-ms=1"),
+            ("--scenario=checkpoint-remove", "--sync=always"),
         ):
             with self.subTest(arguments=arguments):
                 self.run_harness(*arguments, expected=2)

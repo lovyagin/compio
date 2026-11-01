@@ -33,6 +33,48 @@ but scheduling changes the interruption point. Boundary mode repeats the sequenc
 and operation count; it does not interrupt inside a library operation or flush.
 SIGKILL preserves the OS page cache. Neither mode simulates power loss.
 
+## Unflushed file removal
+
+The `checkpoint-remove` scenario checks that an unflushed deletion preserves the
+last saved file. It creates and closes an archive containing a 16 KiB file,
+verifies a copy of that checkpoint in a separate process, opens the archive
+again, removes the file, then pauses without flushing or closing. The parent
+sends SIGKILL after receiving confirmation that removal completed. Recovery must
+return the initial file with its original size and content hash. An absent file
+is a failure even though removal completed before the crash.
+
+Compare runs with physical release disabled and enabled:
+
+```sh
+build_check/tests/crash_consistency --scenario=checkpoint-remove --trials=1 \
+    --fill-holes=0 --keep=1
+build_check/tests/crash_consistency --scenario=checkpoint-remove --trials=1 \
+    --fill-holes=1 --keep=1
+```
+
+The second run currently exposes a safety gap: deletion releases storage still
+referenced by the saved checkpoint. The tool reports a nonzero exit code and
+keeps the artifacts. This is a diagnostic scenario; the harness integration
+tests check its verdict against the observed state without requiring this gap
+to remain after a fix.
+
+Run the clean control separately. It must reopen successfully with the file
+absent after flushing and closing:
+
+```sh
+build_check/tests/crash_consistency --scenario=checkpoint-remove --trials=1 \
+    --fill-holes=1 --control=1 --keep=1
+```
+
+This scenario uses no compression, disables automatic compaction and requires
+WAL off (the scenario default). It rejects `--ops`, `--mix`, `--flush-every`,
+`--init-kb`, `--stop-after`, `--max-delay-ms` and `--sync`: its workload and stop
+boundary are fixed. `--seed`, `--trial-start`, `--trials`, `--block` and `--degree`
+still configure the initial data or archive. `--fill-holes` maps to
+`fill_holes_with_zeros` and is also available in the default `operations` scenario;
+when omitted it keeps the library default. It permits hole punching with zeroing
+as a fallback, so these runs do not distinguish the two physical release methods.
+
 ## Artifacts and replay
 
 Each invocation creates a unique `crash-consistency-*` directory under `--dir`
@@ -41,6 +83,12 @@ Each invocation creates a unique `crash-consistency-*` directory under `--dir`
 - `archive.compio` and, when present, `archive.compio.wal`: untouched after the writer stops.
 - `recovery.compio` and its WAL: the copies opened by the verifier.
 - `replay.txt`: normalized command, seed, trial index, progress and verification result.
+
+Removal trials also keep `checkpoint.compio`, a copy made before deletion.
+Their manifests record the checkpoint size/hash and whether physical release
+was enabled. Verification uses a read-only open so checking an absent file cannot
+create it. The numeric `verifier_code` is `0` for a complete read, `1` for an open
+failure, `2` for a read error, and `3` for a missing file in a removal trial.
 
 Failed trials are kept automatically; `--keep=1` also keeps successful trials.
 Successful trial directories are otherwise removed. The tool prints the retained
