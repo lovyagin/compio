@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <list>
+#include <stdexcept>
 #include <map>
 #include <mutex>
 #include <optional>

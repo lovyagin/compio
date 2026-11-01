@@ -11,7 +11,8 @@
 #define BTREE_H
 
 #include <cstddef>
-#include <map>
+#include <unordered_map>
+#include <list>
 #include <memory>
 #include <shared_mutex>
 #include <mutex>
@@ -19,8 +20,6 @@
 
 #include "compio/allocator.hpp"
 #include "compio/file.hpp"
-
-#include "third_party/lrucache.hpp"
 
 namespace compio {
 
@@ -31,7 +30,7 @@ using shared_node = smart_infile_object<index_node>;
 /**
  * @brief Struct for reading nodes from memory with caching
  *
- * Provides cached access to B-Tree nodes stored in file, using LRU cache
+ * Provides cached access to B-Tree nodes stored in file, using an LRU cache
  * to improve performance by avoiding repeated file I/O operations.
  */
 struct node_reader {
@@ -80,14 +79,14 @@ struct node_reader {
     /**
      * @brief Clear all nodes from the cache
      *
-     * Empties the LRU cache, removing all cached nodes.
+     * Writes dirty nodes and removes unpinned nodes. Failed writes stay cached.
      */
-    void clear_cache();
+    bool clear_cache();
 
     /**
      * @brief Write modified cached nodes to file, keeping them cached
      */
-    void flush_cache();
+    bool flush_cache();
 
     /**
      * @brief Get cache hit probability
@@ -103,8 +102,18 @@ private:
     FILE *file;
     std::mutex *io_mutex;
     compio::WalManager *wal;
-    /** @brief LRU cache for storing frequently accessed nodes */
-    cache::sharded_lru_cache<uint64_t, shared_node> cache;
+    // Pinned nodes and failed writes stay resident even when the cache is full.
+    using node_list = std::list<shared_node>;
+    node_list nodes;
+    std::unordered_map<uint64_t, node_list::iterator> positions;
+    size_t max_size;
+    size_t hits = 0;
+    size_t reads = 0;
+    int write_error = 0;
+    mutable std::mutex cache_mutex;
+
+    void trim_cache();
+    bool flush_nodes();
 };
 
 /**
@@ -252,15 +261,14 @@ struct btree {
     /**
      * @brief Clear the node cache
      *
-     * Clears all cached nodes, forcing subsequent operations to read
-     * from file. Useful for memory management or consistency operations.
+     * Writes dirty nodes and removes unpinned nodes. Returns false on write failure.
      */
-    void clear_cache();
+    bool clear_cache();
 
     /**
      * @brief Write modified cached nodes to file, keeping the cache warm
      */
-    void flush_cache();
+    bool flush_cache();
 
     /**
      * @brief Collect file addresses of all B-tree nodes
@@ -476,7 +484,7 @@ private:
     void _print(shared_node node, uint64_t depth);
 
     // Internal unlocked implementations for friend classes (block_allocator)
-    void _clear_cache();
+    bool _clear_cache();
     std::vector<uint64_t> _collect_node_addresses(uint64_t &node_size);
     std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
     bool _update_impl(const tree_key &key, const tree_val &new_value);

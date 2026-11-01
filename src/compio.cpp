@@ -895,7 +895,8 @@ int compio_begin_batch(compio_archive *archive) {
 // here because flush_header_double_buffered re-syncs the btree's header copy.
 static bool end_batch_impl(compio_archive *archive) {
     if (archive->wal) {
-        if (!archive->wal->end_batch(archive->file, archive->config.wal_max_size_bytes)) {
+        // flush_impl checkpoints only after all writes and header publication succeed.
+        if (!archive->wal->end_batch()) {
             if (errno == 0) {
                 errno = EIO;
             }
@@ -1055,6 +1056,11 @@ int compio_close_archive(compio_archive *archive) {
         WARNING_PRINT("warning: failed to save allocator state\n");
         durable = false;
         close_error = errno ? errno : EIO;
+    }
+
+    if (archive->index && !archive->index->flush_cache()) {
+        durable = false;
+        if (!close_error) close_error = errno ? errno : EIO;
     }
 
     delete archive->index;
@@ -2426,7 +2432,7 @@ static bool flush_impl(compio_archive *archive) {
     // keep their contents, so a flush does not cost the reads that follow.
     if (archive->block_reader) archive->block_reader->flush_cache();
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
-    if (archive->index) archive->index->flush_cache();
+    if (archive->index && !archive->index->flush_cache()) durable = false;
 
     // Sync files table (allocate if needed, write to disk)
     if (can_write) {
@@ -2444,7 +2450,7 @@ static bool flush_impl(compio_archive *archive) {
     // before the commit risks a crash that leaves a durable header referencing
     // writes the WAL later rolls back (header valid but pointing past EOF).
     if (wal_active && wal_ptr->get_batch_depth() == 0) {
-        if (!wal_ptr->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
+        if (!wal_ptr->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
             durable = false;
         }

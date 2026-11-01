@@ -101,7 +101,7 @@ struct header : public infile_object {
     explicit header(uint32_t max_files);
 
     bool read_from(FILE *file, uint64_t addr) override;
-    void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
+    bool write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
     /** Write a v5 header, reporting seek errors and incomplete writes. */
     bool write_checked(FILE *file, uint64_t addr) const;
@@ -166,7 +166,7 @@ struct index_node : public infile_object {
     index_node(int tree_degree);
 
     bool read_from(FILE *file, uint64_t addr) override;
-    void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
+    bool write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
     void validate() const;
 };
 
@@ -227,7 +227,7 @@ struct storage_block : public infile_object {
      * @return true if valid, false if corrupted
      */
     bool read_from(FILE *file, uint64_t addr) override;
-    void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
+    bool write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
     /**
      * @brief Calculate and store SHA-256 checksum of the data

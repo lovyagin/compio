@@ -452,7 +452,7 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     }
 
     if (!in_batch && archive->wal) {
-        if (!archive->wal->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
+        if (!archive->wal->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
             return false;
         }
@@ -758,7 +758,10 @@ void block_allocator::force_defragmentation() {
         archive_->block_reader->clear_cache();
         // Use public clear_cache which handles its own locking if needed, 
         // or just relies on the fact we are the only thread (compio_defragment holds archive mutex).
-        archive_->index->clear_cache();
+        if (!archive_->index->clear_cache()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            return;
+        }
     }
 
     auto index_lock = archive_->index->get_lock();
@@ -806,7 +809,10 @@ void block_allocator::maintenance(bool at_checkpoint) {
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(true);
             archive_->block_reader->clear_cache();
-            archive_->index->_clear_cache();
+            if (!archive_->index->_clear_cache()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return;
+            }
         }
 
         std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
@@ -1138,7 +1144,7 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
 
     // Flush all updated index nodes to disk BEFORE truncating the file.
     // If we crash after truncation but before index write, we lose data.
-    archive_->index->_clear_cache();
+    if (!archive_->index->_clear_cache()) return;
 
     if (fflush(archive_->file) != 0 || !sync_file(archive_->file)) {
         WARNING_PRINT("warning: perform_defragmentation: failed to sync moved blocks\n");

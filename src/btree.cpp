@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cinttypes>
 #include <limits>
 #include <optional>
@@ -20,49 +21,102 @@ node_reader::node_reader(FILE *file, uint64_t tree_degree, uint64_t max_size, st
       file(file),
       io_mutex(io_mutex),
       wal(wal),
-      cache(max_size) {}
+      max_size(max_size) {}
 
 shared_node node_reader::read_node(uint64_t addr) {
-    auto node = cache.get(addr);
-    if (!node.has_value()) {
-        auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex, true, wal);
-        if (!result.read()) {
-            WARNING_PRINT("error: failed to read index node at addr %" PRIu64 "\n", addr);
-            // Return an empty/null shared_node to indicate failure.
-            // smart_infile_object default constructor creates a null state.
-            return shared_node();
-        }
-        result.unmodify(); // constructor with obj& sets modified=true
-        cache.put(addr, result);
-        return result;
-    } else {
-        return node.value();
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    ++reads;
+    auto found = positions.find(addr);
+    if (found != positions.end()) {
+        ++hits;
+        nodes.splice(nodes.begin(), nodes, found->second);
+        return *found->second;
     }
+    auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex, true, wal);
+    if (!result.read()) {
+        WARNING_PRINT("error: failed to read index node at addr %" PRIu64 "\n", addr);
+        return shared_node();
+    }
+    nodes.push_front(result);
+    positions.emplace(addr, nodes.begin());
+    trim_cache();
+    return result;
 }
 
 shared_node node_reader::create_node(uint64_t addr) {
+    std::lock_guard<std::mutex> lock(cache_mutex);
     auto result = shared_node(file, addr, new index_node(tree_degree), io_mutex, wal);
-    cache.put(addr, result);
+    nodes.push_front(result);
+    positions.emplace(addr, nodes.begin());
+    trim_cache();
     return result;
 }
 
 void node_reader::remove_node(const shared_node &node) {
-    if (!cache.exists(node.addr())) {
-        WARNING_PRINT("warning: trying to remove non-existing index node\n");
-        return;
-    }
-    cache.remove(node.addr());
-}
-
-void node_reader::clear_cache() { cache.clear(); }
-
-void node_reader::flush_cache() {
-    for (auto &node : cache.values()) {
-        node.flush();
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    auto found = positions.find(node.addr());
+    if (found != positions.end()) {
+        nodes.erase(found->second);
+        positions.erase(found);
     }
 }
 
-double node_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
+void node_reader::trim_cache() {
+    auto end = nodes.end();
+    while (nodes.size() > max_size && end != nodes.begin()) {
+        auto current = std::prev(end);
+        // Another reference can still modify the node after eviction.
+        if (current->use_count() > 1) {
+            end = current;
+        } else if (!current->flush()) {
+            if (!write_error) write_error = errno ? errno : EIO;
+            end = current;
+        } else {
+            positions.erase(current->addr());
+            end = nodes.erase(current);
+        }
+    }
+}
+
+bool node_reader::flush_nodes() {
+    int error = write_error;
+    write_error = 0;
+    for (auto &node : nodes) {
+        if (!node.flush() && !error) error = errno ? errno : EIO;
+    }
+    if (error) {
+        errno = error;
+        return false;
+    }
+    return true;
+}
+
+bool node_reader::clear_cache() {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    if (!flush_nodes()) {
+        write_error = errno ? errno : EIO;
+        return false;
+    }
+    for (auto it = nodes.begin(); it != nodes.end();) {
+        if (it->use_count() == 1) {
+            positions.erase(it->addr());
+            it = nodes.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return true;
+}
+
+bool node_reader::flush_cache() {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    return flush_nodes();
+}
+
+double node_reader::get_cache_hit_probability() const {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    return reads ? static_cast<double>(hits) / reads : 0.0;
+}
 
 btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> archive_header,
              block_allocator *allocator, FILE *file, uint64_t cache_size, std::mutex *io_mutex, compio::WalManager *wal)
@@ -445,18 +499,18 @@ void btree::print() {
     _print(read_root(), 0);
 }
 
-void btree::clear_cache() {
+bool btree::clear_cache() {
     std::unique_lock<std::shared_mutex> lock(mutex);
-    _clear_cache();
+    return _clear_cache();
 }
 
-void btree::_clear_cache() {
-    reader.clear_cache();
+bool btree::_clear_cache() {
+    return reader.clear_cache();
 }
 
-void btree::flush_cache() {
+bool btree::flush_cache() {
     std::unique_lock<std::shared_mutex> lock(mutex);
-    reader.flush_cache();
+    return reader.flush_cache();
 }
 
 double btree::get_cache_hit_probability() const {
@@ -674,6 +728,8 @@ std::optional<std::pair<tree_key, tree_val>> btree::find_min_in_node(shared_node
 uint64_t btree::allocate_node() { return allocator->allocate(INDEX_NODE_SIZE(degree)); }
 
 void btree::free_node(const shared_node &node) {
+    auto removed = node;
+    removed.remove();
     reader.remove_node(node);
     allocator->deallocate(node.addr(), INDEX_NODE_SIZE(degree));
 }

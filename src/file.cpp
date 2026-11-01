@@ -315,10 +315,8 @@ bool header::read_from(FILE *file, uint64_t addr) {
 }
 
 // The header is never journaled: its two slots already make the update atomic.
-void header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
-    if (!write_checked(file, addr)) {
-        WARNING_PRINT("warning: failed to write header\n");
-    }
+bool header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
+    return write_checked(file, addr);
 }
 
 bool header::write_checked(FILE *file, uint64_t addr) const {
@@ -430,7 +428,7 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
     return true;
 }
 
-void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
+bool index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][index_node]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, (uint64_t)INDEX_NODE_SIZE(tree_degree));
     validate();
     
@@ -500,19 +498,22 @@ void index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
     if (wal_manager) {
         wal_manager->begin_transaction();
         if (!wal_manager->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size())) {
-            WARNING_PRINT("error: WAL log_write failed for index_node at addr=%" PRIu64 "\n", addr);
+            wal_manager->rollback_transaction();
+            if (!errno) errno = EIO;
+            return false;
         }
         if (!wal_manager->commit_transaction()) {
-            WARNING_PRINT("error: WAL commit failed for index_node at addr=%" PRIu64 "\n", addr);
+            if (!errno) errno = EIO;
+            return false;
         }
     }
 
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-    
-    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size()) {
-        DEBUG_PRINT("warning: fwrite failed\n");
+    if (fseek64(file, addr, SEEK_SET) != 0) return false;
+    if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size() || ferror(file)) {
+        if (!errno) errno = EIO;
+        return false;
     }
+    return true;
 }
 
 #define DEBUG_VAL (INT64_MAX - 123)
@@ -658,7 +659,7 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
     return true;
 }
 
-void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
+bool storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
     DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE_V2 + size);
     assert(addr != 0);
     assert(size > 0);
@@ -695,6 +696,7 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
 
     assert(meta_idx == STORAGE_BLOCK_METASIZE_V2);
 
+    bool logged = true;
     if (wal_manager) {
         wal_manager->begin_transaction();
 
@@ -705,24 +707,22 @@ void storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
         }
 
         if (!wal_manager->log_write_vectored(WalRecordType::BLOCK, addr, buffers)) {
-            WARNING_PRINT("error: WAL log_write failed for storage_block at addr=%" PRIu64 "\n", addr);
+            logged = false;
+            if (!errno) errno = EIO;
         }
         if (!wal_manager->commit_transaction()) {
-            WARNING_PRINT("error: WAL commit failed for storage_block at addr=%" PRIu64 "\n", addr);
+            logged = false;
+            if (!errno) errno = EIO;
         }
     }
 
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-
-    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2) {
-        DEBUG_PRINT("warning: fwrite failed for metadata\n");
+    if (fseek64(file, addr, SEEK_SET) != 0) return false;
+    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2 ||
+        (size > 0 && data && fwrite(data.get(), 1, size, file) != size) || ferror(file)) {
+        if (!errno) errno = EIO;
+        return false;
     }
-    if (size > 0 && data) {
-        if (fwrite(data.get(), 1, size, file) != size) {
-            DEBUG_PRINT("warning: fwrite failed for dataBody\n");
-        }
-    }
+    return logged;
 }
 
 index_node::index_node(int tree_degree)

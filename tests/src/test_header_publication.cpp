@@ -10,7 +10,12 @@
 
 #include "compio.h"
 #include "compio/compio_file.hpp"
+#include "compio/wal.hpp"
 #include "test_util.hpp"
+
+using compio::index_node;
+using compio::tree_key;
+using compio::tree_val;
 
 namespace {
 
@@ -26,6 +31,7 @@ struct io_fault {
     bool publishing = false;
     bool triggered = false;
     bool next_seek = false;
+    int wal_record = -1;
 };
 
 io_fault fault;
@@ -52,6 +58,12 @@ int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
 }
 
 size_t __wrap_fwrite(const void *data, size_t size, size_t count, FILE *stream) {
+    if (fault.wal_record >= 0 && stream != fault.stream && size == 1 && count == 1 &&
+        *static_cast<const unsigned char *>(data) == fault.wal_record) {
+        fault.triggered = true;
+        errno = ENOSPC;
+        return 0;
+    }
     if (stream == fault.stream && fault.publishing &&
         fault.kind == failure::short_write && ++fault.writes == fault.short_write_call) {
         fault.triggered = true;
@@ -80,6 +92,69 @@ int __wrap_fsync(int descriptor) {
 }
 }
 
+class IndexNodeWriteTest : public ::testing::Test {
+protected:
+    char path[256];
+    FILE *stream = nullptr;
+
+    void SetUp() override {
+        generate_tmp_fn(path, sizeof(path));
+        stream = fopen(path, "w+b");
+        ASSERT_NE(stream, nullptr);
+    }
+
+    void TearDown() override {
+        fault = {};
+        if (stream) {
+            EXPECT_EQ(fclose(stream), 0);
+        }
+        remove(path);
+        remove((std::string(path) + ".wal").c_str());
+    }
+};
+
+TEST_F(IndexNodeWriteTest, WalCommitFailureKeepsDirtyNodeForRetry) {
+    compio::WalManager wal(path);
+    ASSERT_TRUE(wal.open());
+    compio::shared_node node(stream, 4096, new compio::index_node(3), nullptr, &wal);
+    node->keys.push_back({42, 0});
+    node->values.push_back({1234, 16});
+    node->num_keys = 1;
+    fault.stream = stream;
+    fault.wal_record = static_cast<int>(compio::WalRecordType::COMMIT);
+    EXPECT_FALSE(node.flush());
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(std::filesystem::file_size(path), 0u);
+    fault = {};
+    EXPECT_TRUE(node.flush());
+    EXPECT_TRUE(wal.checkpoint()); // A failed nested operation must balance its transaction.
+    compio::index_node recovered(3);
+    ASSERT_TRUE(recovered.read_from(stream, 4096));
+    ASSERT_EQ(recovered.keys.size(), 1u);
+    EXPECT_EQ(recovered.keys.front(), (compio::tree_key{42, 0}));
+}
+
+TEST_F(IndexNodeWriteTest, PinnedNodeRemainsCanonicalAcrossEvictionAndClear) {
+    for (uint64_t capacity : {0, 1, 3}) {
+        compio::node_reader reader(stream, 3, capacity, nullptr);
+        auto node = reader.create_node(4096);
+        node->keys.push_back({42, 0});
+        node->values.push_back({1234, 16});
+        node->num_keys = 1;
+        for (uint64_t i = 1; i <= 4; ++i) reader.create_node(4096 * (i + 1));
+        ASSERT_TRUE(reader.clear_cache());
+        auto same = reader.read_node(4096);
+        ASSERT_TRUE(same);
+        EXPECT_EQ(&*readonly(node, compio::index_node), &*readonly(same, compio::index_node));
+        node->values.front() = {4321, 32};
+        ASSERT_TRUE(reader.flush_cache());
+        compio::index_node recovered(3);
+        ASSERT_TRUE(recovered.read_from(stream, 4096));
+        ASSERT_EQ(recovered.values.size(), 1u);
+        EXPECT_EQ(recovered.values.front(), (compio::tree_val{4321, 32}));
+    }
+}
+
 class HeaderPublicationTest : public ::testing::TestWithParam<std::tuple<bool, failure>> {
 protected:
     char path[256];
@@ -96,7 +171,7 @@ protected:
         compio_build_default_config(&cfg);
         cfg.max_files = 16;
         cfg.enable_wal = wal_enabled();
-        cfg.wal_max_size_bytes = 0;
+        cfg.wal_max_size_bytes = 1;
         cfg.auto_batch_size = 0;
         cfg.fragmentation_threshold = 100;
         archive = compio_open_archive(path, "w", &cfg);
@@ -201,6 +276,155 @@ TEST_P(HeaderPublicationTest, FlushFailureKeepsWalAndSkipsTruncation) {
     EXPECT_TRUE(archive->truncate_after_publish);
     archive->truncate_after_publish = false;
     retry();
+}
+
+TEST_P(HeaderPublicationTest, IndexFailureKeepsCheckpointAndRetriesNode) {
+    const compio::tree_key key{42, 0};
+    const compio::tree_val value{1234, 16};
+    archive->index->insert(key, value);
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    fault.short_write_call = 1;
+    compio_flush(archive);
+    expect_old_slot();
+    expect_wal_retained();
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+    compio::index_node recovered(archive->config.b_tree_degree);
+    ASSERT_TRUE(recovered.read_from(archive->file, readonly(archive->header, compio::header)->index_root));
+    ASSERT_EQ(recovered.keys.size(), 1u);
+    EXPECT_EQ(recovered.keys.front(), key);
+    EXPECT_EQ(recovered.values.front(), value);
+}
+
+TEST_P(HeaderPublicationTest, IndexFailureMakesBatchFail) {
+    ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
+    archive->index->insert({42, 0}, {1234, 16});
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    fault.short_write_call = 1;
+    EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
+    expect_old_slot();
+    expect_wal_retained();
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+}
+
+TEST_P(HeaderPublicationTest, IndexFailureMakesCloseFail) {
+    archive->index->insert({42, 0}, {1234, 16});
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    fault.short_write_call = 1;
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+    archive = nullptr;
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    expect_wal_retained();
+    FILE *stream = fopen(path, "rb");
+    ASSERT_NE(stream, nullptr);
+    std::vector<unsigned char> actual(saved_header.size());
+    EXPECT_EQ(pread(fileno(stream), actual.data(), actual.size(), slot * actual.size()),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, saved_header);
+    EXPECT_EQ(fclose(stream), 0);
+}
+
+TEST_P(HeaderPublicationTest, IndexWalLogFailureBlocksPublicationAndRetries) {
+    if (!wal_enabled()) GTEST_SKIP();
+    archive->index->insert({42, 0}, {1234, 16});
+    arm();
+    fault.target = -1;
+    fault.wal_record = static_cast<int>(compio::WalRecordType::INDEX_NODE);
+    compio_flush(archive);
+    expect_old_slot();
+    expect_wal_retained();
+    fault = {};
+    compio_flush(archive);
+    EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+    compio::index_node recovered(archive->config.b_tree_degree);
+    ASSERT_TRUE(recovered.read_from(archive->file, readonly(archive->header, compio::header)->index_root));
+    ASSERT_EQ(recovered.keys.size(), 1u);
+    EXPECT_EQ(recovered.keys.front(), (compio::tree_key{42, 0}));
+}
+
+TEST_P(HeaderPublicationTest, EvictionFailureKeepsNodeAndBlocksCheckpoint) {
+    if (std::get<1>(GetParam()) != failure::seek &&
+        std::get<1>(GetParam()) != failure::short_write) GTEST_SKIP();
+    compio::node_reader reader(archive->file, 3, 1, &archive->io_mutex,
+                               wal_enabled() ? archive->wal.get() : nullptr);
+    const auto addr = archive->allocator->allocate(INDEX_NODE_SIZE(3));
+    {
+        auto node = reader.create_node(addr);
+        node->keys.push_back({42, 0});
+        node->values.push_back({1234, 16});
+        node->num_keys = 1;
+    }
+    arm();
+    fault.target = addr;
+    fault.short_write_call = 1;
+    const auto other_addr = archive->allocator->allocate(INDEX_NODE_SIZE(3));
+    auto other = reader.create_node(other_addr);
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    clearerr(archive->file);
+    auto retained = reader.read_node(addr);
+    ASSERT_TRUE(retained);
+    ASSERT_EQ(readonly(retained, compio::index_node)->keys.size(), 1u);
+    EXPECT_EQ(readonly(retained, compio::index_node)->keys.front(), (compio::tree_key{42, 0}));
+    // The first flush reports the earlier eviction error even if the retry succeeds.
+    EXPECT_FALSE(reader.flush_cache());
+    EXPECT_TRUE(reader.flush_cache());
+    compio::index_node recovered(3);
+    ASSERT_TRUE(recovered.read_from(archive->file, addr));
+    ASSERT_EQ(recovered.keys.size(), 1u);
+    EXPECT_EQ(recovered.keys.front(), (compio::tree_key{42, 0}));
+}
+
+TEST_P(HeaderPublicationTest, EarlierEvictionFailureBlocksCheckpointUntilRetry) {
+    if (std::get<1>(GetParam()) != failure::seek &&
+        std::get<1>(GetParam()) != failure::short_write) GTEST_SKIP();
+    compio_config cfg = archive->config;
+    cfg.b_tree_degree = 2;
+    cfg.cache_size__nodes = 4;
+    ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    for (uint64_t i = 0; i < 30; ++i) archive->index->insert({42, i}, {1234 + i, 1});
+    compio_flush(archive);
+    capture_header();
+    ASSERT_TRUE(archive->index->update({42, 0}, {4321, 1}));
+    auto node = archive->index->find_node({42, 0});
+    ASSERT_TRUE(node);
+    const auto addr = node.addr();
+    node = {};
+    arm();
+    fault.target = addr;
+    fault.short_write_call = 1;
+    for (uint64_t i = 30; i < 60; ++i) archive->index->insert({42, i}, {1234 + i, 1});
+    ASSERT_TRUE(fault.triggered);
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_EQ(archive->current_header_slot, slot);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    expect_wal_retained();
+    compio_flush(archive);
+    EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+    ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "r+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    auto value = archive->index->get({42, 0});
+    ASSERT_TRUE(value.has_value());
+    EXPECT_EQ(*value, (compio::tree_val{4321, 1}));
+    for (uint64_t i = 1; i < 60; ++i) {
+        value = archive->index->get({42, i});
+        ASSERT_TRUE(value.has_value()) << i;
+        EXPECT_EQ(*value, (compio::tree_val{1234 + i, 1}));
+    }
 }
 
 TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
