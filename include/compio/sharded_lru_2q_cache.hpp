@@ -2,6 +2,7 @@
 #define _SHARDED_LRU_2Q_CACHE_HPP_INCLUDED_
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -39,14 +40,15 @@ class sharded_lru_2q_cache {
     }
 
 public:
-    explicit sharded_lru_2q_cache(size_t max_size, shard_selector selector = shard_selector())
+    explicit sharded_lru_2q_cache(size_t max_size, shard_selector selector = shard_selector(),
+                                  typename shard_t::eviction_guard before_evict = {})
         : _nshards(pick_shards(max_size)),
           _max_size(max_size),
           _selector(selector),
           _last_use(std::make_unique<std::atomic<uint64_t>[]>(_nshards)) {
         _shards.reserve(_nshards);
         for (size_t i = 0; i < _nshards; ++i) {
-            _shards.push_back(std::make_unique<shard_t>(max_size));
+            _shards.push_back(std::make_unique<shard_t>(max_size, before_evict));
             _last_use[i].store(0, std::memory_order_relaxed);
         }
     }
@@ -143,6 +145,7 @@ private:
     }
 
     void enforce_budget() {
+        std::array<bool, kMaxShards> blocked{};
         while (true) {
             size_t total = 0;
             size_t victim = _nshards;
@@ -151,14 +154,15 @@ private:
                 const size_t n = _shards[i]->approx_size();
                 total += n;
                 const uint64_t used = _last_use[i].load(std::memory_order_relaxed);
-                if (n != 0 && used < oldest_use) {
+                if (n != 0 && !blocked[i] && used < oldest_use) {
                     oldest_use = used;
                     victim = i;
                 }
             }
-            if (total <= _max_size || victim == _nshards || !_shards[victim]->evict_one()) {
+            if (total <= _max_size || victim == _nshards) {
                 return;
             }
+            if (!_shards[victim]->evict_one()) blocked[victim] = true;
         }
     }
 

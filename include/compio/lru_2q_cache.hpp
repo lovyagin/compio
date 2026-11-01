@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <list>
+#include <iterator>
+#include <utility>
 #include <stdexcept>
 #include <map>
 #include <mutex>
@@ -28,7 +31,11 @@ namespace cache {
 template <typename key_t, typename value_t, typename comparator = std::less<key_t>>
 class lru_2q_cache {
 public:
-    lru_2q_cache(size_t max_size) : _max_size(max_size), _hit_count(0), _total_count(0) {}
+    using eviction_guard = std::function<bool(const value_t &)>;
+
+    lru_2q_cache(size_t max_size, eviction_guard before_evict = {})
+        : _max_size(max_size), _hit_count(0), _total_count(0),
+          _before_evict(std::move(before_evict)) {}
 
     void put(const key_t &key, const value_t &value) {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -56,22 +63,18 @@ public:
         }
 
         while (_items_map.size() > _max_size) {
-            evict_one_locked();
+            if (!evict_one_locked()) break;
         }
         _approx_size.store(_items_map.size(), std::memory_order_relaxed);
     }
 
-    // Drop one entry by the 2Q rule. Returns false if the cache is empty. The
-    // entry is destroyed under the cache lock, so a lookup for it waits until
-    // its destructor has run.
+    // The guard runs under the cache lock before removal. A rejected entry
+    // stays resident; the budget becomes soft when every candidate is rejected.
     bool evict_one() {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (_items_map.empty()) {
-            return false;
-        }
-        evict_one_locked();
+        const bool evicted = evict_one_locked();
         _approx_size.store(_items_map.size(), std::memory_order_relaxed);
-        return true;
+        return evicted;
     }
 
     // Size as of the last change, readable without taking the cache lock.
@@ -247,18 +250,31 @@ private:
 
     // The cache may be one shard of a shared budget, so its own share is not
     // known in advance: the quarter is taken of what it holds at the moment.
-    void evict_one_locked() {
+    bool evict_one_locked() {
         const bool from_in_queue = _main_queue.empty() || _in_queue.size() * 4 > _items_map.size();
-        if (from_in_queue) {
-            auto key = _in_queue.front();
-            _in_queue.pop_front();
-            _items_map.erase(key);
-            remember(key);
-        } else {
-            auto key = _main_queue.back();
-            _main_queue.pop_back();
-            _items_map.erase(key);
-        }
+        auto evict_in = [&]() {
+            for (auto it = _in_queue.begin(); it != _in_queue.end(); ++it) {
+                auto item = _items_map.find(*it);
+                if (_before_evict && !_before_evict(item->second.value)) continue;
+                auto key = *it;
+                _in_queue.erase(it);
+                _items_map.erase(item);
+                remember(key);
+                return true;
+            }
+            return false;
+        };
+        auto evict_main = [&]() {
+            for (auto it = _main_queue.rbegin(); it != _main_queue.rend(); ++it) {
+                auto item = _items_map.find(*it);
+                if (_before_evict && !_before_evict(item->second.value)) continue;
+                _main_queue.erase(std::next(it).base());
+                _items_map.erase(item);
+                return true;
+            }
+            return false;
+        };
+        return from_in_queue ? (evict_in() || evict_main()) : (evict_main() || evict_in());
     }
 
     void remember(const key_t &key) {
@@ -286,6 +302,7 @@ private:
     size_t _hit_count;
     size_t _total_count;
     std::atomic<size_t> _approx_size{0};
+    eviction_guard _before_evict;
     mutable std::mutex _mutex;
 };
 
