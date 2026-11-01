@@ -76,3 +76,13 @@ endif()
 enable_testing()
 
 add_test(NAME compio_gtest_tests COMMAND compio_gtest)
+
+# Link-time I/O faults stay confined to this executable and out of the library.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(header_publication_tests src/test_header_publication.cpp)
+    target_link_libraries(header_publication_tests PRIVATE compio GTest::GTest GTest::Main)
+    target_include_directories(header_publication_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_options(header_publication_tests PRIVATE
+        -Wl,--wrap=fseeko -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fsync)
+    add_test(NAME header_publication_tests COMMAND header_publication_tests)
+endif()

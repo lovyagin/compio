@@ -103,6 +103,9 @@ struct header : public infile_object {
     bool read_from(FILE *file, uint64_t addr) override;
     void write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
+    /** Write a v5 header, reporting seek errors and incomplete writes. */
+    bool write_checked(FILE *file, uint64_t addr) const;
+
     /** @brief On-disk size of this header */
     uint64_t disk_size() const;
 

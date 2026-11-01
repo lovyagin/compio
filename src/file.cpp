@@ -2,6 +2,7 @@
 #include "compio/wal.hpp"
 #include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cstring>
 #include <inttypes.h>
 #include <vector>
@@ -311,45 +312,33 @@ bool header::read_from(FILE *file, uint64_t addr) {
 
 // The header is never journaled: its two slots already make the update atomic.
 void header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
-    DEBUG_PRINT("[W][header]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, disk_size());
-    
-    // Auto-update checksum before writing
-    // We cast away const because we want the on-disk structure to be correct, 
-    // and updating the checksum member is logically part of the serialization process.
-    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
-
-    if (fseek64(file, addr, SEEK_SET))
-        DEBUG_PRINT("warning: fseek failed\n");
-        
-    lendian_fwrite_member(magic_number, file);
-    lendian_fwrite(checksum, 1, sizeof(checksum), file);
-    lendian_fwrite_member(sequence_id, file);
-    
-    lendian_fwrite_member(index_root, file);
-    lendian_fwrite_member(file_size, file);
-    lendian_fwrite_member(allocator_state_offset, file);
-    lendian_fwrite_member(allocator_state_size, file);
-    lendian_fwrite_member(compression_type, file);
-    lendian_fwrite_member(block_size, file);
-    lendian_fwrite_member(b_tree_degree, file);
-
-    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
-        lendian_fwrite_member(files_table_addr, file);
-        lendian_fwrite_member(files_table_capacity, file);
-        lendian_fwrite_member(ftable.n_files, file);
-    } else {
-        // Non-v5 (legacy) archives are not supported for writing in this version.
-        // The previous implementation here was explicitly marked as "Broken v4 write"
-        // and did not serialize the inline files table correctly, which could lead
-        // to stale or inconsistent metadata on subsequent opens.
-        WARNING_PRINT("error: attempting to write header for non-v5 archive (magic=%" PRIu32 "); "
-                      "writing legacy/v4 archives is not supported\n", magic_number);
-        // Fail fast in debug builds to surface incorrect usage early.
-        assert(false && "writing legacy/v4 archives is not supported");
-        // In release builds, return after logging to avoid performing an incomplete
-        // or inconsistent v4-specific header update.
-        return;
+    if (!write_checked(file, addr)) {
+        WARNING_PRINT("warning: failed to write header\n");
     }
+}
+
+bool header::write_checked(FILE *file, uint64_t addr) const {
+    // Reject legacy writes before touching either header slot.
+    if (magic_number != COMPIO_MAGIC_NUMBER) {
+        errno = EINVAL;
+        return false;
+    }
+    if (ferror(file) || fseek64(file, addr, SEEK_SET) != 0) return false;
+
+    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
+    return lendian_fwrite_member(magic_number, file) == 1 &&
+           lendian_fwrite(checksum, 1, sizeof(checksum), file) == sizeof(checksum) &&
+           lendian_fwrite_member(sequence_id, file) == 1 &&
+           lendian_fwrite_member(index_root, file) == 1 &&
+           lendian_fwrite_member(file_size, file) == 1 &&
+           lendian_fwrite_member(allocator_state_offset, file) == 1 &&
+           lendian_fwrite_member(allocator_state_size, file) == 1 &&
+           lendian_fwrite_member(compression_type, file) == 1 &&
+           lendian_fwrite_member(block_size, file) == 1 &&
+           lendian_fwrite_member(b_tree_degree, file) == 1 &&
+           lendian_fwrite_member(files_table_addr, file) == 1 &&
+           lendian_fwrite_member(files_table_capacity, file) == 1 &&
+           lendian_fwrite_member(ftable.n_files, file) == 1 && !ferror(file);
 }
 
 bool index_node::read_from(FILE *file, uint64_t addr) {
