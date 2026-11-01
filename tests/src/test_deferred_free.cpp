@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -13,7 +14,7 @@ protected:
     char path[256];
     compio_archive *archive = nullptr;
     compio_config config{};
-    const std::vector<unsigned char> original = std::vector<unsigned char>(4096, 0xAB);
+    std::vector<unsigned char> original;
     uint64_t offset = 0;
 
     void SetUp() override {
@@ -28,8 +29,12 @@ protected:
         archive = compio_open_archive(path, "w+", &config);
         ASSERT_NE(archive, nullptr);
         compio_flush(archive);
-        offset = archive->allocator->allocate(original.size());
-        ASSERT_NE(offset, UINT64_MAX);
+        const uint64_t unit = std::max<uint64_t>(4096, compio::hole_granularity(archive->file));
+        original.assign(unit, 0xAB);
+        const uint64_t allocation = archive->allocator->allocate(2 * unit);
+        ASSERT_NE(allocation, UINT64_MAX);
+        // macOS punches whole filesystem blocks; partial edge blocks may stay intact.
+        offset = (allocation + unit - 1) / unit * unit;
         ASSERT_EQ(compio::fseek64(archive->file, offset, SEEK_SET), 0);
         ASSERT_EQ(fwrite(original.data(), 1, original.size(), archive->file), original.size());
         compio_flush(archive);
