@@ -1162,8 +1162,8 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
         }
 
         auto write_table = [&](uint64_t pos) {
-            readonly(archive_->header, header)->ftable.write_to(archive_->file, pos);
-            return fflush(archive_->file) == 0 && sync_file(archive_->file);
+            return readonly(archive_->header, header)->ftable.write_to(archive_->file, pos) &&
+                   fflush(archive_->file) == 0 && sync_file(archive_->file);
         };
 
         if (table_pos < ft_addr) {

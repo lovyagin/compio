@@ -58,7 +58,7 @@ struct files_table {
     bool read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64_t n_files);
 
     // Write to disk (external storage)
-    void write_to(FILE *file, uint64_t addr) const;
+    bool write_to(FILE *file, uint64_t addr) const;
 
 private:
     // Hash map for fast O(1) file lookups by name.

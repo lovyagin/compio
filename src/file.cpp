@@ -80,10 +80,10 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64
     return true;
 }
 
-void files_table::write_to(FILE *file, uint64_t addr) const {
+bool files_table::write_to(FILE *file, uint64_t addr) const {
     if (fseek64(file, addr, SEEK_SET) != 0) {
         WARNING_PRINT("warning: fseek failed in files_table::write_to\n");
-        return;
+        return false;
     }
 
     const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t) + sizeof(uint64_t);
@@ -97,8 +97,10 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
         size_t entries_to_write = this->max_files;
         if (fwrite(this->files.data(), ENTRY_SIZE, entries_to_write, file) != entries_to_write) {
             WARNING_PRINT("warning: short write in files table (bulk)\n");
+            if (!errno) errno = EIO;
+            return false;
         }
-        return;
+        return true;
     }
 
     const size_t BATCH_SIZE = 4096;
@@ -125,11 +127,13 @@ void files_table::write_to(FILE *file, uint64_t addr) const {
         size_t bytes_to_write = count * ENTRY_SIZE;
         if (lendian_fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
             WARNING_PRINT("warning: short write in files table\n");
-            return;
+            if (!errno) errno = EIO;
+            return false;
         }
         current_idx += count;
         remaining -= count;
     }
+    return true;
 }
 
 

@@ -25,6 +25,7 @@ struct io_fault {
     int short_write_call = 2;
     bool publishing = false;
     bool triggered = false;
+    bool next_seek = false;
 };
 
 io_fault fault;
@@ -38,7 +39,8 @@ int __real_fflush(FILE *);
 int __real_fsync(int);
 
 int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
-    if (stream == fault.stream && whence == SEEK_SET && offset == fault.target) {
+    if (stream == fault.stream && whence == SEEK_SET && (offset == fault.target || fault.next_seek)) {
+        fault.next_seek = false;
         fault.publishing = true;
         if (fault.kind == failure::seek) {
             fault.triggered = true;
@@ -136,6 +138,17 @@ protected:
         ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
     }
 
+    void prepare_table_failure() {
+        // An empty file changes only the table; clean caches do no I/O before it.
+        auto *file = compio_open_file("empty", archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        arm();
+        fault.target = -1;
+        fault.next_seek = true;
+        fault.short_write_call = 1;
+    }
+
     void expect_old_slot() {
         EXPECT_TRUE(fault.triggered);
         EXPECT_EQ(archive->current_header_slot, slot);
@@ -188,6 +201,56 @@ TEST_P(HeaderPublicationTest, FlushFailureKeepsWalAndSkipsTruncation) {
     EXPECT_TRUE(archive->truncate_after_publish);
     archive->truncate_after_publish = false;
     retry();
+}
+
+TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
+    const auto old_addr = readonly(archive->header, compio::header)->files_table_addr;
+    const auto old_checksum = archive->files_table_checksum;
+    prepare_table_failure();
+    compio_flush(archive);
+    expect_old_slot();
+    expect_wal_retained();
+    if (fault.kind != failure::sync) {
+        EXPECT_EQ(readonly(archive->header, compio::header)->files_table_addr, old_addr);
+        EXPECT_EQ(archive->files_table_checksum, old_checksum);
+    }
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+    compio::files_table recovered;
+    const auto &h = readonly(archive->header, compio::header);
+    ASSERT_TRUE(recovered.read_from(archive->file, h->files_table_addr,
+                                    h->files_table_capacity, h->ftable.n_files));
+    EXPECT_NE(recovered.find("empty"), nullptr);
+}
+
+TEST_P(HeaderPublicationTest, FilesTableFailureMakesBatchFail) {
+    ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
+    prepare_table_failure();
+    EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
+    expect_old_slot();
+    expect_wal_retained();
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+}
+
+TEST_P(HeaderPublicationTest, FilesTableFailureMakesCloseFail) {
+    prepare_table_failure();
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+    archive = nullptr;
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    expect_wal_retained();
+    FILE *stream = fopen(path, "rb");
+    ASSERT_NE(stream, nullptr);
+    std::vector<unsigned char> actual(saved_header.size());
+    EXPECT_EQ(pread(fileno(stream), actual.data(), actual.size(), slot * actual.size()),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, saved_header);
+    EXPECT_EQ(fclose(stream), 0);
 }
 
 TEST_P(HeaderPublicationTest, CompactionCallbackReportsPublicationFailure) {

@@ -2316,11 +2316,11 @@ static uint32_t files_table_checksum(const compio::files_table &table) {
                   static_cast<size_t>(table.max_files) * sizeof(compio::files_table::file));
 }
 
-static void sync_files_table(compio_archive *archive) {
-    if (!archive || !archive->header) return;
+static bool sync_files_table(compio_archive *archive) {
+    if (!archive || !archive->header) return false;
 
     // Only applies to v5 format
-    if (readonly(archive->header, header)->magic_number != COMPIO_MAGIC_NUMBER) return;
+    if (readonly(archive->header, header)->magic_number != COMPIO_MAGIC_NUMBER) return true;
 
     // The table is rewritten as a whole, so skip it when nothing in it changed
     // since it was last written.
@@ -2329,7 +2329,7 @@ static void sync_files_table(compio_archive *archive) {
         readonly(archive->header, header)->files_table_addr != 0 &&
         readonly(archive->header, header)->files_table_capacity ==
             readonly(archive->header, header)->ftable.max_files) {
-        return;
+        return true;
     }
 
     // Copy-on-write for the files table:
@@ -2341,7 +2341,7 @@ static void sync_files_table(compio_archive *archive) {
 
     uint32_t current_capacity = archive->header->ftable.max_files;
     if (current_capacity == 0) {
-        return;
+        return true;
     }
 
     const uint64_t old_addr     = archive->header->files_table_addr;
@@ -2371,12 +2371,16 @@ static void sync_files_table(compio_archive *archive) {
     }
     
     if (new_addr != 0 && new_addr != UINT64_MAX) {
-        // Update header to point to the newly allocated table.
+        // Keep the old table and dirty checksum until the replacement is written.
+        if (!readonly(archive->header, header)->ftable.write_to(archive->file, new_addr) ||
+            fflush(archive->file) != 0) {
+            const int write_error = errno ? errno : EIO;
+            if (archive->allocator) archive->allocator->deallocate(new_addr, needed_size, false);
+            errno = write_error;
+            return false;
+        }
         archive->header->files_table_addr = new_addr;
         archive->header->files_table_capacity = current_capacity;
-
-        // Write the table content at the new address.
-        archive->header->ftable.write_to(archive->file, archive->header->files_table_addr);
         archive->files_table_checksum = checksum;
         archive->files_table_checksum_valid = true;
 
@@ -2390,7 +2394,10 @@ static void sync_files_table(compio_archive *archive) {
         }
     } else {
          WARNING_PRINT("warning: failed to allocate space for files table\n");
+         if (!errno) errno = ENOSPC;
+         return false;
     }
+    return true;
 }
 
 // Caller must hold archive->mutex.
@@ -2423,7 +2430,7 @@ static bool flush_impl(compio_archive *archive) {
 
     // Sync files table (allocate if needed, write to disk)
     if (can_write) {
-        sync_files_table(archive);
+        if (!sync_files_table(archive)) durable = false;
     }
 
     // Save allocator state (updates header fields)
