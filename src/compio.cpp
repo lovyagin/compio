@@ -1070,11 +1070,11 @@ int compio_close_archive(compio_archive *archive) {
     delete archive->index;
     archive->index = nullptr;
 
-    if (durable) {
+    if (durable && !archive->is_readonly()) {
         durable = fsync_archive(archive->file) && flush_header_double_buffered(archive);
         if (!durable) close_error = errno ? errno : EIO;
     }
-    if (durable) {
+    if (durable && !archive->is_readonly()) {
         if (archive->allocator) archive->allocator->commit_state();
         truncate_after_header_publish(archive);
         if (archive->wal && !archive->wal->clear()) {
@@ -2414,16 +2414,10 @@ static bool sync_files_table(compio_archive *archive) {
 
 // Caller must hold archive->mutex.
 static bool flush_impl(compio_archive *archive) {
-    // Check if we have write permission (w, a, or + modes)
-    // mode_bit::r is set for 'r' and 'r+'. 'w'/'a' don't set 'r'.
-    // So we need explicit check for write capability.
-    bool can_write = (archive->mode_b & mode_bit::w) || 
-                     (archive->mode_b & mode_bit::a) || 
-                     (archive->mode_b & mode_bit::plus);
+    if (archive->is_readonly()) return true;
 
     // Start atomic transaction for the entire flush operation
-    // Pass nullptr if we shouldn't use WAL
-    compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
+    compio::WalManager* wal_ptr = archive->wal.get();
     
     if (wal_ptr && wal_ptr->get_batch_depth() == 0) {
         wal_ptr->begin_transaction();
@@ -2441,12 +2435,10 @@ static bool flush_impl(compio_archive *archive) {
     if (archive->index && !archive->index->flush_cache()) durable = false;
 
     // Sync files table (allocate if needed, write to disk)
-    if (can_write) {
-        if (!sync_files_table(archive)) durable = false;
-    }
+    if (!sync_files_table(archive)) durable = false;
 
     // Save allocator state (updates header fields)
-    if (archive->allocator && can_write) {
+    if (archive->allocator) {
         if (!archive->allocator->save_state(archive)) durable = false;
     }
 

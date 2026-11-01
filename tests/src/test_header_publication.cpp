@@ -251,6 +251,29 @@ protected:
     }
 };
 
+TEST_P(HeaderPublicationTest, ReadOnlyFlushAndCloseDoNotPersist) {
+    write_file();
+    const auto config = archive->config;
+    const int closed = compio_close_archive(archive);
+    archive = nullptr;
+    ASSERT_EQ(closed, COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "r", &config);
+    ASSERT_NE(archive, nullptr);
+    capture_header();
+    arm();
+    fault.publishing = true;
+    fault.every_seek = true;
+
+    compio_flush(archive);
+    EXPECT_FALSE(fault.triggered);
+    EXPECT_EQ(archive->current_header_slot, slot);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = nullptr;
+    EXPECT_FALSE(fault.triggered);
+    fault = {};
+}
+
 TEST_P(HeaderPublicationTest, BatchFailureKeepsSlotAndAllowsRetry) {
     ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
     write_file();
