@@ -338,13 +338,29 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
                offset + size <= logical_end;
     };
 
-    uint64_t current_offset = readonly(archive->header, header)->allocator_state_offset;
-    uint64_t current_size = readonly(archive->header, header)->allocator_state_size;
-    if (!is_slot(current_offset, current_size)) {
-        current_offset = current_size = 0;
+    const uint64_t published_offset = archive->published_allocator_state_offset;
+    const uint64_t published_size = archive->published_allocator_state_size;
+    if (published_size > UINT64_MAX - published_offset) {
+        errno = EINVAL;
+        return false;
     }
-    if (!is_slot(spare_slot_offset_, spare_slot_size_)) {
-        spare_slot_offset_ = spare_slot_size_ = 0;
+    auto overlaps_published = [&](uint64_t offset, uint64_t size) {
+        if (published_size == 0 || size == 0) return false;
+        return offset <= published_offset ? size > published_offset - offset
+                                          : published_size > offset - published_offset;
+    };
+
+    // Prepare slot rotation and free-list changes locally. Failed writes must
+    // not change which slots are reserved or available for allocation.
+    free_blocks_manager staged(*this);
+    uint64_t pos = readonly(archive->header, header)->allocator_state_offset;
+    uint64_t slot_size = readonly(archive->header, header)->allocator_state_size;
+    if (!is_slot(pos, slot_size) || overlaps_published(pos, slot_size)) {
+        pos = spare_slot_offset_;
+        slot_size = spare_slot_size_;
+    }
+    if (!is_slot(pos, slot_size) || overlaps_published(pos, slot_size)) {
+        pos = slot_size = 0;
     }
 
     // Sized for the list as it will be if the spare slot has to be released
@@ -357,29 +373,31 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         return false;
     }
 
-    // The state alternates between two slots, like the double-buffered header:
-    // the durable header references the current slot until the next header is
-    // published, so the new copy goes to the spare one. Both slots stay
-    // allocated, which keeps repeated saves from growing the archive.
-    uint64_t pos = spare_slot_offset_;
-    uint64_t slot_size = spare_slot_size_;
+    // Reuse the unpublished slot until a header actually publishes it.
     bool appended = false;
     if (slot_size < needed) {
         if (slot_size != 0) {
-            add_free_block(spare_slot_offset_, spare_slot_size_);
+            staged.add_free_block(pos, slot_size);
         }
         slot_size = MIN_STATE_SLOT_SIZE;
         while (slot_size < needed) {
             slot_size *= 2;
         }
         pos = std::max(logical_end, reserved_end);
+        if (overlaps_published(pos, slot_size)) {
+            pos = published_offset + published_size;
+        }
         appended = true;
     }
-    spare_slot_offset_ = current_offset;
-    spare_slot_size_ = current_size;
+    if (slot_size > UINT64_MAX - pos) {
+        errno = EOVERFLOW;
+        return false;
+    }
+    staged.spare_slot_offset_ = published_offset;
+    staged.spare_slot_size_ = published_size;
 
     std::vector<uint8_t> buffer;
-    serialize(buffer);
+    staged.serialize(buffer);
     assert(buffer.size() <= slot_size);
     buffer.resize(slot_size, 0);
     const uint32_t size = static_cast<uint32_t>(slot_size);
@@ -419,13 +437,10 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         }
         return false;
     }
-    archive->header->allocator_state_offset = pos;
-    archive->header->allocator_state_size = size;
-    if (appended) {
-        archive->header->file_size = pos + size;
+    if (fflush(archive->file) != 0) {
+        if (!in_batch && archive->wal) archive->wal->rollback_transaction();
+        return false;
     }
-
-    fflush(archive->file);
 
     if (!in_batch && archive->wal) {
         if (!archive->wal->commit_transaction(archive->file, archive->config.wal_max_size_bytes)) {
@@ -434,6 +449,10 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         }
     }
 
+    *this = std::move(staged);
+    archive->header->allocator_state_offset = pos;
+    archive->header->allocator_state_size = size;
+    if (appended) archive->header->file_size = pos + size;
     return true;
 }
 
@@ -820,7 +839,7 @@ bool block_allocator::save_state(compio_archive *archive) {
         // Since the allocator state can be large, we typically don't put it *inside* the WAL log.
         // Instead we write it to the archive file and sync it.
         // But we MUST ensure any previous WAL entries are flushed first.
-        wal_->sync();
+        if (!wal_->sync()) return false;
     }
     
     bool result = blocks_manager_.save_to_file(archive);
@@ -829,9 +848,9 @@ bool block_allocator::save_state(compio_archive *archive) {
         // After writing allocator state to disk, we must ensure it hits physical storage
         // before we might update the header pointing to it.
         #ifdef _WIN32
-        _commit(_fileno(archive->file));
+        result = _commit(_fileno(archive->file)) == 0;
         #else
-        fsync(fileno(archive->file));
+        result = fsync(fileno(archive->file)) == 0;
         #endif
     }
     

@@ -160,6 +160,52 @@ TEST_F(AllocatorStateTest, RepeatedFlushDoesNotGrowArchive) {
     compio_close_archive(archive);
 }
 
+TEST_F(AllocatorStateTest, UnpublishedSavesPreservePublishedSnapshot) {
+    for (bool wal : {false, true}) {
+        compio_config config;
+        compio_build_default_config(&config);
+        config.max_files = 16;
+        config.enable_wal = wal;
+        config.fragmentation_threshold = 100;
+        config.fill_holes_with_zeros = false;
+        auto *archive = compio_open_archive(fn1, "w+", &config);
+        ASSERT_NE(archive, nullptr);
+        const uint64_t free_block = archive->allocator->allocate(4096);
+        ASSERT_NE(free_block, UINT64_MAX);
+        archive->allocator->deallocate(free_block, 4096, false);
+        for (int i = 0; i < 3; ++i) compio_flush(archive);
+        const auto &h = readonly(archive->header, header);
+        const uint64_t published_offset = h->allocator_state_offset;
+        const uint64_t published_size = h->allocator_state_size;
+        auto read_snapshot = [&]() {
+            std::vector<uint8_t> data(published_size);
+            EXPECT_EQ(fseek64(archive->file, published_offset, SEEK_SET), 0);
+            EXPECT_EQ(fread(data.data(), 1, data.size(), archive->file), data.size());
+            return data;
+        };
+        const auto published = read_snapshot();
+        for (int i = 0; i < 4; ++i) {
+            const uint64_t block = archive->allocator->allocate(17);
+            ASSERT_NE(block, UINT64_MAX);
+            ASSERT_TRUE(archive->allocator->save_state(archive));
+            EXPECT_NE(readonly(archive->header, header)->allocator_state_offset, published_offset);
+            EXPECT_EQ(read_snapshot(), published);
+        }
+        // Growing the pending copy must keep the published slot reserved too.
+        for (int i = 0; i < 12; ++i) {
+            const uint64_t block = archive->allocator->allocate(32);
+            ASSERT_NE(block, UINT64_MAX);
+            archive->allocator->deallocate(block, 7, false);
+        }
+        for (int i = 0; i < 3; ++i) {
+            ASSERT_TRUE(archive->allocator->save_state(archive));
+            EXPECT_NE(readonly(archive->header, header)->allocator_state_offset, published_offset);
+            EXPECT_EQ(read_snapshot(), published);
+        }
+        ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    }
+}
+
 TEST_F(AllocatorStateTest, ReopenCyclesDoNotGrowArchive) {
     compio_config config;
     compio_build_default_config(&config);

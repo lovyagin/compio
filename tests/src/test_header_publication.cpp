@@ -22,6 +22,7 @@ struct io_fault {
     off_t target = 0;
     failure kind = failure::seek;
     int writes = 0;
+    int short_write_call = 2;
     bool publishing = false;
     bool triggered = false;
 };
@@ -50,7 +51,7 @@ int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
 
 size_t __wrap_fwrite(const void *data, size_t size, size_t count, FILE *stream) {
     if (stream == fault.stream && fault.publishing &&
-        fault.kind == failure::short_write && ++fault.writes == 2) {
+        fault.kind == failure::short_write && ++fault.writes == fault.short_write_call) {
         fault.triggered = true;
         errno = ENOSPC;
         return __real_fwrite(data, size, count - 1, stream);
@@ -193,6 +194,87 @@ TEST_P(HeaderPublicationTest, CompactionCallbackReportsPublicationFailure) {
     arm();
     EXPECT_FALSE(archive->publish_header());
     expect_old_slot();
+    retry();
+}
+
+TEST_P(HeaderPublicationTest, RepeatedFlushFailuresPreserveAllocatorSnapshot) {
+    const uint64_t free_block = archive->allocator->allocate(4096);
+    ASSERT_NE(free_block, UINT64_MAX);
+    archive->allocator->deallocate(free_block, 4096, false);
+    for (int i = 0; i < 3; ++i) compio_flush(archive);
+    capture_header();
+    const auto &h = readonly(archive->header, compio::header);
+    const uint64_t offset = h->allocator_state_offset;
+    std::vector<unsigned char> saved(h->allocator_state_size);
+    ASSERT_EQ(pread(fileno(archive->file), saved.data(), saved.size(), offset),
+              static_cast<ssize_t>(saved.size()));
+    for (int i = 0; i < 3; ++i) {
+        fault = {};
+        clearerr(archive->file);
+        const uint64_t block = archive->allocator->allocate(17);
+        ASSERT_NE(block, UINT64_MAX);
+        arm();
+        compio_flush(archive);
+        expect_old_slot();
+        expect_wal_retained();
+        std::vector<unsigned char> actual(saved.size());
+        ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
+                  static_cast<ssize_t>(actual.size()));
+        EXPECT_EQ(actual, saved);
+    }
+    retry();
+}
+
+TEST_P(HeaderPublicationTest, AllocatorWriteFailureAllowsRetry) {
+    for (int i = 0; i < 3; ++i) compio_flush(archive);
+    capture_header();
+    ASSERT_TRUE(archive->allocator->save_state(archive));
+    const uint64_t pending_offset = readonly(archive->header, compio::header)->allocator_state_offset;
+    const uint64_t pending_size = readonly(archive->header, compio::header)->allocator_state_size;
+    arm();
+    fault.target = pending_offset;
+    fault.short_write_call = 1;
+    // Without WAL, save_state leaves the durability barrier to publication.
+    const bool saved = archive->allocator->save_state(archive);
+    EXPECT_FALSE(saved && archive->publish_header());
+    expect_old_slot();
+    EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_offset, pending_offset);
+    EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_size, pending_size);
+    fault = {};
+    clearerr(archive->file);
+    ASSERT_TRUE(archive->allocator->save_state(archive));
+    EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_offset, pending_offset);
+    retry();
+}
+
+TEST_P(HeaderPublicationTest, AllocatorGrowthFailureAllowsRetry) {
+    for (int i = 0; i < 3; ++i) compio_flush(archive);
+    capture_header();
+    ASSERT_TRUE(archive->allocator->save_state(archive));
+    const uint64_t pending_offset = readonly(archive->header, compio::header)->allocator_state_offset;
+    const uint64_t pending_size = readonly(archive->header, compio::header)->allocator_state_size;
+    for (int i = 0; i < 12; ++i) {
+        const uint64_t block = archive->allocator->allocate(32);
+        ASSERT_NE(block, UINT64_MAX);
+        archive->allocator->deallocate(block, 7, false);
+    }
+    const auto before = archive->allocator->get_fragmentation_stats();
+    arm();
+    fault.target = readonly(archive->header, compio::header)->file_size;
+    fault.short_write_call = 1;
+    const bool saved = archive->allocator->save_state(archive);
+    EXPECT_FALSE(saved && archive->publish_header());
+    expect_old_slot();
+    if (fault.kind != failure::sync) {
+        EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_offset, pending_offset);
+        EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_size, pending_size);
+        const auto after = archive->allocator->get_fragmentation_stats();
+        EXPECT_EQ(after.total_free_bytes, before.total_free_bytes);
+        EXPECT_EQ(after.num_free_regions, before.num_free_regions);
+    }
+    fault = {};
+    clearerr(archive->file);
+    ASSERT_TRUE(archive->allocator->save_state(archive));
     retry();
 }
 

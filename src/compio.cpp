@@ -141,6 +141,8 @@ compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *fi
       wal(std::move(wal)),
       mode_b(mode_b),
       open_files_count(0) {
+    published_allocator_state_offset = readonly(header, compio::header)->allocator_state_offset;
+    published_allocator_state_size = readonly(header, compio::header)->allocator_state_size;
     // btree constructor is called in compio_open_archive to break
     // the dependence cycle (archive -> index -> allocator -> archive)
     //
@@ -996,6 +998,8 @@ static bool flush_header_double_buffered(compio_archive *archive) {
 
         // Switch internal state to point to the new slot
         archive->current_header_slot = target_slot;
+        archive->published_allocator_state_offset = new_h_data->allocator_state_offset;
+        archive->published_allocator_state_size = new_h_data->allocator_state_size;
         
         // Mark old header object as unmodified so it doesn't write on destruction
         archive->header.unmodify();
