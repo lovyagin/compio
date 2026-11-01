@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include <cerrno>
 #include <cstdio>
@@ -31,6 +32,7 @@ struct io_fault {
     bool publishing = false;
     bool triggered = false;
     bool next_seek = false;
+    bool every_seek = false;
     int wal_record = -1;
 };
 
@@ -45,7 +47,7 @@ int __real_fflush(FILE *);
 int __real_fsync(int);
 
 int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
-    if (stream == fault.stream && whence == SEEK_SET && (offset == fault.target || fault.next_seek)) {
+    if (stream == fault.stream && whence == SEEK_SET && (offset == fault.target || fault.next_seek || fault.every_seek)) {
         fault.next_seek = false;
         fault.publishing = true;
         if (fault.kind == failure::seek) {
@@ -690,3 +692,329 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Combine(::testing::Bool(),
                        ::testing::Values(failure::seek, failure::short_write,
                                          failure::flush, failure::sync)));
+
+class BlockWriteTest : public ::testing::TestWithParam<std::tuple<bool, bool, bool, int>> {
+protected:
+    char path[256];
+    compio_archive *archive = nullptr;
+    compio_config config{};
+    compio::tree_key key{};
+    std::shared_ptr<compio::block> block;
+    std::string original = std::string(4096, 'a');
+    std::string replacement = std::string(4096, 'b');
+    int slot = 0;
+    uint64_t sequence = 0;
+    std::vector<unsigned char> saved_header;
+
+    void SetUp() override {
+        generate_tmp_fn(path, sizeof(path));
+        compio_build_default_config(&config);
+        config.max_files = 16;
+        config.enable_wal = std::get<0>(GetParam());
+        config.fill_holes_with_zeros = std::get<2>(GetParam());
+        config.cache_size__blocks = std::get<3>(GetParam());
+        config.auto_batch_size = 0;
+        config.wal_max_size_bytes = 1;
+        config.fragmentation_threshold = 100;
+        compio_build_lz4_compressor(&config.compressor);
+        if (!std::get<1>(GetParam())) {
+            uint32_t state = 12345;
+            for (auto *data : {&original, &replacement}) {
+                for (char &byte : *data) {
+                    state = state * 1664525u + 1013904223u;
+                    byte = static_cast<char>(state >> 24);
+                }
+            }
+        }
+        archive = compio_open_archive(path, "w+", &config);
+        ASSERT_NE(archive, nullptr);
+        auto *file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        key = {file->hash, 0};
+        ASSERT_EQ(compio_write(original.data(), original.size(), file), original.size());
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        compio_flush(archive);
+        slot = archive->current_header_slot;
+        sequence = readonly(archive->header, compio::header)->sequence_id;
+        saved_header.resize(readonly(archive->header, compio::header)->disk_size());
+        ASSERT_EQ(pread(fileno(archive->file), saved_header.data(), saved_header.size(),
+                        slot * saved_header.size()), static_cast<ssize_t>(saved_header.size()));
+        auto value = archive->index->get(key);
+        ASSERT_TRUE(value.has_value());
+        compio::storage_block stored;
+        ASSERT_TRUE(stored.read_from(archive->file, value->addr));
+        ASSERT_EQ(stored.is_compressed, std::get<1>(GetParam()));
+        block = archive->block_reader->read_block(value->addr, key);
+        ASSERT_NE(block, nullptr);
+        ASSERT_EQ(block->size(), replacement.size());
+        memcpy(block->data(), replacement.data(), replacement.size());
+    }
+
+    void TearDown() override {
+        fault = {};
+        block.reset();
+        if (archive) {
+            EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+        }
+        remove(path);
+        remove((std::string(path) + ".wal").c_str());
+    }
+
+    void arm(failure kind, int write_call = 1) {
+        fault = {};
+        fault.stream = archive->file;
+        fault.descriptor = fileno(archive->file);
+        fault.target = -1;
+        fault.next_seek = true;
+        fault.kind = kind;
+        fault.short_write_call = write_call;
+    }
+
+    void expect_checkpoint_unchanged() {
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(archive->current_header_slot, slot);
+        EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+        std::vector<unsigned char> actual(saved_header.size());
+        EXPECT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), slot * actual.size()),
+                  static_cast<ssize_t>(actual.size()));
+        EXPECT_EQ(actual, saved_header);
+        if (config.enable_wal) {
+            EXPECT_GT(std::filesystem::file_size(std::string(path) + ".wal"), 0u);
+        }
+    }
+
+    void retry_and_reopen() {
+        fault = {};
+        clearerr(archive->file);
+        compio_flush(archive);
+        EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
+        block.reset();
+        ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+        archive = compio_open_archive(path, "r", &config);
+        ASSERT_NE(archive, nullptr);
+        auto *file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        std::string actual(replacement.size(), '\0');
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+        EXPECT_EQ(actual, replacement);
+        EXPECT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+
+    void check_write_failure(failure kind, int write_call = 1) {
+        ASSERT_EQ(fflush(archive->file), 0);
+        const auto old_addr = block->addr();
+        const auto old_size = block->c_size() + block->disk_meta_size();
+        std::vector<unsigned char> old_bytes(old_size);
+        ASSERT_EQ(pread(fileno(archive->file), old_bytes.data(), old_size, old_addr),
+                  static_cast<ssize_t>(old_size));
+        arm(kind, write_call);
+        compio_flush(archive);
+        expect_checkpoint_unchanged();
+        EXPECT_EQ(block->addr(), old_addr);
+        auto value = archive->index->get(key);
+        ASSERT_TRUE(value.has_value());
+        EXPECT_EQ(value->addr, old_addr);
+        EXPECT_EQ(memcmp(block->data(), replacement.data(), replacement.size()), 0);
+        std::vector<unsigned char> actual(old_size);
+        ASSERT_EQ(pread(fileno(archive->file), actual.data(), old_size, old_addr),
+                  static_cast<ssize_t>(old_size));
+        EXPECT_EQ(actual, old_bytes);
+        retry_and_reopen();
+    }
+};
+
+TEST_P(BlockWriteTest, SeekFailurePreservesOldBlockAndRetries) {
+    check_write_failure(failure::seek);
+}
+
+TEST_P(BlockWriteTest, MetadataWriteFailurePreservesOldBlockAndRetries) {
+    check_write_failure(failure::short_write);
+}
+
+TEST_P(BlockWriteTest, PayloadWriteFailurePreservesOldBlockAndRetries) {
+    check_write_failure(failure::short_write, 2);
+}
+
+TEST_P(BlockWriteTest, WalLogFailureBlocksPublicationAndRetries) {
+    if (!config.enable_wal) GTEST_SKIP();
+    const auto old_addr = block->addr();
+    arm(failure::seek);
+    fault.next_seek = false;
+    fault.wal_record = static_cast<int>(compio::WalRecordType::BLOCK);
+    compio_flush(archive);
+    expect_checkpoint_unchanged();
+    EXPECT_EQ(block->addr(), old_addr);
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, WalCommitFailurePreservesBlockAndBalancesTransaction) {
+    if (!config.enable_wal) GTEST_SKIP();
+    const auto old_addr = block->addr();
+    arm(failure::seek);
+    fault.next_seek = false;
+    fault.wal_record = static_cast<int>(compio::WalRecordType::COMMIT);
+    EXPECT_FALSE(block->write_back());
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(block->addr(), old_addr);
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, BatchReportsBlockWriteFailure) {
+    ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
+    arm(failure::seek);
+    EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
+    expect_checkpoint_unchanged();
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, CloseReportsBlockWriteFailureWithoutPublishing) {
+    arm(failure::short_write, 2);
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+    archive = nullptr;
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    FILE *stream = fopen(path, "rb");
+    ASSERT_NE(stream, nullptr);
+    std::vector<unsigned char> actual(saved_header.size());
+    EXPECT_EQ(pread(fileno(stream), actual.data(), actual.size(), slot * actual.size()),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, saved_header);
+    EXPECT_EQ(fclose(stream), 0);
+    if (config.enable_wal) {
+        EXPECT_GT(std::filesystem::file_size(std::string(path) + ".wal"), 0u);
+    }
+}
+
+TEST_P(BlockWriteTest, EvictionFailureRetainsBlockAndReachesCheckpoint) {
+    const auto old_addr = block->addr();
+    block.reset();
+    arm(failure::seek);
+    fault.every_seek = true;
+    for (uint64_t i = 1; i < 8 && !fault.triggered; ++i) {
+        auto other = archive->block_reader->create_block(4096, {key.hash, i * 4096});
+        memset(other->data(), 'x', other->size());
+    }
+    ASSERT_TRUE(fault.triggered);
+    fault = {};
+    clearerr(archive->file);
+    block = archive->block_reader->read_block(old_addr, key);
+    ASSERT_NE(block, nullptr);
+    EXPECT_EQ(memcmp(block->data(), replacement.data(), replacement.size()), 0);
+    compio_flush(archive);
+    EXPECT_EQ(archive->current_header_slot, slot);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, PinnedBlockStaysCanonicalAcrossEvictionAndClear) {
+    for (uint64_t i = 1; i < 8; ++i) {
+        auto other = archive->block_reader->create_block(4096, {key.hash, i * 4096});
+        memset(other->data(), 'x', other->size());
+    }
+    ASSERT_TRUE(archive->block_reader->clear_cache());
+    auto same = archive->block_reader->read_block(block->addr(), key);
+    ASSERT_EQ(same.get(), block.get());
+    memcpy(same->data(), replacement.data(), replacement.size());
+    same.reset();
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, ClearFailureRemainsVisibleToCheckpoint) {
+    arm(failure::seek);
+    EXPECT_FALSE(archive->block_reader->clear_cache());
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_TRUE(archive->block_reader->has_write_error());
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_EQ(archive->current_header_slot, slot);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, EvictionFailurePreventsAutomaticWalCheckpoint) {
+    if (!config.enable_wal) GTEST_SKIP();
+    block.reset();
+    arm(failure::seek);
+    fault.every_seek = true;
+    auto *file = compio_open_file("other", archive);
+    ASSERT_NE(file, nullptr);
+    const std::string data(8 * config.block_size, 'x');
+    EXPECT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_TRUE(archive->block_reader->has_write_error());
+    EXPECT_GT(std::filesystem::file_size(std::string(path) + ".wal"), 0u);
+    EXPECT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    fault = {};
+    clearerr(archive->file);
+    compio_flush(archive);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    retry_and_reopen();
+    file = compio_open_file("other", archive);
+    ASSERT_NE(file, nullptr);
+    std::string actual(data.size(), '\0');
+    EXPECT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+    EXPECT_EQ(actual, data);
+    EXPECT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+}
+
+TEST_P(BlockWriteTest, FailedFlushPreventsAutomaticWalCheckpointUntilRetry) {
+    if (!config.enable_wal) GTEST_SKIP();
+    arm(failure::seek);
+    compio_flush(archive);
+    expect_checkpoint_unchanged();
+    fault = {};
+    clearerr(archive->file);
+    EXPECT_TRUE(archive->block_reader->has_write_error());
+    auto *file = compio_open_file("other", archive);
+    ASSERT_NE(file, nullptr);
+    const std::string data(128, 'x');
+    EXPECT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    EXPECT_GT(std::filesystem::file_size(std::string(path) + ".wal"), 0u);
+    EXPECT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    retry_and_reopen();
+}
+
+TEST_P(BlockWriteTest, UnpublishedReplacementSurvivesFailedRewrite) {
+    ASSERT_TRUE(block->write_back());
+    replacement = original;
+    memcpy(block->data(), replacement.data(), replacement.size());
+    check_write_failure(failure::short_write, 2);
+}
+
+TEST_P(BlockWriteTest, FlushFailurePreservesOldBlockAndRetries) {
+    check_write_failure(failure::flush);
+}
+
+TEST_P(BlockWriteTest, RealStreamErrorCanRetryWithoutCallerClearingError) {
+    const auto old_addr = block->addr();
+    const int descriptor = fileno(archive->file);
+    const int saved = dup(descriptor);
+    ASSERT_GE(saved, 0);
+    const int read_only = open(path, O_RDONLY);
+    if (read_only < 0) {
+        close(saved);
+        FAIL() << "failed to open read-only descriptor";
+    }
+    const int replaced = dup2(read_only, descriptor);
+    close(read_only);
+    if (replaced < 0) {
+        close(saved);
+        FAIL() << "failed to replace descriptor";
+    }
+    EXPECT_FALSE(block->write_back());
+    EXPECT_NE(ferror(archive->file), 0);
+    EXPECT_EQ(block->addr(), old_addr);
+    const int restored = dup2(saved, descriptor);
+    close(saved);
+    ASSERT_GE(restored, 0);
+    // The C API exposes no FILE*: the writer must clear its own sticky error.
+    compio_flush(archive);
+    EXPECT_FALSE(archive->block_reader->has_write_error());
+    retry_and_reopen();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    WalCompressionReclamationAndCache, BlockWriteTest,
+    ::testing::Combine(::testing::Bool(), ::testing::Bool(), ::testing::Bool(),
+                       ::testing::Values(0, 1, 3)));

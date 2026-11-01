@@ -508,12 +508,13 @@ bool index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
         }
     }
 
+    clearerr(file);
     if (fseek64(file, addr, SEEK_SET) != 0) return false;
     if (fwrite(buffer.data(), 1, buffer.size(), file) != buffer.size() || ferror(file)) {
         if (!errno) errno = EIO;
         return false;
     }
-    return true;
+    return fflush(file) == 0;
 }
 
 #define DEBUG_VAL (INT64_MAX - 123)
@@ -696,33 +697,30 @@ bool storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
 
     assert(meta_idx == STORAGE_BLOCK_METASIZE_V2);
 
-    bool logged = true;
     if (wal_manager) {
         wal_manager->begin_transaction();
-
         std::vector<compio::WalManager::iovec_buf> buffers;
         buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE_V2});
-        if (size > 0 && data) {
-            buffers.push_back({data.get(), size});
-        }
-
+        if (size > 0 && data) buffers.push_back({data.get(), size});
         if (!wal_manager->log_write_vectored(WalRecordType::BLOCK, addr, buffers)) {
-            logged = false;
+            wal_manager->rollback_transaction();
             if (!errno) errno = EIO;
+            return false;
         }
         if (!wal_manager->commit_transaction()) {
-            logged = false;
             if (!errno) errno = EIO;
+            return false;
         }
     }
 
+    clearerr(file);
     if (fseek64(file, addr, SEEK_SET) != 0) return false;
     if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2 ||
         (size > 0 && data && fwrite(data.get(), 1, size, file) != size) || ferror(file)) {
         if (!errno) errno = EIO;
         return false;
     }
-    return logged;
+    return fflush(file) == 0;
 }
 
 index_node::index_node(int tree_degree)

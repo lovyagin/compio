@@ -752,10 +752,13 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
 
 void block_allocator::force_defragmentation() {
     // Flush caches before locking allocator/index to avoid deadlock.
-    // block::~block() calls allocate/deallocate/update which lock allocator_mutex and index->mutex.
+    // Block write-back locks allocator/index; pinned blocks cannot be relocated.
     if (archive_->file) {
         archive_->block_reader->set_maintenance_mode(true);
-        archive_->block_reader->clear_cache();
+        if (!archive_->block_reader->clear_cache() || !archive_->block_reader->cache_empty()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            return;
+        }
         // Use public clear_cache which handles its own locking if needed, 
         // or just relies on the fact we are the only thread (compio_defragment holds archive mutex).
         if (!archive_->index->clear_cache()) {
@@ -805,10 +808,13 @@ void block_allocator::maintenance(bool at_checkpoint) {
         }
 
         // Flush caches before locking allocator to avoid deadlock.
-        // block::~block() calls allocate/deallocate which lock allocator_mutex.
+        // Block write-back calls allocate/deallocate which lock allocator_mutex.
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(true);
-            archive_->block_reader->clear_cache();
+            if (!archive_->block_reader->clear_cache() || !archive_->block_reader->cache_empty()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return;
+            }
             if (!archive_->index->_clear_cache()) {
                 archive_->block_reader->set_maintenance_mode(false);
                 return;

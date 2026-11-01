@@ -1048,6 +1048,10 @@ int compio_close_archive(compio_archive *archive) {
         archive->allocator->maintenance(true);
     }
 
+    if (archive->block_reader && !archive->block_reader->flush_cache()) {
+        durable = false;
+        if (!close_error) close_error = errno ? errno : EIO;
+    }
     delete archive->block_reader;
     archive->block_reader = nullptr;
 
@@ -1202,9 +1206,11 @@ struct WalTransactionGuard {
         }
     }
 
-    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
+    bool commit(compio_archive *archive) {
         if (!active || !wal) return true;
-        bool result = wal->commit_transaction(archive_file, max_wal_size);
+        // An earlier eviction failure must reach flush before the journal is cleared.
+        FILE *checkpoint_file = archive->block_reader->has_write_error() ? nullptr : archive->file;
+        bool result = wal->commit_transaction(checkpoint_file, archive->config.wal_max_size_bytes);
         active = false;
         return result;
     }
@@ -1563,7 +1569,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive)) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -2054,7 +2060,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive)) {
         errno = EIO;
         return 0;
     }
@@ -2306,7 +2312,7 @@ after_merge:
 
     validate_tree(archive->index, file, true);
 
-    if (!wal_tx_guard.commit(archive->file, archive->config.wal_max_size_bytes)) {
+    if (!wal_tx_guard.commit(archive)) {
         errno = EIO;
         return 0;
     }
@@ -2430,7 +2436,7 @@ static bool flush_impl(compio_archive *archive) {
 
     // Dirty blocks first: writing them updates the index nodes. Both caches
     // keep their contents, so a flush does not cost the reads that follow.
-    if (archive->block_reader) archive->block_reader->flush_cache();
+    if (archive->block_reader && !archive->block_reader->flush_cache()) durable = false;
     if (archive->block_reader) archive->block_reader->invalidate_temporary_index();
     if (archive->index && !archive->index->flush_cache()) durable = false;
 

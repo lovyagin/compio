@@ -31,47 +31,8 @@ struct context_t {
     std::mutex *io_mutex;
     WalManager *wal;
     compio_checksum_type checksum_type;
-    /**
-     * @brief Temporary in-memory substitution for BTree, to avoid excess BTree operations
-     *
-     * When storage_block_reader::create_block creates new block, it inserts new key-value pair
-     * into btree, but it sets tree_val::addr to zero, since we didn't call allocator::allocate
-     * yet. This allocation happens only in block destructor, because we don't know resulting
-     * size after compression before block destructor. Then, after that allocation,
-     * btree::update is called, to update tree_val::addr in btree to an actual address.
-     *
-     * That by itself seems fine, since if this block is still in cache (no btree::update
-     * happened yet, and tree_val::addr=0), then when storage_block_reader::read_block receives
-     * addr=0, it gets this block from cache, so we don't need to read it from file. And on the
-     * other hand, if block is no longer in cache, it means it's destructor got called, because
-     * otherwise it would mean that something like this is happening:
-     *
-     * ```
-     * block b1 = storage_block_reader::create_block(size, k1); // b1 added to cache
-     * block b2 = storage_block_reader::read_block(a2, k2); // b1 evicted from cache
-     * uint64_t b1_addr = btree.get(k1).addr; // it is actually 0, because b1 destructor was not
-     * called yet storage_block_reader::read_block(b1_addr, k1); // b1 not in cache, but addr=0
-     * is passed as an argument
-     * ```
-     *
-     * But this situation is weird, because why would we need to read block, that we already
-     * have? So it seems like there could be no problems.
-     *
-     * But the problem appears, because of how we use storage_block_reader in compio_write:
-     * firstly, we get many tree_vals from btree via btree::get_range, then we iterate through
-     * them and call storage_block_reader::read_block on their keys and addresses. But as we
-     * iterating through blocks, we update cache, and some blocks get evicted, which calls
-     * btree::update in block destructor. And if some block in the end of btree::get_range output
-     * got evicted before compio_write processed it, then compio_write will call
-     * storage_block_reader::read_block with invalid address and key, that is not in cache.
-     *
-     * That problem could be solved by making btree::get call in each iteration, since it's
-     * tree_val could be no longer valid. But since we don't want unnecessary btree calls for
-     * perfomance reasons, we use temporary_index, which stores actual addresses from block
-     * destructor. Key benefit of this approach is that we can clear that temporary index in the
-     * end of compio_write/read, so temporary_index is not big, and operations are faster that
-     * on btree.
-     */
+    // Range operations can hold addresses that become stale during cache eviction.
+    // Successful write-back records replacements until the operation finishes.
     std::map<tree_key, uint64_t> temporary_index;
     std::atomic<int> temp_index_refcount = 0;
     std::mutex temp_index_mutex;
@@ -96,9 +57,8 @@ struct context_t {
  *
  * Represents a single storage block that can be read from file, created in memory,
  * and automatically compressed when written back to storage. The block handles
- * compression/decompression transparently and manages its own lifecycle through
- * RAII - modified blocks are automatically compressed and written to file when
- * the block is destroyed.
+ * compression/decompression transparently.
+ * Modified blocks are written explicitly by the reader before eviction or checkpoint.
  *
  * Blocks are typically managed through storage_block_reader which provides
  * caching and handles the complex interaction between the block, file storage,
@@ -137,7 +97,7 @@ public:
      *
      * Creates a new block with the specified size, initially filled with uninitialized
      * data. The block is marked as modified and will be compressed and written to
-     * file when destroyed.
+     * file by the reader.
      *
      * @param context Reference to the storage context containing file, allocator, index, and
      * compressor
@@ -147,24 +107,17 @@ public:
      */
     block(context_t &context, const tree_key &key, uint64_t size, bool unused);
 
-    /**
-     * @brief Destructor - automatically compresses and writes modified blocks
-     *
-     * If the block has been modified and not removed, compresses the data using
-     * the configured compressor, allocates file space, writes the compressed data,
-     * and updates the B-tree index with the new file address. Also handles
-     * temporary index updates if enabled.
-     */
-    ~block();
+    // Write-back must be checked by the reader before destruction.
+    ~block() = default;
 
     /**
      * @brief Write the block to the archive if it has unsaved modifications
      *
      * Compresses the data, places it at a newly allocated address (the old
      * place is released) and records that address in the index. The block
-     * stays usable and is considered unmodified afterwards.
+     * stays usable and becomes unmodified only on success.
      */
-    void write_back();
+    bool write_back();
 
     /**
      * @brief Get read-only access to block data
@@ -178,7 +131,7 @@ public:
      *
      * Returns a non-const pointer to the block data, automatically marking
      * the block as modified. Any changes to the data will trigger compression
-     * and file writing when the block is destroyed.
+     * and file writing during eviction or flush.
      *
      * @return Pointer to the uncompressed block data that can be modified
      */
@@ -218,9 +171,8 @@ public:
     /**
      * @brief Mark the block for removal
      *
-     * Sets the removal flag. When the block is destroyed, it will not be
-     * written back to file and will be removed from the B-tree index.
-     * The file space will be deallocated by the caller.
+     * Prevents further write-back. The caller removes the index entry
+     * and deallocates the file space.
      */
     void remove();
 
@@ -294,7 +246,7 @@ public:
  *
  * When temporary index is enabled, caller is allowed to pass expired addresses to read_block if and
  * only if this address became expired after enabling of temporary index (which means, that block
- * destructor saved actual address into temporary index in destructor). This is used for optimized
+ * write-back saved the replacement address in the temporary index). This is used for optimized
  * processing of range of blocks (obtained from btree::get_range), without pulling their
  * actual addresses from btree before processing every single block.
  *
@@ -315,6 +267,10 @@ class storage_block_reader {
     cache::sharded_lru_2q_cache<tree_key, std::shared_ptr<block>, tree_key_comparator, shard_by_hash>
         cache;
     context_t context;
+    std::atomic<int> write_error{0};
+    std::atomic<bool> flush_failed{false};
+
+    bool prepare_eviction(const std::shared_ptr<block> &b);
 
 public:
     /**
@@ -369,16 +325,18 @@ public:
     /**
      * @brief Clear all blocks from the LRU cache
      *
-     * Forces all cached blocks to be written to file (if modified) and
-     * removes them from the cache. This is useful when you want to ensure
-     * all changes are persisted or when you need to free memory.
+     * Writes modified blocks and removes unpinned entries on success.
+     * Failed writes stay cached for retry.
      */
-    void clear_cache();
+    bool clear_cache();
 
     /**
      * @brief Write all modified blocks to the archive, keeping them cached
      */
-    void flush_cache();
+    bool flush_cache();
+
+    bool has_write_error() const { return write_error.load() != 0 || flush_failed.load(); }
+    bool cache_empty() const { return cache.size() == 0; }
 
     /**
      * @brief Set maintenance mode (unlocked updates)
