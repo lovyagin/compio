@@ -60,6 +60,14 @@ if (UNIX)
     add_executable(crash_consistency crash/crash_consistency.cpp)
     target_link_libraries(crash_consistency PRIVATE compio)
 
+    find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME crash_consistency_harness
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/crash/test_crash_consistency.py
+                    $<TARGET_FILE:crash_consistency>)
+        set_tests_properties(crash_consistency_harness PROPERTIES TIMEOUT 120)
+    endif()
+
     add_executable(index_corruption crash/index_corruption.cpp)
     target_link_libraries(index_corruption PRIVATE compio)
 endif()
