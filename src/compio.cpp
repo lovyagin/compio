@@ -1205,6 +1205,22 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
 #endif
 }
 
+namespace {
+
+struct TemporaryIndexGuard {
+    storage_block_reader &reader;
+
+    explicit TemporaryIndexGuard(storage_block_reader &reader) : reader(reader) {
+        reader.enable_temporary_index();
+    }
+    ~TemporaryIndexGuard() { reader.disable_temporary_index(); }
+
+    TemporaryIndexGuard(const TemporaryIndexGuard &) = delete;
+    TemporaryIndexGuard &operator=(const TemporaryIndexGuard &) = delete;
+};
+
+} // namespace
+
 // RAII guard for WAL transactions when not in batch mode
 struct WalTransactionGuard {
     compio::WalManager* wal;
@@ -1321,7 +1337,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         // Gaps are allowed now, we will fill them
     }
 
-    block_reader->enable_temporary_index();
+    const TemporaryIndexGuard temporary_index(*block_reader);
 
     auto range_it = range.begin();
 
@@ -1358,7 +1374,6 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                 WARNING_PRINT(
                     "warning: failed to decompress data (compressed block is corrupted)\n");
                 errno = EIO;
-                block_reader->disable_temporary_index();
                 return ptr_bytes_written;
             }
             assert(b->size() == val.size);
@@ -1393,7 +1408,6 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                 const auto tail_range = archive->index->get_range(tail_probe, tail_probe + 1);
                 if (!tail_range) {
                     errno = EIO;
-                    block_reader->disable_temporary_index();
                     return ptr_bytes_written;
                 }
                 if (!tail_range->empty()) {
@@ -1405,7 +1419,6 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                             WARNING_PRINT(
                                 "warning: failed to decompress data (compressed block is corrupted)\n");
                             errno = EIO;
-                            block_reader->disable_temporary_index();
                             return ptr_bytes_written;
                         }
 
@@ -1579,8 +1592,6 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         }
     }
 
-    block_reader->disable_temporary_index();
-
     file->cached_leaf = smart_infile_object<compio::index_node>();
 
     validate_tree(archive->index, file);
@@ -1648,8 +1659,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     auto p_ptr = reinterpret_cast<uint8_t *>(ptr);
     uint64_t ptr_bytes_read = 0;
 
-    // enable temporary index, so it will fix expired tree_vals
-    block_reader->enable_temporary_index();
+    const TemporaryIndexGuard temporary_index(*block_reader);
 
     bool retried_global_cache = false;
 
@@ -1740,8 +1750,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                 ptr_bytes_read += copy_size;
                 file->cursor += copy_size;
                 
-                // Don't disable temporary index, because loop continues
-                // In fact, we should disable it at loop end (which is outside loop)
                 continue;
             }
 
@@ -1832,8 +1840,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         file->cursor += copy_size;
     }
 
-    block_reader->disable_temporary_index();
-    
     // validate_tree is expensive and redundant here
     // validate_tree(archive->index, file);
 
@@ -2158,7 +2164,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     std::optional<tree_key> left_to_merge = std::nullopt;
     std::optional<tree_key> right_to_merge = std::nullopt;
 
-    block_reader->enable_temporary_index();
+    const TemporaryIndexGuard temporary_index(*block_reader);
     for (const auto &[key, val] : range) {
         DEBUG_PRINT("[CE]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                     val.size);
@@ -2167,7 +2173,6 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             // failed to decompress
             WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
             errno = EIO;
-            block_reader->disable_temporary_index();
             return bytes_erased;
         }
         assert(b->size() == val.size);
