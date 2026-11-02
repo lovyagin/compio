@@ -1670,31 +1670,32 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         
         // Cache miss?
         if (block_idx == -1) {
-             file->cached_leaf = archive->index->find_node(search_key);
-             if (!file->cached_leaf) {
-                  // Should not happen if root exists, unless empty tree
-                  // WARNING_PRINT("error: failed to find node for key\n");
-                  // break; 
-             } else {
-                 const auto& node = *readonly(file->cached_leaf, index_node);
-                 auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
-                 if (it != node.keys.begin()) {
-                    size_t idx = std::distance(node.keys.begin(), it) - 1;
-                    const auto& k = node.keys[idx];
-                    const auto& v = node.values[idx];
-                    if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
-                        block_idx = idx;
-                    }
-                 }
-             }
+            file->cached_leaf = archive->index->find_node(search_key);
+            if (!file->cached_leaf) {
+                errno = EIO;
+                break;
+            }
+            const auto& node = *readonly(file->cached_leaf, index_node);
+            auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
+            if (it != node.keys.begin()) {
+                size_t idx = std::distance(node.keys.begin(), it) - 1;
+                const auto& k = node.keys[idx];
+                const auto& v = node.values[idx];
+                if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
+                    block_idx = idx;
+                }
+            }
         }
         
         if (block_idx == -1) {
             // Check if we missed a block that spans across node boundary (or cache miss)
-            auto overlapping = archive->index->get_block(search_key);
-            if (overlapping) {
-                const auto& key = overlapping->first;
-                const auto& val = overlapping->second;
+            auto overlapping = archive->index->get_range(search_key, search_key + 1);
+            if (!overlapping) {
+                errno = EIO;
+                break;
+            }
+            if (!overlapping->empty()) {
+                const auto& [key, val] = overlapping->front();
                 const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
                 
                 if (!b) {
@@ -1738,9 +1739,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
             }
 
              // GAP or EOF
-             if (file->cached_leaf) {
-                  // debug print removed
-             }
              const auto& node = *readonly(file->cached_leaf, index_node);
              auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
              
@@ -1752,7 +1750,11 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                  const tree_key k_min = {file->hash, file->cursor};
                  const tree_key k_max = {file->hash, read_end};
                  auto range_opt = archive->index->get_range(k_min, k_max);
-                 if (range_opt && !range_opt->empty()) {
+                 if (!range_opt) {
+                     errno = EIO;
+                     break;
+                 }
+                 if (!range_opt->empty()) {
                       gap_end = std::min(gap_end, range_opt->front().first.pos);
                  }
              }

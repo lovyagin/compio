@@ -234,7 +234,7 @@ struct btree {
      * Used for optimizing sequential access by caching the resulting node.
      * 
      * @param key The key to look for
-     * @return shared_node The node containing the key range
+     * @return shared_node The node containing the key range, or empty on read failure
      */
     shared_node find_node(const tree_key &key);
 

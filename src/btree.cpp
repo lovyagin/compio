@@ -808,7 +808,7 @@ shared_node btree::read_root() { return read_node(readonly(archive_header, heade
 shared_node btree::find_node(const tree_key &key) {
     std::shared_lock<std::shared_mutex> lock(mutex);
     auto node = read_root();
-    while (!RO(node)->is_leaf) {
+    while (node && !RO(node)->is_leaf) {
         auto it = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key);
         if (it != RO(node)->keys.end() && *it == key) {
              return shared_node(nullptr, node.addr(), new index_node(*RO(node)), nullptr, true);
