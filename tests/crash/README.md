@@ -92,6 +92,8 @@ build_check/tests/crash_consistency --scenario=checkpoint-remove-flush --trials=
     --fill-holes=1 --keep=1
 build_check/tests/crash_consistency --scenario=checkpoint-remove-flush --trials=1 \
     --fill-holes=1 --control=1 --keep=1
+build_check/tests/crash_consistency --scenario=checkpoint-remove-flush --trials=1 \
+    --degree=2 --block=1024 --fill-holes=0 --keep=1
 ```
 
 Both header slots must remain byte-for-byte identical to the saved checkpoint;
@@ -102,9 +104,11 @@ option restrictions apply. Other platforms reject this scenario before creating
 artifacts.
 
 Currently, interrupted runs return `lost_flushed` (exit 1) with both physical
-release settings: the headers are intact, but their B-tree root was overwritten
-in place. Copy-on-write for index nodes is still required. The integration tests
-check boundary selection, classification against recovered size/hash, and replay;
+release settings. With the default degree, the headers are intact but the B-tree
+root was overwritten in place. With degree 2 and 1024-byte blocks, the root can
+remain intact while a descendant is overwritten. Copy-on-write for the full
+index path is required. The integration tests check boundary selection,
+classification against recovered size/hash, and replay;
 they allow this known failure and will also accept preserved data after a fix.
 This test covers process termination and does not simulate power loss.
 
