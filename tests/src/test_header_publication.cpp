@@ -864,6 +864,58 @@ TEST_P(HeaderPublicationTest, UnreadableGapRangeCannotReplaceDataWithZeros) {
     }
 }
 
+TEST_P(HeaderPublicationTest, UnreadableInsertIndexLeavesFileUnchanged) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    auto cfg = archive->config;
+    cfg.b_tree_degree = 2;
+    ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> data(32 * cfg.block_size, 'x');
+    const tree_key key{file->hash, 0};
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(archive);
+    auto leaf = archive->index->find_node(key);
+    ASSERT_TRUE(leaf);
+    const uint64_t leaf_addr = leaf.addr();
+    leaf = {};
+    const uint64_t root_addr = readonly(archive->header, compio::header)->index_root;
+    ASSERT_NE(root_addr, leaf_addr);
+    auto snapshot = [&]() {
+        std::vector<unsigned char> bytes(std::filesystem::file_size(path));
+        EXPECT_EQ(pread(fileno(archive->file), bytes.data(), bytes.size(), 0),
+                  static_cast<ssize_t>(bytes.size()));
+        return bytes;
+    };
+    const auto before = snapshot();
+    for (const uint64_t addr : {root_addr, leaf_addr}) {
+        SCOPED_TRACE(addr);
+        file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_seek(file, 1, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        ASSERT_TRUE(archive->index->clear_cache());
+        arm();
+        fault.target = addr;
+        errno = 0;
+        EXPECT_EQ(compio_insert("y", 1, file), 0u);
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(errno, EIO);
+        EXPECT_EQ(compio_tell(file), 1u);
+        EXPECT_EQ(file->size, data.size());
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_EQ(snapshot(), before);
+        ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        std::vector<unsigned char> actual(data.size());
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+        EXPECT_EQ(actual, data);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+}
+
 TEST_P(HeaderPublicationTest, CloseReportsCompactionFailureWithoutFinalPublication) {
     prepare_compaction(true);
     EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);

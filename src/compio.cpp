@@ -1887,14 +1887,13 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     WalTransactionGuard wal_tx_guard(wal_ptr);
 
     const tree_key cursor_key = {file->hash, file->cursor};
-    auto key_val = archive->index->get_block(cursor_key);
-    if (!key_val.has_value()) {
-        // get_block only reports a block the cursor is strictly inside of; a
-        // block that starts at the cursor is looked up by its exact key.
-        if (const auto at_cursor = archive->index->get(cursor_key)) {
-            key_val = std::make_pair(cursor_key, *at_cursor);
-        }
+    const auto cursor_range = archive->index->get_range(cursor_key, cursor_key + 1);
+    if (!cursor_range) {
+        errno = EIO;
+        return 0;
     }
+    std::optional<std::pair<tree_key, tree_val>> key_val;
+    if (!cursor_range->empty()) key_val = cursor_range->front();
     const uint64_t block_size = archive->config.block_size;
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
