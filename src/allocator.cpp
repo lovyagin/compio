@@ -1158,8 +1158,12 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
             return;
         }
 
-        val.addr = write_pos;
-        archive_->index->_update_impl(key, val);
+        const tree_val moved{write_pos, val.size};
+        if (!archive_->index->_update_impl(key, moved)) {
+            WARNING_PRINT("warning: perform_defragmentation: failed to update index at %" PRIu64 "\n", src);
+            return;
+        }
+        val = moved;
 
         placed_blocks.push_back({write_pos, block_size});
         write_pos += block_size;
