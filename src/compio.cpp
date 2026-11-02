@@ -679,6 +679,7 @@ static void end_auto_batch_if_active(compio_file *file);
 static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_impl(compio_archive *archive);
 static bool flush_archive_impl(compio_archive *archive);
+static void begin_batch_impl(compio_archive *archive);
 // Commit a batch and publish the header. Caller must hold archive->mutex.
 static bool end_batch_impl(compio_archive *archive);
 
@@ -749,12 +750,10 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
     
     // Start auto-batch when we reach the threshold
     if (!file->is_auto_batching && file->auto_batch_count >= 3) {
-        if (compio_begin_batch(file->archive) == COMPIO_SUCCESS) {
-            file->is_auto_batching = true;
-            file->auto_batch_count = 1; // Reset counter to count batched operations
-            file->archive->auto_batching_files.push_back(file);
-        }
-        // On failure, silently continue without auto-batching
+        begin_batch_impl(file->archive); // Archive lock already held
+        file->is_auto_batching = true;
+        file->auto_batch_count = 1; // Reset counter to count batched operations
+        file->archive->auto_batching_files.push_back(file);
     }
 }
 
@@ -869,6 +868,11 @@ static void invalidate_range_cache(compio_file *file) {
     file->cached_range_max = 0;
 }
 
+// Caller must hold archive->mutex so a batch cannot start during publication.
+static void begin_batch_impl(compio_archive *archive) {
+    if (archive->wal) archive->wal->begin_batch();
+}
+
 int compio_begin_batch(compio_archive *archive) {
     if (archive == nullptr) {
         WARNING_PRINT("warning: passed nullptr into compio_begin_batch\n");
@@ -882,10 +886,8 @@ int compio_begin_batch(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
-    // No need for external lock - WalManager has its own mutex
-    if (archive->wal) {
-        archive->wal->begin_batch();
-    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    begin_batch_impl(archive);
     return COMPIO_SUCCESS;
 }
 
@@ -947,6 +949,12 @@ int compio_defragment(compio_archive *archive) {
     if (archive->open_files_count > 0) {
         WARNING_PRINT("warning: compio_defragment called with %u open file(s)\n",
                        archive->open_files_count);
+        return COMPIO_ERROR;
+    }
+
+    if (archive->wal && archive->wal->get_batch_depth() > 0) {
+        WARNING_PRINT("warning: compio_defragment called with an active WAL batch\n");
+        errno = EBUSY;
         return COMPIO_ERROR;
     }
 

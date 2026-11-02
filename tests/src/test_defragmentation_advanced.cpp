@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <random>
@@ -418,6 +419,28 @@ TEST_F(ForceDefragTest, AutomaticMaintenancePreservesPublishedLayout) {
     ASSERT_NE(file, nullptr);
     EXPECT_EQ(read_file_bytes(file, data.size()), data);
     ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    EXPECT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+}
+
+TEST_F(ForceDefragTest, DefragmentRejectsActiveWalBatch) {
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.enable_wal = true;
+    auto *ar = compio_open_archive(fn, "w+", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_flush(ar);
+    const uint64_t sequence = readonly(ar->header, header)->sequence_id;
+    ASSERT_EQ(compio_begin_batch(ar), COMPIO_SUCCESS);
+    ASSERT_EQ(compio_begin_batch(ar), COMPIO_SUCCESS);
+    for (int depth = 2; depth > 0; --depth) {
+        errno = 0;
+        EXPECT_EQ(compio_defragment(ar), COMPIO_ERROR);
+        EXPECT_EQ(errno, EBUSY);
+        EXPECT_EQ(ar->wal->get_batch_depth(), depth);
+        EXPECT_EQ(readonly(ar->header, header)->sequence_id, sequence);
+        ASSERT_EQ(compio_end_batch(ar), COMPIO_SUCCESS);
+    }
+    EXPECT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
     EXPECT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
 }
 
