@@ -109,10 +109,13 @@ TEST_F(StatsAfterDefragTest, InvalidBlockMetadataCannotShrinkContainer) {
     ASSERT_EQ(fwrite(&invalid_signature, 1, 1, archive->file), 1u);
     ASSERT_EQ(fflush(archive->file), 0);
 
-    archive->allocator->force_defragmentation();
+    EXPECT_FALSE(archive->allocator->force_defragmentation());
     EXPECT_EQ(readonly(archive->header, header)->file_size, size);
     EXPECT_FALSE(archive->truncate_after_publish);
     EXPECT_EQ(archive->index->get(second_key), second_block);
+    const uint64_t sequence = readonly(archive->header, header)->sequence_id;
+    EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
+    EXPECT_EQ(readonly(archive->header, header)->sequence_id, sequence + 1);
 }
 
 TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {

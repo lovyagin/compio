@@ -750,20 +750,25 @@ void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint
     fflush(archive_->file);
 }
 
-void block_allocator::force_defragmentation() {
+bool block_allocator::force_defragmentation() {
     // Flush caches before locking allocator/index to avoid deadlock.
     // Block write-back locks allocator/index; pinned blocks cannot be relocated.
     if (archive_->file) {
         archive_->block_reader->set_maintenance_mode(true);
-        if (!archive_->block_reader->clear_cache() || !archive_->block_reader->cache_empty()) {
+        if (!archive_->block_reader->clear_cache()) {
             archive_->block_reader->set_maintenance_mode(false);
-            return;
+            return false;
+        }
+        if (!archive_->block_reader->cache_empty()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            errno = EBUSY;
+            return false;
         }
         // Use public clear_cache which handles its own locking if needed, 
         // or just relies on the fact we are the only thread (compio_defragment holds archive mutex).
         if (!archive_->index->clear_cache()) {
             archive_->block_reader->set_maintenance_mode(false);
-            return;
+            return false;
         }
     }
 
@@ -771,20 +776,22 @@ void block_allocator::force_defragmentation() {
     std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
 
     blocks_manager_.defragment();
+    bool success = true;
     if (archive_->file && archive_->index) {
-        perform_defragmentation(true);
-        compaction_floor_ = blocks_manager_.get_cached_fragmentation();
+        success = perform_defragmentation(true);
+        if (success) compaction_floor_ = blocks_manager_.get_cached_fragmentation();
     }
     last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
 
     if (archive_->file) {
         archive_->block_reader->set_maintenance_mode(false);
     }
+    return success;
 }
 
-void block_allocator::maintenance(bool at_checkpoint) {
+bool block_allocator::maintenance(bool at_checkpoint) {
     if (maintenance_suspended_ > 0) {
-        return;
+        return true;
     }
 
     uint8_t current_fragmentation = get_fragmentation();
@@ -804,20 +811,24 @@ void block_allocator::maintenance(bool at_checkpoint) {
         if (!index_lock.owns_lock()) {
              // If we can't lock the index, we skip defragmentation for now.
              // This avoids deadlocks when called from within a B-tree operation (which holds the lock).
-             return;
+             return true;
         }
 
         // Flush caches before locking allocator to avoid deadlock.
         // Block write-back calls allocate/deallocate which lock allocator_mutex.
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(true);
-            if (!archive_->block_reader->clear_cache() || !archive_->block_reader->cache_empty()) {
+            if (!archive_->block_reader->clear_cache()) {
                 archive_->block_reader->set_maintenance_mode(false);
-                return;
+                return false;
+            }
+            if (!archive_->block_reader->cache_empty()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return true;
             }
             if (!archive_->index->_clear_cache()) {
                 archive_->block_reader->set_maintenance_mode(false);
-                return;
+                return false;
             }
         }
 
@@ -827,16 +838,17 @@ void block_allocator::maintenance(bool at_checkpoint) {
             if (archive_->file) {
                 archive_->block_reader->set_maintenance_mode(false);
             }
-            return;
+            return true;
         }
 
+        bool success = true;
         if (blocks_manager_.get_cached_fragmentation() > threshold) {
             blocks_manager_.defragment();
 
             if (blocks_manager_.get_cached_fragmentation() > threshold) {
                 if (archive_->file && archive_->index) {
-                    perform_defragmentation(at_checkpoint);
-                    compaction_floor_ = blocks_manager_.get_cached_fragmentation();
+                    success = perform_defragmentation(at_checkpoint);
+                    if (success) compaction_floor_ = blocks_manager_.get_cached_fragmentation();
                 }
             }
         }
@@ -845,10 +857,12 @@ void block_allocator::maintenance(bool at_checkpoint) {
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(false);
         }
+        return success;
     } else {
         std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
         last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
     }
+    return true;
 }
 
 bool block_allocator::save_state(compio_archive *archive) {
@@ -930,10 +944,10 @@ static bool sync_file(FILE *file) {
 #endif
 }
 
-void block_allocator::perform_defragmentation(bool relocate_files_table) {
+bool block_allocator::perform_defragmentation(bool relocate_files_table) {
     // Compaction writes gaps in place. A gap can still belong to the previous
     // checkpoint even though it is absent from the current index.
-    if (!blocks_manager_.deferred_.empty()) return;
+    if (!blocks_manager_.deferred_.empty()) return true;
     // Flush all cached/dirty blocks to disk first so that every index entry
     // has a real physical address before we start moving data.
     // NOTE: This must be done by the caller (maintenance/force_defragmentation)
@@ -971,7 +985,8 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
     auto used_blocks_opt = archive_->index->_get_range_impl(key_min, key_max);
     if (!used_blocks_opt) {
         WARNING_PRINT("defragmentation aborted: index read failed\n");
-        return;
+        errno = EIO;
+        return false;
     }
     auto &used_blocks = *used_blocks_opt;
 
@@ -1006,7 +1021,8 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
 
         if (src < readonly(archive_->header, header)->disk_size()) {
             WARNING_PRINT("warning: perform_defragmentation: invalid block address %" PRIu64 "\n", src);
-            return;
+            errno = EIO;
+            return false;
         }
 
         // Read signature + compressed size from on-disk metadata. The signature
@@ -1017,26 +1033,28 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
             if (fseek64(archive_->file, static_cast<int64_t>(src), SEEK_SET) != 0 ||
                 fread(&sig, 1, 1, archive_->file) != 1) {
                 WARNING_PRINT("warning: perform_defragmentation: failed to read signature at %" PRIu64 "\n", src);
-                return;
+                return false;
             }
             const int64_t meta_offset = static_cast<int64_t>(src) + 2;
             if (fseek64(archive_->file, meta_offset, SEEK_SET) != 0 ||
                 lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
                 compressed_size == 0) {
                 WARNING_PRINT("warning: perform_defragmentation: failed to read metadata at %" PRIu64 "\n", src);
-                return;
+                return false;
             }
         }
         const uint64_t meta_size = storage_block::meta_size_for(sig);
         if (meta_size == 0) {
             WARNING_PRINT("warning: perform_defragmentation: bad signature %u at %" PRIu64 "\n", sig, src);
-            return;
+            errno = EIO;
+            return false;
         }
         const uint64_t container_end = readonly(archive_->header, header)->file_size;
         if (src >= container_end || compressed_size > container_end - src ||
             meta_size > container_end - src - compressed_size) {
             WARNING_PRINT("warning: perform_defragmentation: block exceeds container at %" PRIu64 "\n", src);
-            return;
+            errno = EIO;
+            return false;
         }
         block_sizes.push_back(meta_size + compressed_size);
     }
@@ -1155,13 +1173,14 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
 
         if (io_error) {
             WARNING_PRINT("warning: perform_defragmentation aborted due to I/O error\n");
-            return;
+            return false;
         }
 
         const tree_val moved{write_pos, val.size};
         if (!archive_->index->_update_impl(key, moved)) {
             WARNING_PRINT("warning: perform_defragmentation: failed to update index at %" PRIu64 "\n", src);
-            return;
+            errno = EIO;
+            return false;
         }
         val = moved;
 
@@ -1171,11 +1190,11 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
 
     // Flush all updated index nodes to disk BEFORE truncating the file.
     // If we crash after truncation but before index write, we lose data.
-    if (!archive_->index->_clear_cache()) return;
+    if (!archive_->index->_clear_cache()) return false;
 
     if (fflush(archive_->file) != 0 || !sync_file(archive_->file)) {
         WARNING_PRINT("warning: perform_defragmentation: failed to sync moved blocks\n");
-        return;
+        return false;
     }
 
     // The files table is an obstacle while blocks are being moved, so a table
@@ -1200,26 +1219,22 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
         };
 
         if (table_pos < ft_addr) {
-            bool movable = true;
             if (table_pos + ft_size > ft_addr) {
                 // The target overlaps the copy the durable header references.
                 // Park the table behind everything and make that copy durable
                 // first, so the overlapping write below cannot lose the table.
                 const uint64_t park_pos = readonly(archive_->header, header)->file_size;
-                movable = write_table(park_pos);
-                if (movable) {
-                    archive_->header->files_table_addr = park_pos;
-                    archive_->header->file_size = park_pos + ft_size;
-                    archive_->header->allocator_state_offset = 0;
-                    archive_->header->allocator_state_size = 0;
-                    ft_addr = park_pos;
-                    movable = archive_->publish_header && archive_->publish_header();
-                }
+                if (!write_table(park_pos)) return false;
+                archive_->header->files_table_addr = park_pos;
+                archive_->header->file_size = park_pos + ft_size;
+                archive_->header->allocator_state_offset = 0;
+                archive_->header->allocator_state_size = 0;
+                ft_addr = park_pos;
+                if (!archive_->publish_header || !archive_->publish_header()) return false;
             }
-            if (movable && write_table(table_pos)) {
-                archive_->header->files_table_addr = table_pos;
-                ft_addr = table_pos;
-            }
+            if (!write_table(table_pos)) return false;
+            archive_->header->files_table_addr = table_pos;
+            ft_addr = table_pos;
         }
     }
 
@@ -1290,6 +1305,7 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
     archive_->block_reader->invalidate_temporary_index();
     
     DEBUG_PRINT("[AL] perform_defragmentation complete. New file size: %" PRIu64 "\n", write_pos);
+    return true;
 }
 
 } // namespace compio

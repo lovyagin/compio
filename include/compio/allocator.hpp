@@ -273,8 +273,9 @@ public:
      * @brief Perform maintenance operations if needed
      * @param at_checkpoint True if the caller publishes a header right after the
      *        call; only then may a compaction relocate the files table
+     * @return False if cache write-back or compaction failed
      */
-    void maintenance(bool at_checkpoint = false);
+    bool maintenance(bool at_checkpoint = false);
 
     /**
      * @brief Suspend automatic maintenance operations (e.g. during file removal)
@@ -292,8 +293,9 @@ public:
     /**
      * @brief Force defragmentation unconditionally (ignores fragmentation threshold).
      * Use this for on-demand defragmentation via the public API.
+     * @return False if cache write-back or compaction failed
      */
-    void force_defragmentation();
+    bool force_defragmentation();
 
     /**
      * @brief Save allocator state to archive
@@ -353,7 +355,7 @@ private:
     /**
      * @brief Perform defragmentation of the storage
      */
-    void perform_defragmentation(bool relocate_files_table);
+    bool perform_defragmentation(bool relocate_files_table);
 
     friend class TestAllocatorAccess;
 };

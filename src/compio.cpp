@@ -953,7 +953,7 @@ int compio_defragment(compio_archive *archive) {
     // Write out pending changes first, so that the compaction works on the
     // final layout and the files table is not rewritten behind it afterwards.
     if (!flush_impl(archive)) return COMPIO_ERROR;
-    archive->allocator->force_defragmentation();
+    if (!archive->allocator->force_defragmentation()) return COMPIO_ERROR;
     // Publish the compacted layout right away: the file is only cut down to
     // its new size once a header describing that layout is durable.
     return flush_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
@@ -1044,8 +1044,10 @@ int compio_close_archive(compio_archive *archive) {
     int close_error = durable ? 0 : (errno ? errno : EIO);
 
     // Maintenance may change the layout after the initial flush.
-    if (durable && !archive->is_readonly() && archive->allocator) {
-        archive->allocator->maintenance(true);
+    if (durable && !archive->is_readonly() && archive->allocator &&
+        !archive->allocator->maintenance(true)) {
+        durable = false;
+        close_error = errno ? errno : EIO;
     }
 
     if (archive->block_reader && !archive->block_reader->flush_cache()) {

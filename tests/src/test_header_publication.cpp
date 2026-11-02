@@ -215,6 +215,31 @@ protected:
         ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
     }
 
+    void prepare_compaction(bool on_close = false) {
+        if (on_close) {
+            auto cfg = archive->config;
+            cfg.fragmentation_threshold = 0;
+            ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+            archive = compio_open_archive(path, "w+", &cfg);
+            ASSERT_NE(archive, nullptr);
+        }
+        const uint64_t hole = archive->allocator->allocate(65536);
+        ASSERT_NE(hole, UINT64_MAX);
+        write_file();
+        compio_flush(archive);
+        archive->allocator->deallocate(hole, 65536, false);
+        compio_flush(archive);
+        capture_header();
+        auto *file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        const auto value = archive->index->get({file->hash, 0});
+        ASSERT_TRUE(value);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        arm();
+        fault.target = value->addr;
+        fault.short_write_call = 1;
+    }
+
     void prepare_table_failure() {
         // An empty file changes only the table; clean caches do no I/O before it.
         auto *file = compio_open_file("empty", archive);
@@ -708,6 +733,32 @@ TEST_P(HeaderPublicationTest, DefragmentReportsInitialPublicationFailure) {
     EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
     expect_old_slot();
     retry();
+}
+
+TEST_P(HeaderPublicationTest, DefragmentReportsCompactionFailureWithoutFinalPublication) {
+    prepare_compaction();
+    EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence + 1);
+    fault = {};
+    clearerr(archive->file);
+    // Consume any retained node write-back error before cleanup retries close.
+    compio_flush(archive);
+}
+
+TEST_P(HeaderPublicationTest, CloseReportsCompactionFailureWithoutFinalPublication) {
+    prepare_compaction(true);
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+    archive = nullptr;
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    FILE *stream = fopen(path, "rb");
+    ASSERT_NE(stream, nullptr);
+    std::vector<unsigned char> actual(saved_header.size());
+    ASSERT_EQ(pread(fileno(stream), actual.data(), actual.size(), slot * actual.size()),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, saved_header);
+    EXPECT_EQ(fclose(stream), 0);
 }
 
 INSTANTIATE_TEST_SUITE_P(
