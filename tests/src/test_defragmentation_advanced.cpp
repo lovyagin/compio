@@ -21,7 +21,9 @@
 #include <vector>
 
 #include "compio/allocator.hpp"
+#include "compio/btree.hpp"
 #include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
 
 #include "test_util.hpp"
 
@@ -77,6 +79,41 @@ protected:
         remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
+
+TEST_F(StatsAfterDefragTest, InvalidBlockMetadataCannotShrinkContainer) {
+    const auto data = make_random_bytes(32768);
+    for (const char *name : {"first", "second", "third"}) {
+        auto *file = compio_open_file(name, archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+    compio_flush(archive);
+    ASSERT_EQ(compio_remove_file(archive, "first"), COMPIO_SUCCESS);
+    compio_flush(archive);
+
+    auto *second = compio_open_file("second", archive);
+    ASSERT_NE(second, nullptr);
+    const tree_key second_key{second->hash, 0};
+    const auto second_block = archive->index->get(second_key);
+    ASSERT_TRUE(second_block);
+    ASSERT_EQ(compio_close_file(second), COMPIO_SUCCESS);
+    auto *third = compio_open_file("third", archive);
+    ASSERT_NE(third, nullptr);
+    const auto invalid_block = archive->index->get({third->hash, 0});
+    ASSERT_TRUE(invalid_block);
+    ASSERT_EQ(compio_close_file(third), COMPIO_SUCCESS);
+    const uint64_t size = readonly(archive->header, header)->file_size;
+    ASSERT_EQ(fseek64(archive->file, invalid_block->addr, SEEK_SET), 0);
+    const unsigned char invalid_signature = 0;
+    ASSERT_EQ(fwrite(&invalid_signature, 1, 1, archive->file), 1u);
+    ASSERT_EQ(fflush(archive->file), 0);
+
+    archive->allocator->force_defragmentation();
+    EXPECT_EQ(readonly(archive->header, header)->file_size, size);
+    EXPECT_FALSE(archive->truncate_after_publish);
+    EXPECT_EQ(archive->index->get(second_key), second_block);
+}
 
 TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {
     // Write 4 files, erase 2, defrag.

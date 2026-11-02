@@ -997,14 +997,16 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
         }
     }
 
-    // Collect final positions of placed storage blocks for gap computation.
-    std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
-
-    for (auto &[key, val] : used_blocks) {
+    // Check every source before moving any block or changing an index entry.
+    std::vector<uint64_t> block_sizes;
+    block_sizes.reserve(used_blocks.size());
+    for (const auto &[key, val] : used_blocks) {
+        (void)key;
         const uint64_t src = val.addr;
 
         if (src < readonly(archive_->header, header)->disk_size()) {
-            continue;
+            WARNING_PRINT("warning: perform_defragmentation: invalid block address %" PRIu64 "\n", src);
+            return;
         }
 
         // Read signature + compressed size from on-disk metadata. The signature
@@ -1015,22 +1017,37 @@ void block_allocator::perform_defragmentation(bool relocate_files_table) {
             if (fseek64(archive_->file, static_cast<int64_t>(src), SEEK_SET) != 0 ||
                 fread(&sig, 1, 1, archive_->file) != 1) {
                 WARNING_PRINT("warning: perform_defragmentation: failed to read signature at %" PRIu64 "\n", src);
-                continue;
+                return;
             }
             const int64_t meta_offset = static_cast<int64_t>(src) + 2;
             if (fseek64(archive_->file, meta_offset, SEEK_SET) != 0 ||
                 lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
                 compressed_size == 0) {
                 WARNING_PRINT("warning: perform_defragmentation: failed to read metadata at %" PRIu64 "\n", src);
-                continue;
+                return;
             }
         }
         const uint64_t meta_size = storage_block::meta_size_for(sig);
         if (meta_size == 0) {
             WARNING_PRINT("warning: perform_defragmentation: bad signature %u at %" PRIu64 "\n", sig, src);
-            continue;
+            return;
         }
-        const uint64_t block_size = meta_size + compressed_size;
+        const uint64_t container_end = readonly(archive_->header, header)->file_size;
+        if (src >= container_end || compressed_size > container_end - src ||
+            meta_size > container_end - src - compressed_size) {
+            WARNING_PRINT("warning: perform_defragmentation: block exceeds container at %" PRIu64 "\n", src);
+            return;
+        }
+        block_sizes.push_back(meta_size + compressed_size);
+    }
+
+    // Collect final positions of placed storage blocks for gap computation.
+    std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
+
+    for (size_t block_index = 0; block_index < used_blocks.size(); ++block_index) {
+        auto &[key, val] = used_blocks[block_index];
+        const uint64_t src = val.addr;
+        const uint64_t block_size = block_sizes[block_index];
 
         // Ensure write_pos doesn't overlap with ANY reserved region (Files Table or B-tree nodes)
         while (true) {
