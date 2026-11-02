@@ -651,7 +651,9 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
  * Runs a full compaction immediately (regardless of the configured fragmentation
  * threshold): data blocks and the files table are moved towards the start of the
  * container and the file is truncated. Index nodes stay in place, so small gaps
- * in front of them may remain. All files of the archive must be closed.
+ * in front of them may remain. All files of the archive must be closed, and any
+ * active WAL batch must be ended before compaction; otherwise it fails with
+ * errno set to EBUSY.
  *
  * @param archive opened archive (write mode)
  * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure

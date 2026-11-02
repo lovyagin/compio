@@ -233,9 +233,13 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
                 self.assertEqual(values["headers_unchanged"], "0")
 
     def test_header_boundary_verdict_and_replay_match_recovered_contents(self):
-        for release in (0, 1):
-            with self.subTest(release=release):
-                result = self.run_header_cut(f"--fill-holes={release}", "--keep=1")
+        for release, block, degree in ((0, 4096, 16), (1, 4096, 16),
+                                       (0, 1024, 2), (1, 1024, 2)):
+            with self.subTest(release=release, block=block, degree=degree):
+                result = self.run_header_cut(
+                    f"--fill-holes={release}", f"--block={block}",
+                    f"--degree={degree}", "--keep=1"
+                )
                 self.assertIn(result.returncode, (0, 1), result.stdout + result.stderr)
                 directory, values = self.manifest(result.stdout)
                 self.assertEqual(values["mode"], "header-boundary")
@@ -257,7 +261,7 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0 if preserved else 1)
                 self.assertEqual(values["outcome"], "consistent" if preserved else "lost_flushed")
                 self.assertEqual(values["matched_prefix"], "0" if preserved else "-1")
-                if not preserved:
+                if not preserved and degree == 16:
                     self.assertEqual(values["root_unchanged"], "0")
                 original = (directory / "archive.compio").read_bytes()
                 checkpoint = (directory / "checkpoint.compio").read_bytes()

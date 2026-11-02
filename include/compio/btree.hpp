@@ -234,7 +234,7 @@ struct btree {
      * Used for optimizing sequential access by caching the resulting node.
      * 
      * @param key The key to look for
-     * @return shared_node The node containing the key range
+     * @return shared_node The node containing the key range, or empty on read failure
      */
     shared_node find_node(const tree_key &key);
 
@@ -278,9 +278,9 @@ struct btree {
      * compacting storage blocks.
      *
      * @param node_size Output: the fixed byte size of each node
-     * @return std::vector<uint64_t> Sorted vector of node addresses
+     * @return Sorted node addresses, or nullopt on read failure or invalid structure
      */
-    std::vector<uint64_t> collect_node_addresses(uint64_t &node_size);
+    std::optional<std::vector<uint64_t>> collect_node_addresses(uint64_t &node_size);
 
     /**
      * @brief Get a lock object for the B-Tree mutex
@@ -485,7 +485,7 @@ private:
 
     // Internal unlocked implementations for friend classes (block_allocator)
     bool _clear_cache();
-    std::vector<uint64_t> _collect_node_addresses(uint64_t &node_size);
+    std::optional<std::vector<uint64_t>> _collect_node_addresses(uint64_t &node_size);
     std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
     bool _update_impl(const tree_key &key, const tree_val &new_value);
 
@@ -538,6 +538,7 @@ private:
      * @return shared_node Smart pointer to the child node
      */
     shared_node read_child(shared_node &node, uint64_t idx);
+    shared_node read_child_view(const shared_node &node, uint64_t idx);
 
     /**
      * @brief Read the root node of the B-Tree

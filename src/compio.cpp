@@ -591,49 +591,52 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         }
         const auto& all_blocks = *all_blocks_opt;
 
-    // Suspend maintenance to avoid re-entry during block removal
-    // Use RAII guard to ensure maintenance is resumed even if an error occurs
-    struct MaintenanceGuard {
-        block_allocator* alloc;
-        MaintenanceGuard(block_allocator* a) : alloc(a) { if(alloc) alloc->suspend_maintenance(); }
-        ~MaintenanceGuard() { if(alloc) alloc->resume_maintenance(); }
-    } maintenance_guard(archive->allocator);
+        // Suspend maintenance to avoid re-entry during block removal.
+        struct MaintenanceGuard {
+            block_allocator* alloc;
+            MaintenanceGuard(block_allocator* a) : alloc(a) { if(alloc) alloc->suspend_maintenance(); }
+            ~MaintenanceGuard() { if(alloc) alloc->resume_maintenance(); }
+        } maintenance_guard(archive->allocator);
 
-    // Iterate over all blocks of the file
-    {
-        int64_t saved_pos = ftell64(archive->file);
+        const int64_t saved_pos = ftell64(archive->file);
+        struct removal_block {
+            std::shared_ptr<block> cached;
+            uint64_t disk_size = 0;
+        };
+        std::vector<removal_block> blocks(all_blocks.size());
 
-        // Deallocate all blocks and remove them from index
-        for (const auto &[key, val] : all_blocks) {
+        // A later unreadable block must not leave earlier blocks deleted.
+        for (size_t i = 0; i < all_blocks.size(); ++i) {
+            const auto &[key, val] = all_blocks[i];
+            bool valid = true;
             if (archive->block_reader && archive->block_reader->cache_contains(key)) {
-                 auto b = archive->block_reader->read_block(val.addr, key);
-                 archive->block_reader->remove_block(b);
-                 continue;
-            }
-
-            if (val.addr != 0) {
-                // Read storage_block metadata to get compressed size
+                blocks[i].cached = archive->block_reader->read_block(val.addr, key);
+                valid = static_cast<bool>(blocks[i].cached);
+            } else if (val.addr != 0) {
                 storage_block sb;
-                if (sb.read_from(archive->file, val.addr)) {
-                    // Remove block from B-tree index BEFORE deallocating.
-                    archive->index->remove(key);
-
-                    // Deallocate. Maintenance is suspended globally, so this won't trigger defrag.
-                    // Use overloaded deallocate with explicit false for perform_maintenance, although
-                    // suspended state also prevents it.
+                valid = sb.read_from(archive->file, val.addr);
+                if (valid) {
                     const uint64_t meta = sb.has_backref ? STORAGE_BLOCK_METASIZE_V2 : STORAGE_BLOCK_METASIZE;
-                    archive->allocator->deallocate(val.addr, meta + sb.size, false);
-                } else {
-                    WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
-                    if (saved_pos >= 0) {
-                        fseek64(archive->file, saved_pos, SEEK_SET);
-                    }
-                    errno = EIO;
-                    return -1;
+                    blocks[i].disk_size = meta + sb.size;
                 }
+            }
+            if (!valid) {
+                WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
+                if (saved_pos >= 0) fseek64(archive->file, saved_pos, SEEK_SET);
+                errno = EIO;
+                return -1;
+            }
+        }
+
+        for (size_t i = 0; i < all_blocks.size(); ++i) {
+            const auto &[key, val] = all_blocks[i];
+            if (blocks[i].cached) {
+                archive->block_reader->remove_block(blocks[i].cached);
             } else {
-                // Remove block from B-tree index (if addr is 0, it's still in index)
                 archive->index->remove(key);
+                if (blocks[i].disk_size != 0) {
+                    archive->allocator->deallocate(val.addr, blocks[i].disk_size, false);
+                }
             }
         }
 
@@ -642,7 +645,6 @@ int compio_remove_file(compio_archive *archive, const char *name) {
             fseek64(archive->file, saved_pos, SEEK_SET);
         }
     }
-    } // End if (file_size > 0)
     
     // Remove file from file table
     return archive->header->ftable.remove(name);
@@ -679,6 +681,7 @@ static void end_auto_batch_if_active(compio_file *file);
 static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_impl(compio_archive *archive);
 static bool flush_archive_impl(compio_archive *archive);
+static void begin_batch_impl(compio_archive *archive);
 // Commit a batch and publish the header. Caller must hold archive->mutex.
 static bool end_batch_impl(compio_archive *archive);
 
@@ -749,12 +752,10 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
     
     // Start auto-batch when we reach the threshold
     if (!file->is_auto_batching && file->auto_batch_count >= 3) {
-        if (compio_begin_batch(file->archive) == COMPIO_SUCCESS) {
-            file->is_auto_batching = true;
-            file->auto_batch_count = 1; // Reset counter to count batched operations
-            file->archive->auto_batching_files.push_back(file);
-        }
-        // On failure, silently continue without auto-batching
+        begin_batch_impl(file->archive); // Archive lock already held
+        file->is_auto_batching = true;
+        file->auto_batch_count = 1; // Reset counter to count batched operations
+        file->archive->auto_batching_files.push_back(file);
     }
 }
 
@@ -869,6 +870,11 @@ static void invalidate_range_cache(compio_file *file) {
     file->cached_range_max = 0;
 }
 
+// Caller must hold archive->mutex so a batch cannot start during publication.
+static void begin_batch_impl(compio_archive *archive) {
+    if (archive->wal) archive->wal->begin_batch();
+}
+
 int compio_begin_batch(compio_archive *archive) {
     if (archive == nullptr) {
         WARNING_PRINT("warning: passed nullptr into compio_begin_batch\n");
@@ -882,10 +888,8 @@ int compio_begin_batch(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
-    // No need for external lock - WalManager has its own mutex
-    if (archive->wal) {
-        archive->wal->begin_batch();
-    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    begin_batch_impl(archive);
     return COMPIO_SUCCESS;
 }
 
@@ -950,10 +954,16 @@ int compio_defragment(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
+    if (archive->wal && archive->wal->get_batch_depth() > 0) {
+        WARNING_PRINT("warning: compio_defragment called with an active WAL batch\n");
+        errno = EBUSY;
+        return COMPIO_ERROR;
+    }
+
     // Write out pending changes first, so that the compaction works on the
     // final layout and the files table is not rewritten behind it afterwards.
     if (!flush_impl(archive)) return COMPIO_ERROR;
-    archive->allocator->force_defragmentation();
+    if (!archive->allocator->force_defragmentation()) return COMPIO_ERROR;
     // Publish the compacted layout right away: the file is only cut down to
     // its new size once a header describing that layout is durable.
     return flush_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
@@ -1044,8 +1054,10 @@ int compio_close_archive(compio_archive *archive) {
     int close_error = durable ? 0 : (errno ? errno : EIO);
 
     // Maintenance may change the layout after the initial flush.
-    if (durable && !archive->is_readonly() && archive->allocator) {
-        archive->allocator->maintenance(true);
+    if (durable && !archive->is_readonly() && archive->allocator &&
+        !archive->allocator->maintenance(true)) {
+        durable = false;
+        close_error = errno ? errno : EIO;
     }
 
     if (archive->block_reader && !archive->block_reader->flush_cache()) {
@@ -1193,6 +1205,22 @@ static void validate_tree(btree *index, compio_file *file, bool allow_empty = fa
 #endif
 }
 
+namespace {
+
+struct TemporaryIndexGuard {
+    storage_block_reader &reader;
+
+    explicit TemporaryIndexGuard(storage_block_reader &reader) : reader(reader) {
+        reader.enable_temporary_index();
+    }
+    ~TemporaryIndexGuard() { reader.disable_temporary_index(); }
+
+    TemporaryIndexGuard(const TemporaryIndexGuard &) = delete;
+    TemporaryIndexGuard &operator=(const TemporaryIndexGuard &) = delete;
+};
+
+} // namespace
+
 // RAII guard for WAL transactions when not in batch mode
 struct WalTransactionGuard {
     compio::WalManager* wal;
@@ -1206,11 +1234,10 @@ struct WalTransactionGuard {
         }
     }
 
-    bool commit(compio_archive *archive) {
+    bool commit() {
         if (!active || !wal) return true;
-        // An earlier eviction failure must reach flush before the journal is cleared.
-        FILE *checkpoint_file = archive->block_reader->has_write_error() ? nullptr : archive->file;
-        bool result = wal->commit_transaction(checkpoint_file, archive->config.wal_max_size_bytes);
+        // Only a successful header publication makes the archive a safe WAL checkpoint.
+        bool result = wal->commit_transaction();
         active = false;
         return result;
     }
@@ -1310,7 +1337,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         // Gaps are allowed now, we will fill them
     }
 
-    block_reader->enable_temporary_index();
+    const TemporaryIndexGuard temporary_index(*block_reader);
 
     auto range_it = range.begin();
 
@@ -1347,7 +1374,6 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                 WARNING_PRINT(
                     "warning: failed to decompress data (compressed block is corrupted)\n");
                 errno = EIO;
-                block_reader->disable_temporary_index();
                 return ptr_bytes_written;
             }
             assert(b->size() == val.size);
@@ -1379,9 +1405,13 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
             // would make every sequentially written block maximum-sized.
             if (current_pos == file->size && current_pos > 0) {
                 const tree_key tail_probe{file->hash, current_pos - 1};
-                const auto tail_kv = archive->index->get_block(tail_probe);
-                if (tail_kv.has_value()) {
-                    const auto &[tail_key, tail_val] = tail_kv.value();
+                const auto tail_range = archive->index->get_range(tail_probe, tail_probe + 1);
+                if (!tail_range) {
+                    errno = EIO;
+                    return ptr_bytes_written;
+                }
+                if (!tail_range->empty()) {
+                    const auto &[tail_key, tail_val] = tail_range->front();
                     if (tail_key.hash == file->hash && tail_key.pos + tail_val.size == current_pos &&
                         tail_val.size < block_size) {
                         const auto tail_block = block_reader->read_block(tail_val.addr, tail_key);
@@ -1389,7 +1419,6 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                             WARNING_PRINT(
                                 "warning: failed to decompress data (compressed block is corrupted)\n");
                             errno = EIO;
-                            block_reader->disable_temporary_index();
                             return ptr_bytes_written;
                         }
 
@@ -1563,13 +1592,11 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         }
     }
 
-    block_reader->disable_temporary_index();
-
     file->cached_leaf = smart_infile_object<compio::index_node>();
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive)) {
+    if (!wal_tx_guard.commit()) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -1632,8 +1659,7 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
     auto p_ptr = reinterpret_cast<uint8_t *>(ptr);
     uint64_t ptr_bytes_read = 0;
 
-    // enable temporary index, so it will fix expired tree_vals
-    block_reader->enable_temporary_index();
+    const TemporaryIndexGuard temporary_index(*block_reader);
 
     bool retried_global_cache = false;
 
@@ -1661,31 +1687,32 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         
         // Cache miss?
         if (block_idx == -1) {
-             file->cached_leaf = archive->index->find_node(search_key);
-             if (!file->cached_leaf) {
-                  // Should not happen if root exists, unless empty tree
-                  // WARNING_PRINT("error: failed to find node for key\n");
-                  // break; 
-             } else {
-                 const auto& node = *readonly(file->cached_leaf, index_node);
-                 auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
-                 if (it != node.keys.begin()) {
-                    size_t idx = std::distance(node.keys.begin(), it) - 1;
-                    const auto& k = node.keys[idx];
-                    const auto& v = node.values[idx];
-                    if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
-                        block_idx = idx;
-                    }
-                 }
-             }
+            file->cached_leaf = archive->index->find_node(search_key);
+            if (!file->cached_leaf) {
+                errno = EIO;
+                break;
+            }
+            const auto& node = *readonly(file->cached_leaf, index_node);
+            auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
+            if (it != node.keys.begin()) {
+                size_t idx = std::distance(node.keys.begin(), it) - 1;
+                const auto& k = node.keys[idx];
+                const auto& v = node.values[idx];
+                if (k.hash == file->hash && k.pos <= file->cursor && k.pos + v.size > file->cursor) {
+                    block_idx = idx;
+                }
+            }
         }
         
         if (block_idx == -1) {
             // Check if we missed a block that spans across node boundary (or cache miss)
-            auto overlapping = archive->index->get_block(search_key);
-            if (overlapping) {
-                const auto& key = overlapping->first;
-                const auto& val = overlapping->second;
+            auto overlapping = archive->index->get_range(search_key, search_key + 1);
+            if (!overlapping) {
+                errno = EIO;
+                break;
+            }
+            if (!overlapping->empty()) {
+                const auto& [key, val] = overlapping->front();
                 const std::shared_ptr<const block> b = block_reader->read_block(val.addr, key);
                 
                 if (!b) {
@@ -1723,15 +1750,10 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                 ptr_bytes_read += copy_size;
                 file->cursor += copy_size;
                 
-                // Don't disable temporary index, because loop continues
-                // In fact, we should disable it at loop end (which is outside loop)
                 continue;
             }
 
              // GAP or EOF
-             if (file->cached_leaf) {
-                  // debug print removed
-             }
              const auto& node = *readonly(file->cached_leaf, index_node);
              auto it = std::upper_bound(node.keys.begin(), node.keys.end(), search_key);
              
@@ -1743,7 +1765,11 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
                  const tree_key k_min = {file->hash, file->cursor};
                  const tree_key k_max = {file->hash, read_end};
                  auto range_opt = archive->index->get_range(k_min, k_max);
-                 if (range_opt && !range_opt->empty()) {
+                 if (!range_opt) {
+                     errno = EIO;
+                     break;
+                 }
+                 if (!range_opt->empty()) {
                       gap_end = std::min(gap_end, range_opt->front().first.pos);
                  }
              }
@@ -1814,8 +1840,6 @@ uint64_t compio_read(void *ptr, uint64_t size, compio_file *file) {
         file->cursor += copy_size;
     }
 
-    block_reader->disable_temporary_index();
-    
     // validate_tree is expensive and redundant here
     // validate_tree(archive->index, file);
 
@@ -1876,14 +1900,13 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     WalTransactionGuard wal_tx_guard(wal_ptr);
 
     const tree_key cursor_key = {file->hash, file->cursor};
-    auto key_val = archive->index->get_block(cursor_key);
-    if (!key_val.has_value()) {
-        // get_block only reports a block the cursor is strictly inside of; a
-        // block that starts at the cursor is looked up by its exact key.
-        if (const auto at_cursor = archive->index->get(cursor_key)) {
-            key_val = std::make_pair(cursor_key, *at_cursor);
-        }
+    const auto cursor_range = archive->index->get_range(cursor_key, cursor_key + 1);
+    if (!cursor_range) {
+        errno = EIO;
+        return 0;
     }
+    std::optional<std::pair<tree_key, tree_val>> key_val;
+    if (!cursor_range->empty()) key_val = cursor_range->front();
     const uint64_t block_size = archive->config.block_size;
     const uint64_t block_size__minimum = archive->config.block_size__minimum;
     const uint64_t block_size__maximum = archive->config.block_size__maximum;
@@ -2060,7 +2083,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive)) {
+    if (!wal_tx_guard.commit()) {
         errno = EIO;
         return 0;
     }
@@ -2141,7 +2164,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     std::optional<tree_key> left_to_merge = std::nullopt;
     std::optional<tree_key> right_to_merge = std::nullopt;
 
-    block_reader->enable_temporary_index();
+    const TemporaryIndexGuard temporary_index(*block_reader);
     for (const auto &[key, val] : range) {
         DEBUG_PRINT("[CE]reading block ({%" PRIu64 ",%" PRIu64 "}-{%" PRIu64 ",%" PRIu64 "})\n", key.hash, key.pos, val.addr,
                     val.size);
@@ -2150,7 +2173,6 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
             // failed to decompress
             WARNING_PRINT("warning: failed to decompress data (compressed block is corrupted)\n");
             errno = EIO;
-            block_reader->disable_temporary_index();
             return bytes_erased;
         }
         assert(b->size() == val.size);
@@ -2312,7 +2334,7 @@ after_merge:
 
     validate_tree(archive->index, file, true);
 
-    if (!wal_tx_guard.commit(archive)) {
+    if (!wal_tx_guard.commit()) {
         errno = EIO;
         return 0;
     }

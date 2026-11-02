@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include <limits>
 #include <optional>
+#include <set>
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
@@ -271,7 +272,7 @@ bool btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
 
     for (std::size_t i = 0; i <= RO(node)->num_keys; ++i) {
         if (!RO(node)->is_leaf && (key_min < end) && (key_max > start)) {
-            auto child = read_child(node, i);
+            auto child = read_child_view(node, i);
             if (!child) return false;
             if (!_get_range(child, key_min, key_max, result)) return false;
         }
@@ -399,7 +400,7 @@ std::optional<tree_val> btree::get(const tree_key &key) {
             // DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
             return val;
         } else if (!RO(current)->is_leaf) {
-            current = read_child(current, idx);
+            current = read_child_view(current, idx);
             if (!current) return std::nullopt;
         } else {
             // DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
@@ -480,7 +481,7 @@ void btree::_print(shared_node node, uint64_t depth) {
     if (!node) return;
     for (std::size_t i = 0; i <= node->num_keys; ++i) {
         if (!node->is_leaf) {
-            _print(read_child(node, i), depth + 1);
+            _print(read_child_view(node, i), depth + 1);
         }
 
         if (i < node->num_keys) {
@@ -518,39 +519,50 @@ double btree::get_cache_hit_probability() const {
     return reader.get_cache_hit_probability();
 }
 
-std::vector<uint64_t> btree::collect_node_addresses(uint64_t &node_size) {
+std::optional<std::vector<uint64_t>> btree::collect_node_addresses(uint64_t &node_size) {
     std::shared_lock<std::shared_mutex> lock(mutex);
     return _collect_node_addresses(node_size);
 }
 
-std::vector<uint64_t> btree::_collect_node_addresses(uint64_t &node_size) {
+std::optional<std::vector<uint64_t>> btree::_collect_node_addresses(uint64_t &node_size) {
     node_size = INDEX_NODE_SIZE(degree);
     std::vector<uint64_t> addrs;
 
     uint64_t root_addr = readonly(archive_header, header)->index_root;
     if (root_addr == 0) return addrs;
 
-    // BFS traversal of all nodes.
+    const uint64_t file_size = readonly(archive_header, header)->file_size;
+    const uint64_t reserved_size = readonly(archive_header, header)->reserved_size();
+    std::set<uint64_t> visited;
     std::vector<uint64_t> queue;
     queue.push_back(root_addr);
 
     while (!queue.empty()) {
         uint64_t addr = queue.back();
         queue.pop_back();
+        if (addr < reserved_size || addr >= file_size || node_size > file_size - addr ||
+            !visited.insert(addr).second) {
+            errno = EIO;
+            return std::nullopt;
+        }
         addrs.push_back(addr);
 
         auto node = reader.read_node(addr);
+        if (!node) return std::nullopt;
         if (!RO(node)->is_leaf) {
             for (uint32_t i = 0; i <= RO(node)->num_keys; i++) {
-                uint64_t child_addr = RO(node)->children[i];
-                if (child_addr != 0) {
-                    queue.push_back(child_addr);
-                }
+                queue.push_back(RO(node)->children[i]);
             }
         }
     }
 
     std::sort(addrs.begin(), addrs.end());
+    for (size_t i = 1; i < addrs.size(); ++i) {
+        if (addrs[i] - addrs[i - 1] < node_size) {
+            errno = EIO;
+            return std::nullopt;
+        }
+    }
     return addrs;
 }
 
@@ -775,20 +787,37 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
     return child;
 }
 
+shared_node btree::read_child_view(const shared_node &node, uint64_t idx) {
+    assert(!RO(node)->is_leaf);
+    assert(idx <= RO(node)->num_keys);
+    auto child = read_node(RO(node)->children[idx]);
+    if (!child) return child;
+    const int64_t addition = RO(node)->key_additions[idx];
+    if (addition == 0) return child;
+
+    auto *copy = new index_node(*RO(child));
+    for (auto &key : copy->keys) key += addition;
+    if (!copy->is_leaf) {
+        for (auto &pending : copy->key_additions) pending += addition;
+    }
+    return shared_node(nullptr, child.addr(), copy, nullptr, true);
+}
+
 shared_node btree::read_root() { return read_node(readonly(archive_header, header)->index_root); }
 
 shared_node btree::find_node(const tree_key &key) {
     std::shared_lock<std::shared_mutex> lock(mutex);
     auto node = read_root();
-    while (!RO(node)->is_leaf) {
+    while (node && !RO(node)->is_leaf) {
         auto it = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key);
         if (it != RO(node)->keys.end() && *it == key) {
-             return node; // Key found in internal node!
+             return shared_node(nullptr, node.addr(), new index_node(*RO(node)), nullptr, true);
         }
         
         // key < *it. So child index is dist(begin, it).
         size_t i = std::distance(RO(node)->keys.begin(), it);
-        node = read_child(node, i);
+        node = read_child_view(node, i);
     }
-    return node;
+    if (!node) return node;
+    return shared_node(nullptr, node.addr(), new index_node(*RO(node)), nullptr, true);
 }

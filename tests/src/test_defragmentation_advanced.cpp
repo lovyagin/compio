@@ -15,13 +15,16 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <random>
 #include <vector>
 
 #include "compio/allocator.hpp"
+#include "compio/btree.hpp"
 #include "compio/compio_file.hpp"
+#include "compio/utils.hpp"
 
 #include "test_util.hpp"
 
@@ -77,6 +80,137 @@ protected:
         remove(fn); remove((std::string(fn) + ".wal").c_str());
     }
 };
+
+TEST_F(StatsAfterDefragTest, InvalidBlockMetadataCannotShrinkContainer) {
+    const auto data = make_random_bytes(32768);
+    for (const char *name : {"first", "second", "third"}) {
+        auto *file = compio_open_file(name, archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+    compio_flush(archive);
+    ASSERT_EQ(compio_remove_file(archive, "first"), COMPIO_SUCCESS);
+    compio_flush(archive);
+
+    auto *second = compio_open_file("second", archive);
+    ASSERT_NE(second, nullptr);
+    const tree_key second_key{second->hash, 0};
+    const auto second_block = archive->index->get(second_key);
+    ASSERT_TRUE(second_block);
+    ASSERT_EQ(compio_close_file(second), COMPIO_SUCCESS);
+    auto *third = compio_open_file("third", archive);
+    ASSERT_NE(third, nullptr);
+    const auto invalid_block = archive->index->get({third->hash, 0});
+    ASSERT_TRUE(invalid_block);
+    ASSERT_EQ(compio_close_file(third), COMPIO_SUCCESS);
+    const uint64_t size = readonly(archive->header, header)->file_size;
+    ASSERT_EQ(fseek64(archive->file, invalid_block->addr, SEEK_SET), 0);
+    const unsigned char invalid_signature = 0;
+    ASSERT_EQ(fwrite(&invalid_signature, 1, 1, archive->file), 1u);
+    ASSERT_EQ(fflush(archive->file), 0);
+
+    EXPECT_FALSE(archive->allocator->force_defragmentation());
+    EXPECT_EQ(readonly(archive->header, header)->file_size, size);
+    EXPECT_FALSE(archive->truncate_after_publish);
+    EXPECT_EQ(archive->index->get(second_key), second_block);
+    const uint64_t sequence = readonly(archive->header, header)->sequence_id;
+    EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
+    EXPECT_EQ(readonly(archive->header, header)->sequence_id, sequence + 1);
+}
+
+enum class source_corruption { alias, overlap, second_header, index, files_table, allocator_state };
+
+class CompactionSourceTest : public StatsAfterDefragTest,
+                             public ::testing::WithParamInterface<source_corruption> {};
+
+TEST_P(CompactionSourceTest, RejectsInvalidRangesBeforeMovingData) {
+    ASSERT_NE(archive->allocator->allocate(65536), UINT64_MAX);
+    const auto data = make_random_bytes(512);
+    for (const char *name : {"first", "second"}) {
+        auto *file = compio_open_file(name, archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+    compio_flush(archive);
+    auto entries = archive->index->get_range({}, {UINT64_MAX, UINT64_MAX});
+    ASSERT_TRUE(entries);
+    ASSERT_EQ(entries->size(), 2u);
+    std::sort(entries->begin(), entries->end(),
+              [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
+
+    // A valid layout may have index nodes after storage blocks.
+    ASSERT_TRUE(archive->index->clear_cache());
+    index_node root(archive->config.b_tree_degree);
+    ASSERT_TRUE(root.read_from(archive->file, readonly(archive->header, header)->index_root));
+    const uint64_t root_addr = archive->allocator->allocate(INDEX_NODE_SIZE(archive->config.b_tree_degree));
+    ASSERT_NE(root_addr, UINT64_MAX);
+    ASSERT_TRUE(root.write_to(archive->file, root_addr));
+    archive->header->index_root = root_addr;
+
+    const auto &[first_key, first] = entries->front();
+    const auto &[last_key, last] = entries->back();
+    const auto &hdr = readonly(archive->header, header);
+    uint64_t metadata_addr = 0;
+    switch (GetParam()) {
+    case source_corruption::alias:
+        ASSERT_TRUE(archive->index->update(last_key, first));
+        break;
+    case source_corruption::overlap:
+        metadata_addr = first.addr;
+        break;
+    case source_corruption::second_header: {
+        const uint64_t addr = hdr->disk_size();
+        ASSERT_EQ(fseek64(archive->file, first.addr, SEEK_SET), 0);
+        std::vector<uint8_t> bytes(storage_block::meta_size_for(storage_block::signature_backref) + 1);
+        ASSERT_EQ(fread(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        std::fill(bytes.begin() + 2, bytes.begin() + 2 + sizeof(uint64_t), 0);
+        bytes[2] = 1;
+        ASSERT_EQ(fseek64(archive->file, addr, SEEK_SET), 0);
+        ASSERT_EQ(fwrite(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        ASSERT_TRUE(archive->index->update(first_key, {addr, first.size}));
+        break;
+    }
+    case source_corruption::index:
+    case source_corruption::files_table:
+    case source_corruption::allocator_state:
+        metadata_addr = last.addr;
+        break;
+    }
+    if (metadata_addr != 0) {
+        const uint64_t target = GetParam() == source_corruption::overlap ? last.addr :
+                                GetParam() == source_corruption::index ? root_addr :
+                                GetParam() == source_corruption::files_table ? hdr->files_table_addr :
+                                hdr->allocator_state_offset;
+        ASSERT_GT(target, metadata_addr);
+        const uint64_t size = target - metadata_addr + 1 -
+                              storage_block::meta_size_for(storage_block::signature_backref);
+        ASSERT_EQ(fseek64(archive->file, metadata_addr + 2, SEEK_SET), 0);
+        ASSERT_EQ(lendian_fwrite(&size, sizeof(size), 1, archive->file), 1u);
+    }
+    ASSERT_TRUE(archive->index->clear_cache());
+    ASSERT_EQ(fflush(archive->file), 0);
+    const uint64_t logical_end = hdr->file_size;
+    auto snapshot = [&]() {
+        std::vector<uint8_t> bytes(std::filesystem::file_size(fn));
+        EXPECT_EQ(fseek64(archive->file, 0, SEEK_SET), 0);
+        EXPECT_EQ(fread(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        return bytes;
+    };
+    const auto before = snapshot();
+    errno = 0;
+    EXPECT_FALSE(archive->allocator->force_defragmentation());
+    EXPECT_EQ(errno, EIO);
+    EXPECT_EQ(hdr->file_size, logical_end);
+    EXPECT_FALSE(archive->truncate_after_publish);
+    EXPECT_EQ(snapshot(), before);
+}
+
+INSTANTIATE_TEST_SUITE_P(CorruptSources, CompactionSourceTest,
+                        ::testing::Values(source_corruption::alias, source_corruption::overlap,
+                                          source_corruption::second_header, source_corruption::index,
+                                          source_corruption::files_table, source_corruption::allocator_state));
 
 TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {
     // Write 4 files, erase 2, defrag.
@@ -342,6 +476,65 @@ TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
         << "force_defragmentation() must always defrag";
 
     compio_close_archive(ar);
+}
+
+TEST_F(ForceDefragTest, AutomaticMaintenancePreservesPublishedLayout) {
+    auto *ar = open_defrag_archive(fn, 0);
+    ASSERT_NE(ar, nullptr);
+    const uint64_t hole = ar->allocator->allocate(65536);
+    ASSERT_NE(hole, UINT64_MAX);
+    const auto data = make_random_bytes(32768, 13);
+    auto *file = compio_open_file("data", ar);
+    ASSERT_NE(file, nullptr);
+    const tree_key key{file->hash, 0};
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(ar);
+    ar->allocator->deallocate(hole, 65536, false);
+    compio_flush(ar);
+    const auto published_block = ar->index->get(key);
+    ASSERT_TRUE(published_block);
+    const uint64_t size = readonly(ar->header, header)->file_size;
+    const uint64_t sequence = readonly(ar->header, header)->sequence_id;
+    ASSERT_GT(ar->allocator->get_fragmentation(), 0);
+
+    EXPECT_TRUE(ar->allocator->maintenance());
+    EXPECT_EQ(ar->index->get(key), published_block);
+    EXPECT_EQ(readonly(ar->header, header)->file_size, size);
+    EXPECT_EQ(readonly(ar->header, header)->sequence_id, sequence);
+    EXPECT_FALSE(ar->truncate_after_publish);
+
+    ASSERT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
+    const auto moved = ar->index->get(key);
+    ASSERT_TRUE(moved);
+    EXPECT_LT(moved->addr, published_block->addr);
+    file = compio_open_file("data", ar);
+    ASSERT_NE(file, nullptr);
+    EXPECT_EQ(read_file_bytes(file, data.size()), data);
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    EXPECT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+}
+
+TEST_F(ForceDefragTest, DefragmentRejectsActiveWalBatch) {
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.enable_wal = true;
+    auto *ar = compio_open_archive(fn, "w+", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_flush(ar);
+    const uint64_t sequence = readonly(ar->header, header)->sequence_id;
+    ASSERT_EQ(compio_begin_batch(ar), COMPIO_SUCCESS);
+    ASSERT_EQ(compio_begin_batch(ar), COMPIO_SUCCESS);
+    for (int depth = 2; depth > 0; --depth) {
+        errno = 0;
+        EXPECT_EQ(compio_defragment(ar), COMPIO_ERROR);
+        EXPECT_EQ(errno, EBUSY);
+        EXPECT_EQ(ar->wal->get_batch_depth(), depth);
+        EXPECT_EQ(readonly(ar->header, header)->sequence_id, sequence);
+        ASSERT_EQ(compio_end_batch(ar), COMPIO_SUCCESS);
+    }
+    EXPECT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
+    EXPECT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
 }
 
 // ---------------------------------------------------------------------------

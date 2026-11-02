@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <filesystem>
@@ -213,6 +214,31 @@ protected:
         const std::string data(4096, 'x');
         ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
         ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+
+    void prepare_compaction(bool on_close = false) {
+        if (on_close) {
+            auto cfg = archive->config;
+            cfg.fragmentation_threshold = 0;
+            ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+            archive = compio_open_archive(path, "w+", &cfg);
+            ASSERT_NE(archive, nullptr);
+        }
+        const uint64_t hole = archive->allocator->allocate(65536);
+        ASSERT_NE(hole, UINT64_MAX);
+        write_file();
+        compio_flush(archive);
+        archive->allocator->deallocate(hole, 65536, false);
+        compio_flush(archive);
+        capture_header();
+        auto *file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        const auto value = archive->index->get({file->hash, 0});
+        ASSERT_TRUE(value);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        arm();
+        fault.target = value->addr;
+        fault.short_write_call = 1;
     }
 
     void prepare_table_failure() {
@@ -708,6 +734,290 @@ TEST_P(HeaderPublicationTest, DefragmentReportsInitialPublicationFailure) {
     EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
     expect_old_slot();
     retry();
+}
+
+TEST_P(HeaderPublicationTest, DefragmentReportsCompactionFailureWithoutFinalPublication) {
+    prepare_compaction();
+    EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence + 1);
+    fault = {};
+    clearerr(archive->file);
+    // Consume any retained node write-back error before cleanup retries close.
+    compio_flush(archive);
+}
+
+TEST_P(HeaderPublicationTest, UnreadableIndexAbortsCompactionWithoutFinalPublication) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    write_file();
+    compio_flush(archive);
+    capture_header();
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence + 1);
+    fault = {};
+    clearerr(archive->file);
+}
+
+TEST_P(HeaderPublicationTest, UnreadableIndexStopsReadWithoutAdvancingCursor) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    auto cfg = archive->config;
+    cfg.b_tree_degree = 2;
+    ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> data(32 * cfg.block_size, 'x');
+    const compio::tree_key key{file->hash, 0};
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(archive);
+    auto leaf = archive->index->find_node(key);
+    ASSERT_TRUE(leaf);
+    const uint64_t leaf_addr = leaf.addr();
+    leaf = {};
+    const uint64_t root_addr = readonly(archive->header, compio::header)->index_root;
+    ASSERT_NE(leaf_addr, root_addr);
+    for (const uint64_t addr : {root_addr, leaf_addr}) {
+        SCOPED_TRACE(addr);
+        file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_TRUE(archive->index->clear_cache());
+        arm();
+        fault.target = addr;
+        std::vector<unsigned char> actual(data.size(), 0xA5);
+        errno = 0;
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), 0u);
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(errno, EIO);
+        EXPECT_EQ(compio_tell(file), 0u);
+        EXPECT_EQ(actual, std::vector<unsigned char>(data.size(), 0xA5));
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), data.size());
+        EXPECT_EQ(actual, data);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+}
+
+TEST_P(HeaderPublicationTest, UnreadableGapRangeCannotReplaceDataWithZeros) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    auto cfg = archive->config;
+    cfg.b_tree_degree = 2;
+    ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    auto *file = compio_open_file("sparse", archive);
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> block(cfg.block_size, 'x');
+    std::vector<unsigned char> expected(63 * cfg.block_size, 0);
+    for (uint64_t i = 0; i < 32; ++i) {
+        const uint64_t pos = 2 * i * cfg.block_size;
+        ASSERT_EQ(compio_seek(file, pos, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        ASSERT_EQ(compio_write(block.data(), block.size(), file), block.size());
+        std::copy(block.begin(), block.end(), expected.begin() + pos);
+    }
+    const uint64_t hash = file->hash;
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(archive);
+    auto first = archive->index->find_node({hash, 0});
+    ASSERT_TRUE(first);
+    const auto &node = *readonly(first, index_node);
+    ASSERT_FALSE(node.keys.empty());
+    const uint64_t start = node.keys.back().pos + node.values.back().size;
+    auto gap = archive->index->find_node({hash, start});
+    ASSERT_TRUE(gap);
+    ASSERT_EQ(gap.addr(), first.addr());
+    auto last = archive->index->find_node({hash, UINT64_C(62) * cfg.block_size});
+    ASSERT_TRUE(last);
+    const uint64_t target = last.addr();
+    ASSERT_NE(target, first.addr());
+    first = {};
+    gap = {};
+    last = {};
+    for (const uint64_t offset : {start, UINT64_C(0)}) {
+        SCOPED_TRACE(offset);
+        file = compio_open_file("sparse", archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_seek(file, offset, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        ASSERT_TRUE(archive->index->clear_cache());
+        arm();
+        fault.target = target;
+        std::vector<unsigned char> actual(expected.size() - offset, 0xA5);
+        const uint64_t prefix = start - offset;
+        auto unchanged = actual;
+        std::copy(expected.begin() + offset, expected.begin() + start, unchanged.begin());
+        errno = 0;
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), prefix);
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(errno, EIO);
+        EXPECT_EQ(compio_tell(file), start);
+        EXPECT_EQ(actual, unchanged);
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_EQ(compio_read(actual.data() + prefix, actual.size() - prefix, file), actual.size() - prefix);
+        EXPECT_EQ(actual, std::vector<unsigned char>(expected.begin() + offset, expected.end()));
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+}
+
+TEST_P(HeaderPublicationTest, UnreadableInsertIndexLeavesFileUnchanged) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    auto cfg = archive->config;
+    cfg.b_tree_degree = 2;
+    ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> data(32 * cfg.block_size, 'x');
+    const tree_key key{file->hash, 0};
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(archive);
+    auto leaf = archive->index->find_node(key);
+    ASSERT_TRUE(leaf);
+    const uint64_t leaf_addr = leaf.addr();
+    leaf = {};
+    const uint64_t root_addr = readonly(archive->header, compio::header)->index_root;
+    ASSERT_NE(root_addr, leaf_addr);
+    auto snapshot = [&]() {
+        std::vector<unsigned char> bytes(std::filesystem::file_size(path));
+        EXPECT_EQ(pread(fileno(archive->file), bytes.data(), bytes.size(), 0),
+                  static_cast<ssize_t>(bytes.size()));
+        return bytes;
+    };
+    const auto before = snapshot();
+    for (const uint64_t addr : {root_addr, leaf_addr}) {
+        SCOPED_TRACE(addr);
+        file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_seek(file, 1, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        ASSERT_TRUE(archive->index->clear_cache());
+        arm();
+        fault.target = addr;
+        errno = 0;
+        EXPECT_EQ(compio_insert("y", 1, file), 0u);
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(errno, EIO);
+        EXPECT_EQ(compio_tell(file), 1u);
+        EXPECT_EQ(file->size, data.size());
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_EQ(snapshot(), before);
+        ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        std::vector<unsigned char> actual(data.size());
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+        EXPECT_EQ(actual, data);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+}
+
+TEST_P(HeaderPublicationTest, UnreadableAppendIndexLeavesFileUnchangedAndRetries) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    write_file();
+    compio_flush(archive);
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const uint64_t size = file->size;
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), COMPIO_SUCCESS);
+    ASSERT_TRUE(archive->index->clear_cache());
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    errno = 0;
+    EXPECT_EQ(compio_write("y", 1, file), 0u);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(errno, EIO);
+    EXPECT_EQ(compio_tell(file), size);
+    EXPECT_EQ(file->size, size);
+    fault = {};
+    clearerr(archive->file);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+    std::string actual(size, '\0');
+    EXPECT_EQ(compio_read(actual.data(), actual.size(), file), size);
+    EXPECT_EQ(actual, std::string(size, 'x'));
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), COMPIO_SUCCESS);
+    EXPECT_EQ(compio_write("y", 1, file), 1u);
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    const int close_result = compio_close_archive(archive);
+    archive = nullptr;
+    ASSERT_EQ(close_result, COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "r", nullptr);
+    ASSERT_NE(archive, nullptr);
+    file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    actual.resize(size + 1);
+    EXPECT_EQ(compio_read(actual.data(), actual.size(), file), size + 1);
+    EXPECT_EQ(actual, std::string(size, 'x') + 'y');
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+}
+
+TEST_P(HeaderPublicationTest, UnreadableRemovalBlockPreservesEarlierBlocksAndRetries) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> data(2 * archive->config.block_size, 'x');
+    const uint64_t hash = file->hash;
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(archive);
+    const tree_key min{hash, 0};
+    const tree_key max{hash, UINT64_MAX};
+    const auto before = archive->index->get_range(min, max);
+    ASSERT_TRUE(before);
+    ASSERT_EQ(before->size(), 2u);
+    for (const bool cache_first : {false, true}) {
+        SCOPED_TRACE(cache_first);
+        ASSERT_TRUE(archive->block_reader->clear_cache());
+        if (cache_first) {
+            file = compio_open_file("data", archive);
+            ASSERT_NE(file, nullptr);
+            std::vector<unsigned char> first(archive->config.block_size);
+            ASSERT_EQ(compio_read(first.data(), first.size(), file), first.size());
+            ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        }
+        arm();
+        fault.target = before->back().second.addr;
+        errno = 0;
+        EXPECT_EQ(compio_remove_file(archive, "data"), -1);
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(errno, EIO);
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_EQ(archive->index->get_range(min, max), before);
+        file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        EXPECT_EQ(file->size, data.size());
+        std::vector<unsigned char> actual(data.size(), 0);
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+        EXPECT_EQ(actual, data);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+    EXPECT_EQ(compio_remove_file(archive, "data"), COMPIO_SUCCESS);
+    const int close_result = compio_close_archive(archive);
+    archive = nullptr;
+    ASSERT_EQ(close_result, COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "r", nullptr);
+    ASSERT_NE(archive, nullptr);
+    EXPECT_EQ(readonly(archive->header, compio::header)->ftable.find("data"), nullptr);
+}
+
+TEST_P(HeaderPublicationTest, CloseReportsCompactionFailureWithoutFinalPublication) {
+    prepare_compaction(true);
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+    archive = nullptr;
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    FILE *stream = fopen(path, "rb");
+    ASSERT_NE(stream, nullptr);
+    std::vector<unsigned char> actual(saved_header.size());
+    ASSERT_EQ(pread(fileno(stream), actual.data(), actual.size(), slot * actual.size()),
+              static_cast<ssize_t>(actual.size()));
+    EXPECT_EQ(actual, saved_header);
+    EXPECT_EQ(fclose(stream), 0);
 }
 
 INSTANTIATE_TEST_SUITE_P(

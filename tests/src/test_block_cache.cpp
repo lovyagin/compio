@@ -208,6 +208,51 @@ TEST(SharedCacheBudgetTest, LeastRecentlyUsedShardIsEvictedFirst) {
     for (int i = 0; i < 64; i++) EXPECT_FALSE(c.exists({1, i})) << i;
 }
 
+TEST(BlockCacheTest, EraseDoesNotRedirectReadsAfterOperationEnds) {
+    for (const bool nested : {false, true}) {
+        SCOPED_TRACE(nested);
+        char fn[256];
+        generate_tmp_fn(fn, sizeof(fn));
+        auto cfg = counting_config();
+        cfg.auto_batch_size = 0;
+        compio_archive *ar = compio_open_archive(fn, "w+", &cfg);
+        ASSERT_NE(ar, nullptr);
+        auto *file = compio_open_file("data", ar);
+        ASSERT_NE(file, nullptr);
+        const std::string data = "checkpoint data";
+        const compio::tree_key key{file->hash, 0};
+        ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+        compio_flush(ar);
+        const auto old = ar->index->get(key);
+        ASSERT_TRUE(old);
+        if (nested) ar->block_reader->enable_temporary_index();
+        ASSERT_EQ(compio_seek(file, 1, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+        ASSERT_EQ(compio_erase(1, file), 1u);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        ASSERT_TRUE(ar->block_reader->clear_cache());
+        const auto current = ar->index->get(key);
+        ASSERT_TRUE(current);
+        ASSERT_NE(current->addr, old->addr);
+        if (nested) {
+            auto redirected = ar->block_reader->read_block(old->addr, key);
+            ASSERT_NE(redirected, nullptr);
+            EXPECT_EQ(redirected->addr(), current->addr);
+            redirected.reset();
+            ar->block_reader->disable_temporary_index();
+            ASSERT_TRUE(ar->block_reader->clear_cache());
+        }
+        auto snapshot = ar->block_reader->read_block(old->addr, key);
+        ASSERT_NE(snapshot, nullptr);
+        EXPECT_EQ(snapshot->size(), data.size());
+        const auto *bytes = static_cast<const compio::block &>(*snapshot).data();
+        EXPECT_EQ(std::string(reinterpret_cast<const char *>(bytes), snapshot->size()), data);
+        snapshot.reset();
+        EXPECT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+        remove(fn);
+        remove((std::string(fn) + ".wal").c_str());
+    }
+}
+
 // One logical file used to get 1/64 of cache_size__blocks, because the cache is
 // sharded by file and every shard had a fixed share.
 TEST(BlockCacheTest, SingleFileUsesWholeBlockCache) {
