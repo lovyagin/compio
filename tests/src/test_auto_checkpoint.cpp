@@ -32,7 +32,7 @@ protected:
     }
 };
 
-TEST_F(AutoCheckpointTest, CheckpointOnSizeLimit) {
+TEST_F(AutoCheckpointTest, RetainWalUntilHeaderPublication) {
     compio_config config;
     compio_build_default_config(&config);
     
@@ -57,21 +57,23 @@ TEST_F(AutoCheckpointTest, CheckpointOnSizeLimit) {
     for(size_t i=0; i<data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
     
     // Write enough data to guarantee at least one WAL commit.
-    // With wal_max_size_bytes=1, auto-checkpoint should trigger
-    // regardless of compression/caching differences across builds.
+    // The size limit must not discard WAL while the published header is old.
     
     uint64_t written = compio_write(data.data(), data.size(), file);
     ASSERT_EQ(written, data.size());
     
-    // Check WAL size. Should be 0.
+    // Eviction writes and commits records, but the header is not yet published.
     uint64_t wal_size = get_wal_size();
-    EXPECT_EQ(wal_size, 0);
+    EXPECT_GT(wal_size, 0);
     
     // Verify data
     compio_seek(file, 0, COMPIO_SEEK_SET);
     std::vector<uint8_t> read_buf(2000);
     ASSERT_EQ(compio_read(read_buf.data(), 2000, file), 2000);
     EXPECT_EQ(std::memcmp(read_buf.data(), data.data(), 2000), 0);
+
+    compio_flush(archive);
+    EXPECT_EQ(get_wal_size(), 0);
     
     compio_close_file(file);
     compio_close_archive(archive);

@@ -1206,11 +1206,10 @@ struct WalTransactionGuard {
         }
     }
 
-    bool commit(compio_archive *archive) {
+    bool commit() {
         if (!active || !wal) return true;
-        // An earlier eviction failure must reach flush before the journal is cleared.
-        FILE *checkpoint_file = archive->block_reader->has_write_error() ? nullptr : archive->file;
-        bool result = wal->commit_transaction(checkpoint_file, archive->config.wal_max_size_bytes);
+        // Only a successful header publication makes the archive a safe WAL checkpoint.
+        bool result = wal->commit_transaction();
         active = false;
         return result;
     }
@@ -1569,7 +1568,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive)) {
+    if (!wal_tx_guard.commit()) {
         errno = EIO;
         return ptr_bytes_written;
     }
@@ -2060,7 +2059,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     validate_tree(archive->index, file);
 
-    if (!wal_tx_guard.commit(archive)) {
+    if (!wal_tx_guard.commit()) {
         errno = EIO;
         return 0;
     }
@@ -2312,7 +2311,7 @@ after_merge:
 
     validate_tree(archive->index, file, true);
 
-    if (!wal_tx_guard.commit(archive)) {
+    if (!wal_tx_guard.commit()) {
         errno = EIO;
         return 0;
     }
