@@ -538,6 +538,7 @@ private:
      * @return shared_node Smart pointer to the child node
      */
     shared_node read_child(shared_node &node, uint64_t idx);
+    shared_node read_child_view(const shared_node &node, uint64_t idx);
 
     /**
      * @brief Read the root node of the B-Tree

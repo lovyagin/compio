@@ -7,6 +7,7 @@
 #include "compio/compio_file.hpp"
 #include "compio/file.hpp"
 #include "compio/tree_types.hpp"
+#include "compio/utils.hpp"
 #include "compio.h"
 
 #include "test_util.hpp"
@@ -133,6 +134,46 @@ TEST_F(BTreeRangeAddTest, AddToSingleKeyRange) {
 
     auto unchanged_key = tree->get(make_key(1, 0));
     ASSERT_TRUE(unchanged_key.has_value());
+}
+
+TEST_F(BTreeRangeAddTest, ReadsDoNotRewritePublishedShiftedNodes) {
+    for (uint64_t i = 0; i < 40; ++i) {
+        tree->insert({1, i * 100}, {1000 + i, 1});
+    }
+    tree->add_to_range(20, {1, 0}, {1, 3900});
+    compio_flush(archive);
+
+    uint64_t node_size = 0;
+    const auto addresses = tree->collect_node_addresses(node_size);
+    std::vector<std::vector<char>> before;
+    bool has_pending_shift = false;
+    for (uint64_t address : addresses) {
+        index_node node(config.b_tree_degree);
+        ASSERT_TRUE(node.read_from(archive->file, address));
+        has_pending_shift |= std::any_of(node.key_additions.begin(), node.key_additions.end(),
+                                         [](int64_t shift) { return shift != 0; });
+        std::vector<char> bytes(node_size);
+        ASSERT_EQ(fseek64(archive->file, address, SEEK_SET), 0);
+        ASSERT_EQ(fread(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        before.push_back(std::move(bytes));
+    }
+    ASSERT_TRUE(has_pending_shift);
+
+    for (uint64_t i = 0; i < 40; ++i) {
+        EXPECT_EQ(tree->get({1, i * 100 + 20}), (tree_val{1000 + i, 1}));
+        ASSERT_TRUE(tree->find_node({1, i * 100 + 20}));
+    }
+    auto range = tree->get_range({1, 0}, {1, 4000});
+    ASSERT_TRUE(range);
+    ASSERT_EQ(range->size(), 40u);
+    compio_flush(archive);
+
+    for (size_t i = 0; i < addresses.size(); ++i) {
+        std::vector<char> after(node_size);
+        ASSERT_EQ(fseek64(archive->file, addresses[i], SEEK_SET), 0);
+        ASSERT_EQ(fread(after.data(), 1, after.size(), archive->file), after.size());
+        EXPECT_EQ(after, before[i]);
+    }
 }
 
 TEST_F(BTreeRangeAddTest, AddToMultipleKeysInRange) {

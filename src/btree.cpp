@@ -271,7 +271,7 @@ bool btree::_get_range(shared_node &node, const tree_key &key_min, const tree_ke
 
     for (std::size_t i = 0; i <= RO(node)->num_keys; ++i) {
         if (!RO(node)->is_leaf && (key_min < end) && (key_max > start)) {
-            auto child = read_child(node, i);
+            auto child = read_child_view(node, i);
             if (!child) return false;
             if (!_get_range(child, key_min, key_max, result)) return false;
         }
@@ -399,7 +399,7 @@ std::optional<tree_val> btree::get(const tree_key &key) {
             // DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> {%" PRIu64 ",%" PRIu64 "}\n", key.pos, val.addr, val.size);
             return val;
         } else if (!RO(current)->is_leaf) {
-            current = read_child(current, idx);
+            current = read_child_view(current, idx);
             if (!current) return std::nullopt;
         } else {
             // DEBUG_PRINT("[BTREE]: get(key={...,%" PRIu64 "}) -> nullopt\n", key.pos);
@@ -480,7 +480,7 @@ void btree::_print(shared_node node, uint64_t depth) {
     if (!node) return;
     for (std::size_t i = 0; i <= node->num_keys; ++i) {
         if (!node->is_leaf) {
-            _print(read_child(node, i), depth + 1);
+            _print(read_child_view(node, i), depth + 1);
         }
 
         if (i < node->num_keys) {
@@ -775,6 +775,22 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
     return child;
 }
 
+shared_node btree::read_child_view(const shared_node &node, uint64_t idx) {
+    assert(!RO(node)->is_leaf);
+    assert(idx <= RO(node)->num_keys);
+    auto child = read_node(RO(node)->children[idx]);
+    if (!child) return child;
+    const int64_t addition = RO(node)->key_additions[idx];
+    if (addition == 0) return child;
+
+    auto *copy = new index_node(*RO(child));
+    for (auto &key : copy->keys) key += addition;
+    if (!copy->is_leaf) {
+        for (auto &pending : copy->key_additions) pending += addition;
+    }
+    return shared_node(nullptr, child.addr(), copy, nullptr, true);
+}
+
 shared_node btree::read_root() { return read_node(readonly(archive_header, header)->index_root); }
 
 shared_node btree::find_node(const tree_key &key) {
@@ -783,12 +799,13 @@ shared_node btree::find_node(const tree_key &key) {
     while (!RO(node)->is_leaf) {
         auto it = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key);
         if (it != RO(node)->keys.end() && *it == key) {
-             return node; // Key found in internal node!
+             return shared_node(nullptr, node.addr(), new index_node(*RO(node)), nullptr, true);
         }
         
         // key < *it. So child index is dist(begin, it).
         size_t i = std::distance(RO(node)->keys.begin(), it);
-        node = read_child(node, i);
+        node = read_child_view(node, i);
     }
-    return node;
+    if (!node) return node;
+    return shared_node(nullptr, node.addr(), new index_node(*RO(node)), nullptr, true);
 }
