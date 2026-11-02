@@ -13,6 +13,7 @@
 #include <cstring>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <mutex>
 #include <vector>
 
@@ -992,7 +993,12 @@ bool block_allocator::perform_defragmentation() {
     std::sort(used_blocks.begin(), used_blocks.end(),
               [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
 
-    uint64_t write_pos = readonly(archive_->header, header)->reserved_size();
+    const auto &hdr = *readonly(archive_->header, header);
+    const uint64_t reserved_end = hdr.reserved_size();
+    const uint64_t container_end = hdr.file_size;
+    const uint64_t seekable_end = std::min(container_end,
+                                         static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+    uint64_t write_pos = reserved_end;
 
     // v5 specific: The files table is stored as a reserved block in the archive.
     // We must treat it as an obstacle during defragmentation to avoid overwriting it.
@@ -1011,14 +1017,23 @@ bool block_allocator::perform_defragmentation() {
         }
     }
 
+    auto overlaps = [](uint64_t start, uint64_t size, uint64_t other, uint64_t other_size) {
+        if (size == 0 || other_size == 0) return false;
+        return start <= other ? size > other - start : other_size > start - other;
+    };
+
     // Check every source before moving any block or changing an index entry.
     std::vector<uint64_t> block_sizes;
     block_sizes.reserve(used_blocks.size());
+    uint64_t previous_end = reserved_end;
     for (const auto &[key, val] : used_blocks) {
         (void)key;
         const uint64_t src = val.addr;
 
-        if (src < readonly(archive_->header, header)->disk_size()) {
+        // Validate the common prefix before seeking or reading outside the
+        // logical container, including the second copy of the header.
+        constexpr uint64_t prefix_size = 2 + sizeof(uint64_t);
+        if (src < previous_end || src > seekable_end || prefix_size > seekable_end - src) {
             WARNING_PRINT("warning: perform_defragmentation: invalid block address %" PRIu64 "\n", src);
             errno = EIO;
             return false;
@@ -1034,7 +1049,7 @@ bool block_allocator::perform_defragmentation() {
                 WARNING_PRINT("warning: perform_defragmentation: failed to read signature at %" PRIu64 "\n", src);
                 return false;
             }
-            const int64_t meta_offset = static_cast<int64_t>(src) + 2;
+            const int64_t meta_offset = static_cast<int64_t>(src + 2);
             if (fseek64(archive_->file, meta_offset, SEEK_SET) != 0 ||
                 lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
                 compressed_size == 0) {
@@ -1048,14 +1063,23 @@ bool block_allocator::perform_defragmentation() {
             errno = EIO;
             return false;
         }
-        const uint64_t container_end = readonly(archive_->header, header)->file_size;
-        if (src >= container_end || compressed_size > container_end - src ||
-            meta_size > container_end - src - compressed_size) {
+        if (compressed_size > seekable_end - src ||
+            meta_size > seekable_end - src - compressed_size) {
             WARNING_PRINT("warning: perform_defragmentation: block exceeds container at %" PRIu64 "\n", src);
             errno = EIO;
             return false;
         }
-        block_sizes.push_back(meta_size + compressed_size);
+        const uint64_t block_size = meta_size + compressed_size;
+        if (overlaps_btree_node(src, block_size) || overlaps(src, block_size, ft_addr, ft_size) ||
+            overlaps(src, block_size, hdr.allocator_state_offset, hdr.allocator_state_size) ||
+            overlaps(src, block_size, archive_->published_allocator_state_offset,
+                     archive_->published_allocator_state_size)) {
+            WARNING_PRINT("warning: perform_defragmentation: block overlaps metadata at %" PRIu64 "\n", src);
+            errno = EIO;
+            return false;
+        }
+        previous_end = src + block_size;
+        block_sizes.push_back(block_size);
     }
 
     // Collect final positions of placed storage blocks for gap computation.

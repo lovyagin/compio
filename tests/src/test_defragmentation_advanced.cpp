@@ -119,6 +119,99 @@ TEST_F(StatsAfterDefragTest, InvalidBlockMetadataCannotShrinkContainer) {
     EXPECT_EQ(readonly(archive->header, header)->sequence_id, sequence + 1);
 }
 
+enum class source_corruption { alias, overlap, second_header, index, files_table, allocator_state };
+
+class CompactionSourceTest : public StatsAfterDefragTest,
+                             public ::testing::WithParamInterface<source_corruption> {};
+
+TEST_P(CompactionSourceTest, RejectsInvalidRangesBeforeMovingData) {
+    ASSERT_NE(archive->allocator->allocate(65536), UINT64_MAX);
+    const auto data = make_random_bytes(512);
+    for (const char *name : {"first", "second"}) {
+        auto *file = compio_open_file(name, archive);
+        ASSERT_NE(file, nullptr);
+        ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+    compio_flush(archive);
+    auto entries = archive->index->get_range({}, {UINT64_MAX, UINT64_MAX});
+    ASSERT_TRUE(entries);
+    ASSERT_EQ(entries->size(), 2u);
+    std::sort(entries->begin(), entries->end(),
+              [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
+
+    // A valid layout may have index nodes after storage blocks.
+    ASSERT_TRUE(archive->index->clear_cache());
+    index_node root(archive->config.b_tree_degree);
+    ASSERT_TRUE(root.read_from(archive->file, readonly(archive->header, header)->index_root));
+    const uint64_t root_addr = archive->allocator->allocate(INDEX_NODE_SIZE(archive->config.b_tree_degree));
+    ASSERT_NE(root_addr, UINT64_MAX);
+    ASSERT_TRUE(root.write_to(archive->file, root_addr));
+    archive->header->index_root = root_addr;
+
+    const auto &[first_key, first] = entries->front();
+    const auto &[last_key, last] = entries->back();
+    const auto &hdr = readonly(archive->header, header);
+    uint64_t metadata_addr = 0;
+    switch (GetParam()) {
+    case source_corruption::alias:
+        ASSERT_TRUE(archive->index->update(last_key, first));
+        break;
+    case source_corruption::overlap:
+        metadata_addr = first.addr;
+        break;
+    case source_corruption::second_header: {
+        const uint64_t addr = hdr->disk_size();
+        ASSERT_EQ(fseek64(archive->file, first.addr, SEEK_SET), 0);
+        std::vector<uint8_t> bytes(storage_block::meta_size_for(storage_block::signature_backref) + 1);
+        ASSERT_EQ(fread(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        std::fill(bytes.begin() + 2, bytes.begin() + 2 + sizeof(uint64_t), 0);
+        bytes[2] = 1;
+        ASSERT_EQ(fseek64(archive->file, addr, SEEK_SET), 0);
+        ASSERT_EQ(fwrite(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        ASSERT_TRUE(archive->index->update(first_key, {addr, first.size}));
+        break;
+    }
+    case source_corruption::index:
+    case source_corruption::files_table:
+    case source_corruption::allocator_state:
+        metadata_addr = last.addr;
+        break;
+    }
+    if (metadata_addr != 0) {
+        const uint64_t target = GetParam() == source_corruption::overlap ? last.addr :
+                                GetParam() == source_corruption::index ? root_addr :
+                                GetParam() == source_corruption::files_table ? hdr->files_table_addr :
+                                hdr->allocator_state_offset;
+        ASSERT_GT(target, metadata_addr);
+        const uint64_t size = target - metadata_addr + 1 -
+                              storage_block::meta_size_for(storage_block::signature_backref);
+        ASSERT_EQ(fseek64(archive->file, metadata_addr + 2, SEEK_SET), 0);
+        ASSERT_EQ(lendian_fwrite(&size, sizeof(size), 1, archive->file), 1u);
+    }
+    ASSERT_TRUE(archive->index->clear_cache());
+    ASSERT_EQ(fflush(archive->file), 0);
+    const uint64_t logical_end = hdr->file_size;
+    auto snapshot = [&]() {
+        std::vector<uint8_t> bytes(std::filesystem::file_size(fn));
+        EXPECT_EQ(fseek64(archive->file, 0, SEEK_SET), 0);
+        EXPECT_EQ(fread(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
+        return bytes;
+    };
+    const auto before = snapshot();
+    errno = 0;
+    EXPECT_FALSE(archive->allocator->force_defragmentation());
+    EXPECT_EQ(errno, EIO);
+    EXPECT_EQ(hdr->file_size, logical_end);
+    EXPECT_FALSE(archive->truncate_after_publish);
+    EXPECT_EQ(snapshot(), before);
+}
+
+INSTANTIATE_TEST_SUITE_P(CorruptSources, CompactionSourceTest,
+                        ::testing::Values(source_corruption::alias, source_corruption::overlap,
+                                          source_corruption::second_header, source_corruption::index,
+                                          source_corruption::files_table, source_corruption::allocator_state));
+
 TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {
     // Write 4 files, erase 2, defrag.
     const int N = 4;
