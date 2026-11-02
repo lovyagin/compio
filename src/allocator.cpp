@@ -778,8 +778,7 @@ bool block_allocator::force_defragmentation() {
     blocks_manager_.defragment();
     bool success = true;
     if (archive_->file && archive_->index) {
-        success = perform_defragmentation(true);
-        if (success) compaction_floor_ = blocks_manager_.get_cached_fragmentation();
+        success = perform_defragmentation();
     }
     last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
 
@@ -794,19 +793,18 @@ bool block_allocator::maintenance(bool at_checkpoint) {
         return true;
     }
 
+    // Background callers cannot publish a new layout or report relocation errors.
+    if (!at_checkpoint) {
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+        blocks_manager_.defragment();
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+        return true;
+    }
+
     uint8_t current_fragmentation = get_fragmentation();
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
-    // Free space that the last compaction could not remove (regions pinned in
-    // front of index nodes or of the files table) must not trigger another full
-    // pass on its own. A checkpoint compaction can also move the files table, so
-    // it is always worth a try.
-    if (current_fragmentation < compaction_floor_) {
-        compaction_floor_ = current_fragmentation;
-    }
-
-    if (current_fragmentation > threshold &&
-        (at_checkpoint || current_fragmentation > compaction_floor_)) {
+    if (current_fragmentation > threshold) {
         auto index_lock = archive_->index->try_get_lock();
         if (!index_lock.owns_lock()) {
              // If we can't lock the index, we skip defragmentation for now.
@@ -847,8 +845,7 @@ bool block_allocator::maintenance(bool at_checkpoint) {
 
             if (blocks_manager_.get_cached_fragmentation() > threshold) {
                 if (archive_->file && archive_->index) {
-                    success = perform_defragmentation(at_checkpoint);
-                    if (success) compaction_floor_ = blocks_manager_.get_cached_fragmentation();
+                    success = perform_defragmentation();
                 }
             }
         }
@@ -944,7 +941,7 @@ static bool sync_file(FILE *file) {
 #endif
 }
 
-bool block_allocator::perform_defragmentation(bool relocate_files_table) {
+bool block_allocator::perform_defragmentation() {
     // Compaction writes gaps in place. A gap can still belong to the previous
     // checkpoint even though it is absent from the current index.
     if (!blocks_manager_.deferred_.empty()) return true;
@@ -1204,7 +1201,7 @@ bool block_allocator::perform_defragmentation(bool relocate_files_table) {
     // first position after the compacted blocks. This is only done when the
     // caller publishes a header right away: the durable header must never
     // reference a table copy that later writes can reuse.
-    if (relocate_files_table && ft_addr != 0 && ft_size != 0) {
+    if (ft_addr != 0 && ft_size != 0) {
         uint64_t table_pos = write_pos;
         while (overlaps_btree_node(table_pos, ft_size)) {
             auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), table_pos);

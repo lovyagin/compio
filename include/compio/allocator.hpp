@@ -272,7 +272,7 @@ public:
     /**
      * @brief Perform maintenance operations if needed
      * @param at_checkpoint True if the caller publishes a header right after the
-     *        call; only then may a compaction relocate the files table
+     *        call and checks the result; otherwise only coalesce free regions
      * @return False if cache write-back or compaction failed
      */
     bool maintenance(bool at_checkpoint = false);
@@ -325,7 +325,6 @@ private:
     WalManager *wal_;                    /**< WAL manager for ensuring durability */
     free_blocks_manager blocks_manager_; /**< Free blocks manager */
     uint8_t last_fragmentation_;         /**< Last measured fragmentation */
-    uint8_t compaction_floor_ = 0;       /**< Fragmentation left after the last compaction */
     uint64_t deallocate_count_ = 0;      /**< Counter to throttle maintenance checks */
     std::atomic<int> maintenance_suspended_{0};      /**< Maintenance suspension counter */
     uint64_t fs_block_size_ = 0;         /**< Filesystem block size, read on first use */
@@ -355,7 +354,7 @@ private:
     /**
      * @brief Perform defragmentation of the storage
      */
-    bool perform_defragmentation(bool relocate_files_table);
+    bool perform_defragmentation();
 
     friend class TestAllocatorAccess;
 };

@@ -384,6 +384,43 @@ TEST_F(ForceDefragTest, ForcedDefragRunsRegardlessOfThreshold) {
     compio_close_archive(ar);
 }
 
+TEST_F(ForceDefragTest, AutomaticMaintenancePreservesPublishedLayout) {
+    auto *ar = open_defrag_archive(fn, 0);
+    ASSERT_NE(ar, nullptr);
+    const uint64_t hole = ar->allocator->allocate(65536);
+    ASSERT_NE(hole, UINT64_MAX);
+    const auto data = make_random_bytes(32768, 13);
+    auto *file = compio_open_file("data", ar);
+    ASSERT_NE(file, nullptr);
+    const tree_key key{file->hash, 0};
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(ar);
+    ar->allocator->deallocate(hole, 65536, false);
+    compio_flush(ar);
+    const auto published_block = ar->index->get(key);
+    ASSERT_TRUE(published_block);
+    const uint64_t size = readonly(ar->header, header)->file_size;
+    const uint64_t sequence = readonly(ar->header, header)->sequence_id;
+    ASSERT_GT(ar->allocator->get_fragmentation(), 0);
+
+    EXPECT_TRUE(ar->allocator->maintenance());
+    EXPECT_EQ(ar->index->get(key), published_block);
+    EXPECT_EQ(readonly(ar->header, header)->file_size, size);
+    EXPECT_EQ(readonly(ar->header, header)->sequence_id, sequence);
+    EXPECT_FALSE(ar->truncate_after_publish);
+
+    ASSERT_EQ(compio_defragment(ar), COMPIO_SUCCESS);
+    const auto moved = ar->index->get(key);
+    ASSERT_TRUE(moved);
+    EXPECT_LT(moved->addr, published_block->addr);
+    file = compio_open_file("data", ar);
+    ASSERT_NE(file, nullptr);
+    EXPECT_EQ(read_file_bytes(file, data.size()), data);
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    EXPECT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+}
+
 // ---------------------------------------------------------------------------
 // MultiBlockFileDefragTest
 // A large file that spans many storage blocks must be fully readable after
