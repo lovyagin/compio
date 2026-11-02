@@ -7,6 +7,7 @@
 #include <cinttypes>
 #include <limits>
 #include <optional>
+#include <set>
 
 #include "compio/allocator.hpp"
 #include "compio/compio_file.hpp"
@@ -518,39 +519,50 @@ double btree::get_cache_hit_probability() const {
     return reader.get_cache_hit_probability();
 }
 
-std::vector<uint64_t> btree::collect_node_addresses(uint64_t &node_size) {
+std::optional<std::vector<uint64_t>> btree::collect_node_addresses(uint64_t &node_size) {
     std::shared_lock<std::shared_mutex> lock(mutex);
     return _collect_node_addresses(node_size);
 }
 
-std::vector<uint64_t> btree::_collect_node_addresses(uint64_t &node_size) {
+std::optional<std::vector<uint64_t>> btree::_collect_node_addresses(uint64_t &node_size) {
     node_size = INDEX_NODE_SIZE(degree);
     std::vector<uint64_t> addrs;
 
     uint64_t root_addr = readonly(archive_header, header)->index_root;
     if (root_addr == 0) return addrs;
 
-    // BFS traversal of all nodes.
+    const uint64_t file_size = readonly(archive_header, header)->file_size;
+    const uint64_t reserved_size = readonly(archive_header, header)->reserved_size();
+    std::set<uint64_t> visited;
     std::vector<uint64_t> queue;
     queue.push_back(root_addr);
 
     while (!queue.empty()) {
         uint64_t addr = queue.back();
         queue.pop_back();
+        if (addr < reserved_size || addr >= file_size || node_size > file_size - addr ||
+            !visited.insert(addr).second) {
+            errno = EIO;
+            return std::nullopt;
+        }
         addrs.push_back(addr);
 
         auto node = reader.read_node(addr);
+        if (!node) return std::nullopt;
         if (!RO(node)->is_leaf) {
             for (uint32_t i = 0; i <= RO(node)->num_keys; i++) {
-                uint64_t child_addr = RO(node)->children[i];
-                if (child_addr != 0) {
-                    queue.push_back(child_addr);
-                }
+                queue.push_back(RO(node)->children[i]);
             }
         }
     }
 
     std::sort(addrs.begin(), addrs.end());
+    for (size_t i = 1; i < addrs.size(); ++i) {
+        if (addrs[i] - addrs[i - 1] < node_size) {
+            errno = EIO;
+            return std::nullopt;
+        }
+    }
     return addrs;
 }
 

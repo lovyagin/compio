@@ -144,7 +144,9 @@ TEST_F(BTreeRangeAddTest, ReadsDoNotRewritePublishedShiftedNodes) {
     compio_flush(archive);
 
     uint64_t node_size = 0;
-    const auto addresses = tree->collect_node_addresses(node_size);
+    const auto addresses_opt = tree->collect_node_addresses(node_size);
+    ASSERT_TRUE(addresses_opt);
+    const auto &addresses = *addresses_opt;
     std::vector<std::vector<char>> before;
     bool has_pending_shift = false;
     for (uint64_t address : addresses) {

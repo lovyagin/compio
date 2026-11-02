@@ -957,7 +957,9 @@ bool block_allocator::perform_defragmentation(bool relocate_files_table) {
     // Collect B-tree node addresses so we don't overwrite them during compaction.
     // B-tree nodes and storage blocks share the same file address space.
     uint64_t btree_node_size = 0;
-    auto node_addrs = archive_->index->_collect_node_addresses(btree_node_size);
+    auto node_addrs_opt = archive_->index->_collect_node_addresses(btree_node_size);
+    if (!node_addrs_opt) return false;
+    const auto &node_addrs = *node_addrs_opt;
 
     // Build a set for O(log n) lookup of reserved ranges.
     // Each node occupies [addr, addr + btree_node_size).

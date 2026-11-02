@@ -746,6 +746,20 @@ TEST_P(HeaderPublicationTest, DefragmentReportsCompactionFailureWithoutFinalPubl
     compio_flush(archive);
 }
 
+TEST_P(HeaderPublicationTest, UnreadableIndexAbortsCompactionWithoutFinalPublication) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    write_file();
+    compio_flush(archive);
+    capture_header();
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    EXPECT_EQ(compio_defragment(archive), COMPIO_ERROR);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence + 1);
+    fault = {};
+    clearerr(archive->file);
+}
+
 TEST_P(HeaderPublicationTest, CloseReportsCompactionFailureWithoutFinalPublication) {
     prepare_compaction(true);
     EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);

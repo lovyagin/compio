@@ -85,6 +85,34 @@ TEST_F(BTreeEdgeCasesTest, InsertDuplicateKey) {
     EXPECT_EQ(result[0].second, val1);
 }
 
+TEST_F(BTreeEdgeCasesTest, NodeCollectionRejectsInvalidChildAddresses) {
+    insert_sequential_blocks(40);
+    compio_flush(archive);
+    const uint64_t root_addr = readonly(archive->header, header)->index_root;
+    index_node original(config.b_tree_degree);
+    ASSERT_TRUE(original.read_from(archive->file, root_addr));
+    ASSERT_FALSE(original.is_leaf);
+    ASSERT_GE(original.children.size(), 2u);
+    uint64_t node_size = 0;
+    ASSERT_TRUE(tree->collect_node_addresses(node_size));
+    const uint64_t file_size = readonly(archive->header, header)->file_size;
+    for (const uint64_t child_addr : {uint64_t{0}, uint64_t{1}, root_addr,
+                                      original.children[1], file_size,
+                                      file_size - node_size + 1}) {
+        SCOPED_TRACE(child_addr);
+        ASSERT_TRUE(tree->clear_cache());
+        auto corrupt = original;
+        corrupt.children[0] = child_addr;
+        ASSERT_TRUE(corrupt.write_to(archive->file, root_addr));
+        ASSERT_EQ(fflush(archive->file), 0);
+        EXPECT_FALSE(tree->collect_node_addresses(node_size));
+    }
+    ASSERT_TRUE(tree->clear_cache());
+    ASSERT_TRUE(original.write_to(archive->file, root_addr));
+    ASSERT_EQ(fflush(archive->file), 0);
+    EXPECT_TRUE(tree->collect_node_addresses(node_size));
+}
+
 TEST_F(BTreeEdgeCasesTest, UpdateDuplicateKey) {
     tree_key key = make_key(1, 100);
     tree_val val1 = make_val(1000, 100);
