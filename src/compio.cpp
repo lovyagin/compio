@@ -1388,9 +1388,14 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
             // would make every sequentially written block maximum-sized.
             if (current_pos == file->size && current_pos > 0) {
                 const tree_key tail_probe{file->hash, current_pos - 1};
-                const auto tail_kv = archive->index->get_block(tail_probe);
-                if (tail_kv.has_value()) {
-                    const auto &[tail_key, tail_val] = tail_kv.value();
+                const auto tail_range = archive->index->get_range(tail_probe, tail_probe + 1);
+                if (!tail_range) {
+                    errno = EIO;
+                    block_reader->disable_temporary_index();
+                    return ptr_bytes_written;
+                }
+                if (!tail_range->empty()) {
+                    const auto &[tail_key, tail_val] = tail_range->front();
                     if (tail_key.hash == file->hash && tail_key.pos + tail_val.size == current_pos &&
                         tail_val.size < block_size) {
                         const auto tail_block = block_reader->read_block(tail_val.addr, tail_key);

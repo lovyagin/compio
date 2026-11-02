@@ -916,6 +916,45 @@ TEST_P(HeaderPublicationTest, UnreadableInsertIndexLeavesFileUnchanged) {
     }
 }
 
+TEST_P(HeaderPublicationTest, UnreadableAppendIndexLeavesFileUnchangedAndRetries) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    write_file();
+    compio_flush(archive);
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const uint64_t size = file->size;
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), COMPIO_SUCCESS);
+    ASSERT_TRUE(archive->index->clear_cache());
+    arm();
+    fault.target = readonly(archive->header, compio::header)->index_root;
+    errno = 0;
+    EXPECT_EQ(compio_write("y", 1, file), 0u);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(errno, EIO);
+    EXPECT_EQ(compio_tell(file), size);
+    EXPECT_EQ(file->size, size);
+    fault = {};
+    clearerr(archive->file);
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_SET), COMPIO_SUCCESS);
+    std::string actual(size, '\0');
+    EXPECT_EQ(compio_read(actual.data(), actual.size(), file), size);
+    EXPECT_EQ(actual, std::string(size, 'x'));
+    ASSERT_EQ(compio_seek(file, 0, COMPIO_SEEK_END), COMPIO_SUCCESS);
+    EXPECT_EQ(compio_write("y", 1, file), 1u);
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    const int close_result = compio_close_archive(archive);
+    archive = nullptr;
+    ASSERT_EQ(close_result, COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "r", nullptr);
+    ASSERT_NE(archive, nullptr);
+    file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    actual.resize(size + 1);
+    EXPECT_EQ(compio_read(actual.data(), actual.size(), file), size + 1);
+    EXPECT_EQ(actual, std::string(size, 'x') + 'y');
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+}
+
 TEST_P(HeaderPublicationTest, CloseReportsCompactionFailureWithoutFinalPublication) {
     prepare_compaction(true);
     EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
