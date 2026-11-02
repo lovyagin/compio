@@ -591,49 +591,52 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         }
         const auto& all_blocks = *all_blocks_opt;
 
-    // Suspend maintenance to avoid re-entry during block removal
-    // Use RAII guard to ensure maintenance is resumed even if an error occurs
-    struct MaintenanceGuard {
-        block_allocator* alloc;
-        MaintenanceGuard(block_allocator* a) : alloc(a) { if(alloc) alloc->suspend_maintenance(); }
-        ~MaintenanceGuard() { if(alloc) alloc->resume_maintenance(); }
-    } maintenance_guard(archive->allocator);
+        // Suspend maintenance to avoid re-entry during block removal.
+        struct MaintenanceGuard {
+            block_allocator* alloc;
+            MaintenanceGuard(block_allocator* a) : alloc(a) { if(alloc) alloc->suspend_maintenance(); }
+            ~MaintenanceGuard() { if(alloc) alloc->resume_maintenance(); }
+        } maintenance_guard(archive->allocator);
 
-    // Iterate over all blocks of the file
-    {
-        int64_t saved_pos = ftell64(archive->file);
+        const int64_t saved_pos = ftell64(archive->file);
+        struct removal_block {
+            std::shared_ptr<block> cached;
+            uint64_t disk_size = 0;
+        };
+        std::vector<removal_block> blocks(all_blocks.size());
 
-        // Deallocate all blocks and remove them from index
-        for (const auto &[key, val] : all_blocks) {
+        // A later unreadable block must not leave earlier blocks deleted.
+        for (size_t i = 0; i < all_blocks.size(); ++i) {
+            const auto &[key, val] = all_blocks[i];
+            bool valid = true;
             if (archive->block_reader && archive->block_reader->cache_contains(key)) {
-                 auto b = archive->block_reader->read_block(val.addr, key);
-                 archive->block_reader->remove_block(b);
-                 continue;
-            }
-
-            if (val.addr != 0) {
-                // Read storage_block metadata to get compressed size
+                blocks[i].cached = archive->block_reader->read_block(val.addr, key);
+                valid = static_cast<bool>(blocks[i].cached);
+            } else if (val.addr != 0) {
                 storage_block sb;
-                if (sb.read_from(archive->file, val.addr)) {
-                    // Remove block from B-tree index BEFORE deallocating.
-                    archive->index->remove(key);
-
-                    // Deallocate. Maintenance is suspended globally, so this won't trigger defrag.
-                    // Use overloaded deallocate with explicit false for perform_maintenance, although
-                    // suspended state also prevents it.
+                valid = sb.read_from(archive->file, val.addr);
+                if (valid) {
                     const uint64_t meta = sb.has_backref ? STORAGE_BLOCK_METASIZE_V2 : STORAGE_BLOCK_METASIZE;
-                    archive->allocator->deallocate(val.addr, meta + sb.size, false);
-                } else {
-                    WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
-                    if (saved_pos >= 0) {
-                        fseek64(archive->file, saved_pos, SEEK_SET);
-                    }
-                    errno = EIO;
-                    return -1;
+                    blocks[i].disk_size = meta + sb.size;
                 }
+            }
+            if (!valid) {
+                WARNING_PRINT("warning: failed to read block at %" PRIu64 " during removal\n", val.addr);
+                if (saved_pos >= 0) fseek64(archive->file, saved_pos, SEEK_SET);
+                errno = EIO;
+                return -1;
+            }
+        }
+
+        for (size_t i = 0; i < all_blocks.size(); ++i) {
+            const auto &[key, val] = all_blocks[i];
+            if (blocks[i].cached) {
+                archive->block_reader->remove_block(blocks[i].cached);
             } else {
-                // Remove block from B-tree index (if addr is 0, it's still in index)
                 archive->index->remove(key);
+                if (blocks[i].disk_size != 0) {
+                    archive->allocator->deallocate(val.addr, blocks[i].disk_size, false);
+                }
             }
         }
 
@@ -642,7 +645,6 @@ int compio_remove_file(compio_archive *archive, const char *name) {
             fseek64(archive->file, saved_pos, SEEK_SET);
         }
     }
-    } // End if (file_size > 0)
     
     // Remove file from file table
     return archive->header->ftable.remove(name);

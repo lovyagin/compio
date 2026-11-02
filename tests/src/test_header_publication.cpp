@@ -955,6 +955,56 @@ TEST_P(HeaderPublicationTest, UnreadableAppendIndexLeavesFileUnchangedAndRetries
     ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
 }
 
+TEST_P(HeaderPublicationTest, UnreadableRemovalBlockPreservesEarlierBlocksAndRetries) {
+    if (std::get<1>(GetParam()) != failure::seek) GTEST_SKIP();
+    auto *file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> data(2 * archive->config.block_size, 'x');
+    const uint64_t hash = file->hash;
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    compio_flush(archive);
+    const tree_key min{hash, 0};
+    const tree_key max{hash, UINT64_MAX};
+    const auto before = archive->index->get_range(min, max);
+    ASSERT_TRUE(before);
+    ASSERT_EQ(before->size(), 2u);
+    for (const bool cache_first : {false, true}) {
+        SCOPED_TRACE(cache_first);
+        ASSERT_TRUE(archive->block_reader->clear_cache());
+        if (cache_first) {
+            file = compio_open_file("data", archive);
+            ASSERT_NE(file, nullptr);
+            std::vector<unsigned char> first(archive->config.block_size);
+            ASSERT_EQ(compio_read(first.data(), first.size(), file), first.size());
+            ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+        }
+        arm();
+        fault.target = before->back().second.addr;
+        errno = 0;
+        EXPECT_EQ(compio_remove_file(archive, "data"), -1);
+        EXPECT_TRUE(fault.triggered);
+        EXPECT_EQ(errno, EIO);
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_EQ(archive->index->get_range(min, max), before);
+        file = compio_open_file("data", archive);
+        ASSERT_NE(file, nullptr);
+        EXPECT_EQ(file->size, data.size());
+        std::vector<unsigned char> actual(data.size(), 0);
+        EXPECT_EQ(compio_read(actual.data(), actual.size(), file), actual.size());
+        EXPECT_EQ(actual, data);
+        ASSERT_EQ(compio_close_file(file), COMPIO_SUCCESS);
+    }
+    EXPECT_EQ(compio_remove_file(archive, "data"), COMPIO_SUCCESS);
+    const int close_result = compio_close_archive(archive);
+    archive = nullptr;
+    ASSERT_EQ(close_result, COMPIO_SUCCESS);
+    archive = compio_open_archive(path, "r", nullptr);
+    ASSERT_NE(archive, nullptr);
+    EXPECT_EQ(readonly(archive->header, compio::header)->ftable.find("data"), nullptr);
+}
+
 TEST_P(HeaderPublicationTest, CloseReportsCompactionFailureWithoutFinalPublication) {
     prepare_compaction(true);
     EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
