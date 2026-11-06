@@ -91,6 +91,11 @@ struct node_reader {
     bool flush_cache();
 
     /**
+     * @brief Forget every cached node without writing the modified ones
+     */
+    void discard_cache();
+
+    /**
      * @brief Whether an eviction failed since the last flush
      */
     bool has_write_error() const;
@@ -276,6 +281,11 @@ struct btree {
      * @brief Write modified cached nodes to file, keeping the cache warm
      */
     bool flush_cache();
+
+    /**
+     * @brief Drop the cached nodes and their unwritten changes
+     */
+    void discard_cache();
 
     /**
      * @brief Whether a node eviction failed since the last flush

@@ -179,6 +179,11 @@ bool compio_archive::is_readonly() const {
     return mode_b & mode_bit::r;
 }
 
+static uint32_t files_table_crc(const compio::header &hdr) {
+    const std::vector<uint8_t> table = hdr.ftable.serialize();
+    return crc32c(table.data(), table.size());
+}
+
 static unsigned compression_threads(const compio_config &config) {
     if (config.compression_threads > 0) return static_cast<unsigned>(config.compression_threads);
     const unsigned hardware = std::thread::hardware_concurrency();
@@ -460,10 +465,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
     }
 
-    {
-        const std::vector<uint8_t> table = readonly(archive->header, header)->ftable.serialize();
-        archive->stored_table_crc = crc32c(table.data(), table.size());
-    }
+    archive->stored_table_crc = files_table_crc(*readonly(archive->header, header));
 
     // A replayed journal carries the state its last committed operation left: adopt it
     // before the index reads its root.
@@ -767,7 +769,7 @@ static void truncate_after_header_publish(compio_archive *archive) {
     if (!ok) {
         WARNING_PRINT("warning: failed to truncate archive after compaction\n");
     }
-    archive->truncate_after_publish = false;
+    archive->truncate_after_publish = true;
 }
 
 /**
@@ -873,6 +875,11 @@ static void drop_file_caches(compio_archive *archive) {
     }
 }
 
+// A batch or a transaction is open: the header is published at its end.
+static bool publication_deferred(const compio_archive *archive) {
+    return archive->in_transaction || (archive->wal && archive->wal->get_batch_depth() > 0);
+}
+
 // Space freed since the last publication stays reserved until the next one,
 // and overwrites reuse it in the interval after that. Only space that stayed
 // unused over a whole interval counts: compacting freshly freed space would
@@ -881,7 +888,7 @@ static bool publish(compio_archive *archive) {
     bool compact = false;
     if (!flush_impl(archive, &compact)) return false;
     if (!compact || archive->is_readonly() || !archive->index || !archive->file ||
-        (archive->wal && archive->wal->get_batch_depth() > 0)) {
+        publication_deferred(archive)) {
         return true;
     }
     drop_file_caches(archive);
@@ -894,7 +901,7 @@ static bool publish(compio_archive *archive) {
 static void checkpoint_if_wal_full(compio_archive *archive) {
     compio::WalManager *wal = archive->wal.get();
     const uint64_t limit = archive->config.wal_max_size_bytes;
-    if (!wal || limit == 0 || wal->get_batch_depth() > 0 || wal->get_size() < limit) return;
+    if (!wal || limit == 0 || publication_deferred(archive) || wal->get_size() < limit) return;
     if (archive->block_reader->has_write_error() || archive->index->has_write_error()) return;
     publish(archive);
 }
@@ -1035,7 +1042,145 @@ int compio_end_batch(compio_archive *archive) {
     }
 
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    // The outermost level of a transaction is closed by its commit or abort.
+    if (archive->in_transaction && archive->wal && archive->wal->get_batch_depth() <= 1) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
     return end_batch_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
+}
+
+// Rebuild the in-memory state from the published header, as an open does, and
+// forget every change made since. Caller must hold archive->mutex.
+static bool reload_published_state(compio_archive *archive) {
+    int slot = 0;
+    compio::header published;
+    try {
+        const auto loaded = load_header_double_buffered(archive->file, &archive->io_mutex, slot);
+        published = *readonly(loaded, header);
+    } catch (const std::exception &) {
+        errno = EIO;
+        return false;
+    }
+
+    for (compio_file *file : archive->auto_batching_files) {
+        file->is_auto_batching = false;
+        file->auto_batch_count = 0;
+    }
+    archive->auto_batching_files.clear();
+    drop_file_caches(archive);
+
+    // Blocks are written only by an explicit write-back, so dropping the reader
+    // discards their changes; modified nodes would be written when released.
+    delete archive->block_reader;
+    archive->block_reader = nullptr;
+    archive->index->discard_cache();
+    delete archive->index;
+    archive->index = nullptr;
+    delete archive->allocator;
+    archive->allocator = nullptr;
+
+    *archive->header = std::move(published);
+    archive->header.unmodify();
+    archive->current_header_slot = slot;
+    archive->stored_table_crc = files_table_crc(*readonly(archive->header, header));
+    // Space the abandoned changes appended past the container end is cut off.
+    archive->truncate_after_publish = true;
+
+    archive->allocator = new compio::block_allocator(archive, archive->wal.get());
+    if (!archive->allocator->load_state(archive)) {
+        WARNING_PRINT("warning: allocator state unreadable; reconstructing free list from end of file\n");
+        archive->header->allocator_state_offset = 0;
+        archive->header->allocator_state_size = 0;
+    }
+    archive->index = new compio::btree(archive->config.b_tree_degree, false, archive->header, archive->allocator,
+                                       archive->file, archive->config.cache_size__nodes, &archive->io_mutex,
+                                       archive->wal.get());
+    const compio_compressor *active =
+        archive->compressors.find(static_cast<compio_compression_type>(readonly(archive->header, header)->compression_type));
+    if (active) archive->compressors.activate(*active);
+    archive->block_reader = new compio::storage_block_reader(
+        archive->file, archive->allocator, archive->index, &archive->compressors, archive->config.cache_size__blocks,
+        &archive->io_mutex, archive->wal.get(), archive->config.checksum_type,
+        compression_threads(archive->config));
+
+    const auto &table = readonly(archive->header, header)->ftable;
+    for (compio_file *file : archive->open_files) {
+        const auto *entry = table.find(file->name.c_str());
+        file->size = entry ? entry->size : 0;
+        if (entry) file->hash = entry->file_id;
+        file->cursor = std::min(file->cursor, file->size);
+        file->last_operation_end = 0;
+    }
+
+    // What the journal holds belongs to the abandoned changes.
+    return !archive->wal || archive->wal->discard_batch();
+}
+
+static int check_transaction_archive(compio_archive *archive) {
+    if (archive == nullptr) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    if (archive->is_readonly()) {
+        errno = EACCES;
+        return COMPIO_ERROR;
+    }
+    return COMPIO_SUCCESS;
+}
+
+int compio_begin_transaction(compio_archive *archive) {
+    if (check_transaction_archive(archive) != COMPIO_SUCCESS) return COMPIO_ERROR;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    if (publication_deferred(archive)) {
+        errno = EBUSY;
+        return COMPIO_ERROR;
+    }
+    // An abort returns to the published state, so everything before the
+    // transaction is published first.
+    if (!end_auto_batches(archive) || !publish(archive)) {
+        if (errno == 0) errno = EIO;
+        return COMPIO_ERROR;
+    }
+    begin_batch_impl(archive);
+    archive->in_transaction = true;
+    return COMPIO_SUCCESS;
+}
+
+int compio_commit_transaction(compio_archive *archive) {
+    if (check_transaction_archive(archive) != COMPIO_SUCCESS) return COMPIO_ERROR;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    if (!archive->in_transaction) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    // A batch opened inside the transaction must be closed first.
+    if (archive->wal && archive->wal->get_batch_depth() != 1) {
+        errno = EBUSY;
+        return COMPIO_ERROR;
+    }
+    if (!end_auto_batches(archive)) {
+        if (errno == 0) errno = EIO;
+        return COMPIO_ERROR;
+    }
+    archive->in_transaction = false;
+    return end_batch_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
+}
+
+int compio_abort_transaction(compio_archive *archive) {
+    if (check_transaction_archive(archive) != COMPIO_SUCCESS) return COMPIO_ERROR;
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    if (!archive->in_transaction) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    const bool reloaded = reload_published_state(archive);
+    archive->in_transaction = false;
+    if (!reloaded) {
+        if (errno == 0) errno = EIO;
+        return COMPIO_ERROR;
+    }
+    return COMPIO_SUCCESS;
 }
 
 int compio_defragment(compio_archive *archive) {
@@ -1054,8 +1199,8 @@ int compio_defragment(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
-    if (archive->wal && archive->wal->get_batch_depth() > 0) {
-        WARNING_PRINT("warning: compio_defragment called with an active WAL batch\n");
+    if (publication_deferred(archive)) {
+        WARNING_PRINT("warning: compio_defragment called inside a batch or a transaction\n");
         errno = EBUSY;
         return COMPIO_ERROR;
     }
@@ -1111,7 +1256,7 @@ int compio_recompress(compio_archive *archive, uint64_t *rewritten) {
         return COMPIO_ERROR;
     }
     if (!archive->index || !archive->block_reader || !archive->file) return COMPIO_ERROR;
-    if (archive->wal && archive->wal->get_batch_depth() > 0) {
+    if (publication_deferred(archive)) {
         errno = EBUSY;
         return COMPIO_ERROR;
     }
@@ -1225,7 +1370,15 @@ int compio_close_archive(compio_archive *archive) {
         return -1;
     }
 
-    bool durable = flush_archive_impl(archive);
+    // A transaction left open is abandoned, as a crash would.
+    bool aborted = true;
+    if (archive->in_transaction) {
+        std::unique_lock<std::shared_mutex> lock(archive->mutex);
+        aborted = reload_published_state(archive);
+        archive->in_transaction = false;
+    }
+
+    bool durable = aborted && flush_archive_impl(archive);
     int close_error = durable ? 0 : (errno ? errno : EIO);
 
     // Maintenance may change the layout after the initial flush.
@@ -2673,7 +2826,7 @@ static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold
     // references is durable. Deferred inside a batch (commit is deferred to
     // compio_end_batch, which publishes the header there). Skipped on a
     // durability failure so we never publish over un-committed state.
-    bool in_batch = wal_active && wal_ptr->get_batch_depth() > 0;
+    bool in_batch = publication_deferred(archive);
     if (durable && !in_batch) {
         // fsync the data the header will reference BEFORE writing the header, so
         // a crash can never land the (low-offset) header on disk while the

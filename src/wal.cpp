@@ -547,6 +547,15 @@ void WalManager::begin_batch() {
     batch_depth_++;
 }
 
+bool WalManager::discard_batch() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        batch_depth_ = 0;
+        transaction_depth_ = 0;
+    }
+    return checkpoint();
+}
+
 bool WalManager::end_batch() {
     std::unique_lock<std::mutex> lock(mutex_);
     
