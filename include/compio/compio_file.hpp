@@ -59,6 +59,9 @@ struct compio_archive {
     bool truncate_after_publish = false;
     // True while a compaction runs: the allocator state then moves down into free space.
     bool compacting = false;
+    // CRC32C of the serialized files table the header references, so that a
+    // flush packs the table only when it changed.
+    uint32_t stored_table_crc = 0;
 
     compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;

@@ -82,8 +82,10 @@ TEST_F(FilesTableV6Test, LongNamesAndPathsSurviveReopen) {
     archive = open("r");
     ASSERT_NE(archive, nullptr);
     for (const auto &name : names) EXPECT_EQ(read_file(archive, name), "data of " + name.substr(0, 8));
+    // The long name packs well, so the table is stored compressed.
     const auto &h = *readonly(archive->header, compio::header);
-    EXPECT_EQ(h.files_table_size, h.ftable.serialized_size());
+    EXPECT_EQ(h.files_table_encoding, static_cast<uint32_t>(COMPIO_COMPRESS_LZ4));
+    EXPECT_LT(h.files_table_size, h.ftable.serialized_size());
     compio_close_archive(archive);
 }
 

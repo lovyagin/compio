@@ -497,7 +497,7 @@ TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
     compio::files_table recovered;
     const auto &h = readonly(archive->header, compio::header);
     ASSERT_TRUE(recovered.read_from(archive->file, h->files_table_addr, h->files_table_size,
-                                    h->ftable.files.size(), h->files_table_checksum));
+                                    h->ftable.files.size(), h->files_table_checksum, h->files_table_encoding));
     EXPECT_NE(recovered.find("empty"), nullptr);
 }
 

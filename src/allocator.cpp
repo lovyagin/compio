@@ -1050,7 +1050,8 @@ bool block_allocator::compaction_round(bool &moved, bool validate_only) {
 
     const uint64_t ft_addr = hdr.files_table_addr;
     const uint64_t ft_size = hdr.files_table_size;
-    if (!validate_only && ft_size != 0 && hdr.ftable.serialized_size() != ft_size) {
+    const std::vector<uint8_t> table = hdr.ftable.serialize();
+    if (!validate_only && ft_size != 0 && crc32c(table.data(), table.size()) != archive_->stored_table_crc) {
         WARNING_PRINT("warning: perform_defragmentation: files table not flushed\n");
         errno = EIO;
         return false;
