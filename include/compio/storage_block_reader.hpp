@@ -12,6 +12,7 @@
 #include "compio/allocator.hpp"
 #include "compio/btree.hpp"
 #include "compio/compressor_set.hpp"
+#include "compio/detail/work_pool.hpp"
 #include "compio/tree_types.hpp"
 
 #include "lru_2q_cache.hpp"
@@ -146,6 +147,20 @@ public:
      * stays usable and becomes unmodified only on success.
      */
     bool write_back();
+
+    /** @brief Whether write_back() has anything to write */
+    bool needs_write_back() const { return _is_valid && _is_modified && !_is_removed; }
+
+    /**
+     * @brief The compression half of write_back(): no shared state is touched,
+     * so blocks may be packed on several threads at once
+     */
+    void pack(storage_block &packed) const;
+
+    /**
+     * @brief The rest of write_back(): place a block made by pack() and index it
+     */
+    bool store(storage_block &packed);
 
     /**
      * @brief Get read-only access to block data
@@ -291,6 +306,9 @@ class storage_block_reader {
         cache;
     std::atomic<int> write_error{0};
     std::atomic<bool> flush_failed{false};
+    // Compresses the blocks of one write-back on several threads.
+    detail::work_pool packers;
+    const size_t max_blocks;
 
     bool prepare_eviction(const std::shared_ptr<block> &b);
 
@@ -310,7 +328,7 @@ public:
      */
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                          compressor_set *compressors, int max_size, std::mutex *io_mutex, compio::WalManager *wal,
-                         compio_checksum_type checksum_type);
+                         compio_checksum_type checksum_type, unsigned compression_threads = 1);
 
     storage_block_reader(const storage_block_reader &) = delete;
     storage_block_reader &operator=(const storage_block_reader &) = delete;
@@ -358,6 +376,13 @@ public:
     bool flush_cache();
 
     bool has_write_error() const { return write_error.load() != 0 || flush_failed.load(); }
+
+    /**
+     * @brief With several compression threads, write the dirty blocks out as a
+     *        group once they fill half of the cache, so that an eviction (which
+     *        writes one block) seldom has to compress
+     */
+    bool write_back_if_crowded();
     bool cache_empty() const { return cache.size() == 0; }
 
     /**
