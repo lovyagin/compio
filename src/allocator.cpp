@@ -922,10 +922,6 @@ void block_allocator::commit_state() {
 
 // Private methods
 
-bool block_allocator::needs_defragmentation() const {
-    return blocks_manager_.get_cached_fragmentation() > archive_->config.fragmentation_threshold;
-}
-
 uint64_t block_allocator::allocate_below(uint64_t size, uint64_t limit) {
     std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
     return blocks_manager_.allocate_below(size, limit);

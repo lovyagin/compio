@@ -365,12 +365,6 @@ private:
     bool punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset, uint64_t merged_size);
 
     /**
-     * @brief Check if defragmentation is needed
-     * @return True if fragmentation exceeds the threshold
-     */
-    [[nodiscard]] bool needs_defragmentation() const;
-
-    /**
      * @brief Perform defragmentation of the storage
      */
     bool perform_defragmentation();
