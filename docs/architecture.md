@@ -151,12 +151,15 @@ the larger valid `sequence_id` is current. All integers are little endian.
   - block_size (4 bytes)
   - b_tree_degree (4 bytes)
   - files_table_addr (8 bytes, 0 when there are no files)
-  - files_table_size (8 bytes)
+  - files_table_size (8 bytes, stored size)
   - files_count (8 bytes)
-  - files_table_checksum (4 bytes, CRC32C of the files table)
-  - files_table_encoding (4 bytes, 0 = plain; other values are reserved)
+  - files_table_checksum (4 bytes, CRC32C of the stored bytes)
+  - files_table_encoding (4 bytes, 0 = plain, otherwise the built-in compression type that packed it)
 
-[Files Table] one record per file, packed
+[Files Table] stored as is, or as its plain size (8 bytes) followed by the plain table packed
+with the archive's compressor, when that is built-in and makes it shorter. A custom compressor
+is never used, so the table is readable before any compressor is registered.
+Plain form: one record per file
   - name_len (2 bytes, 1..COMPIO_FNAME_MAX_SIZE - 1)
   - size (8 bytes)
   - file_id (8 bytes)

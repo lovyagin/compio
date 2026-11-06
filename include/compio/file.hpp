@@ -65,7 +65,24 @@ struct files_table {
      */
     bool parse(const uint8_t *data, uint64_t size, uint64_t count);
 
-    bool read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t count, uint32_t checksum);
+    /**
+     * @brief Stored form of a serialized table: the bytes as they are
+     *        (encoding 0) or, when that is shorter, their plain size (8 bytes)
+     *        followed by the bytes packed with the built-in compressor
+     *        `preferred`. A custom compressor is never used: the table must be
+     *        readable before any compressor is registered.
+     * @param[out] encoding 0 or the compression type that was used
+     */
+    static std::vector<uint8_t> encode(const std::vector<uint8_t> &plain, uint32_t preferred, uint32_t &encoding);
+
+    /** @brief Whether a header may name this encoding */
+    static bool is_known_encoding(uint32_t encoding);
+
+    /**
+     * @brief Read, verify (CRC32C of the stored bytes), decode and parse the table
+     */
+    bool read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t count, uint32_t checksum,
+                   uint32_t encoding);
     bool write_to(FILE *file, uint64_t addr) const;
 
 private:
@@ -94,7 +111,7 @@ struct header : public infile_object {
     uint64_t files_table_addr;     /**< Address of the files table (0 when empty) */
     uint64_t files_table_size;     /**< Size of the files table in bytes */
     uint32_t files_table_checksum; /**< CRC32C of the files table */
-    uint32_t files_table_encoding; /**< Files table encoding; only 0 (plain) is defined */
+    uint32_t files_table_encoding; /**< 0: the table is stored as is; otherwise the built-in compression type that packed it */
     uint8_t checksum[32];      /**< SHA-256 checksum of the header (excluding this field) */
 
     /** @brief On-disk size of a header slot */

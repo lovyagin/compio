@@ -447,6 +447,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
     }
 
+    {
+        const std::vector<uint8_t> table = readonly(archive->header, header)->ftable.serialize();
+        archive->stored_table_crc = crc32c(table.data(), table.size());
+    }
+
     // A replayed journal carries the state its last committed operation left: adopt it
     // before the index reads its root.
     if (!wal_meta.empty() && !apply_wal_meta(archive->header, wal_meta)) {
@@ -2535,12 +2540,18 @@ static bool sync_files_table(compio_archive *archive) {
     // The table is rewritten as a whole, so skip it when nothing in it changed
     // since it was last written.
     const auto &current = *readonly(archive->header, header);
-    const std::vector<uint8_t> table = current.ftable.serialize();
-    const uint32_t checksum = crc32c(table.data(), table.size());
-    if (checksum == current.files_table_checksum && table.size() == current.files_table_size &&
-        (table.empty() || current.files_table_addr != 0)) {
+    // Packed with the archive's compressor when that is built-in and makes it shorter.
+    const uint32_t preferred = archive->compressors.active()
+                                   ? static_cast<uint32_t>(archive->compressors.active()->compression_type)
+                                   : current.compression_type;
+    const std::vector<uint8_t> plain = current.ftable.serialize();
+    const uint32_t plain_crc = crc32c(plain.data(), plain.size());
+    if (plain_crc == archive->stored_table_crc && (plain.empty() || current.files_table_addr != 0)) {
         return true;
     }
+    uint32_t encoding = 0;
+    const std::vector<uint8_t> table = compio::files_table::encode(plain, preferred, encoding);
+    const uint32_t checksum = crc32c(table.data(), table.size());
 
     // Copy-on-write: write the table to a fresh region, then point the header at
     // it. deallocate() defers reuse and physical release of the old table until
@@ -2577,6 +2588,8 @@ static bool sync_files_table(compio_archive *archive) {
     archive->header->files_table_addr = new_addr;
     archive->header->files_table_size = needed_size;
     archive->header->files_table_checksum = checksum;
+    archive->header->files_table_encoding = encoding;
+    archive->stored_table_crc = plain_crc;
 
     // No maintenance here: a compaction must not start in the middle of a
     // flush, between the table write and the header publish.
