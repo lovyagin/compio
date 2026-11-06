@@ -127,6 +127,10 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
     if (target == by_offset_.end())
         return UINT64_MAX;
 
+    return take_region(target, size);
+}
+
+uint64_t free_blocks_manager::take_region(region_map::iterator target, uint64_t size) {
     // The request takes the start of the region; what is left stays free.
     const uint64_t allocated_offset = target->first;
     const uint64_t remaining_size = target->second - size;
@@ -140,6 +144,15 @@ uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy 
     fragmentation_dirty_ = true;
 
     return allocated_offset;
+}
+
+uint64_t free_blocks_manager::allocate_below(uint64_t size, uint64_t limit) {
+    if (size == 0 || by_offset_.empty())
+        return UINT64_MAX;
+    auto target = find_first_fit(size);
+    if (target == by_offset_.end() || target->first >= limit)
+        return UINT64_MAX;
+    return take_region(target, size);
 }
 
 void free_blocks_manager::defragment() {
@@ -375,6 +388,17 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     if (needed > UINT32_MAX / 2) {
         WARNING_PRINT("warning: allocator state is too large to save\n");
         return false;
+    }
+
+    // The unpublished slot moves down into free space below it, so that
+    // compaction can cut the container behind the live data.
+    if (archive->compacting && slot_size != 0 && slot_size >= needed && !staged.by_offset_.empty()) {
+        auto hole = staged.find_first_fit(slot_size);
+        if (hole != staged.by_offset_.end() && hole->first + slot_size <= pos) {
+            const uint64_t lower = staged.take_region(hole, slot_size);
+            staged.add_free_block(pos, slot_size);
+            pos = lower;
+        }
     }
 
     // Reuse the unpublished slot until a header actually publishes it.
@@ -781,15 +805,18 @@ bool block_allocator::force_defragmentation() {
         }
     }
 
-    auto index_lock = archive_->index->get_lock();
-    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
-
-    blocks_manager_.defragment();
+    {
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+        blocks_manager_.defragment();
+    }
     bool success = true;
     if (archive_->file && archive_->index) {
         success = perform_defragmentation();
     }
-    last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+    {
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+    }
 
     if (archive_->file) {
         archive_->block_reader->set_maintenance_mode(false);
@@ -814,15 +841,7 @@ bool block_allocator::maintenance(bool at_checkpoint) {
     uint8_t threshold = archive_->config.fragmentation_threshold;
 
     if (current_fragmentation > threshold) {
-        auto index_lock = archive_->index->try_get_lock();
-        if (!index_lock.owns_lock()) {
-             // If we can't lock the index, we skip defragmentation for now.
-             // This avoids deadlocks when called from within a B-tree operation (which holds the lock).
-             return true;
-        }
-
-        // Flush caches before locking allocator to avoid deadlock.
-        // Block write-back calls allocate/deallocate which lock allocator_mutex.
+        // Flush caches before compacting: block write-back calls allocate/deallocate.
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(true);
             if (!archive_->block_reader->clear_cache()) {
@@ -833,32 +852,28 @@ bool block_allocator::maintenance(bool at_checkpoint) {
                 archive_->block_reader->set_maintenance_mode(false);
                 return true;
             }
-            if (!archive_->index->_clear_cache()) {
+            if (!archive_->index->clear_cache()) {
                 archive_->block_reader->set_maintenance_mode(false);
                 return false;
             }
         }
 
-        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
-
-        if (maintenance_suspended_ > 0) {
-            if (archive_->file) {
-                archive_->block_reader->set_maintenance_mode(false);
-            }
-            return true;
-        }
-
         bool success = true;
-        if (blocks_manager_.get_cached_fragmentation() > threshold) {
-            blocks_manager_.defragment();
-
-            if (blocks_manager_.get_cached_fragmentation() > threshold) {
-                if (archive_->file && archive_->index) {
-                    success = perform_defragmentation();
-                }
+        bool compact = false;
+        {
+            std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+            if (maintenance_suspended_ == 0 && blocks_manager_.get_cached_fragmentation() > threshold) {
+                blocks_manager_.defragment();
+                compact = blocks_manager_.get_cached_fragmentation() > threshold;
             }
         }
-        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+        if (compact && archive_->file && archive_->index) {
+            success = perform_defragmentation();
+        }
+        {
+            std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+            last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+        }
 
         if (archive_->file) {
             archive_->block_reader->set_maintenance_mode(false);
@@ -942,103 +957,98 @@ bool block_allocator::needs_defragmentation() const {
     return blocks_manager_.get_cached_fragmentation() > archive_->config.fragmentation_threshold;
 }
 
-static bool sync_file(FILE *file) {
-#ifdef _WIN32
-    return _commit(_fileno(file)) == 0;
-#else
-    return fsync(fileno(file)) == 0;
-#endif
+uint64_t block_allocator::allocate_below(uint64_t size, uint64_t limit) {
+    std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+    return blocks_manager_.allocate_below(size, limit);
 }
 
-bool block_allocator::perform_defragmentation() {
-    // Compaction writes gaps in place. A gap can still belong to the previous
-    // checkpoint even though it is absent from the current index.
-    if (!blocks_manager_.deferred_.empty()) return true;
-    // Flush all cached/dirty blocks to disk first so that every index entry
-    // has a real physical address before we start moving data.
-    // NOTE: This must be done by the caller (maintenance/force_defragmentation)
-    // BEFORE holding allocator_mutex to avoid deadlocks, as clear_cache() triggers
-    // block destructors which call allocate/deallocate.
+bool block_allocator::trim_tail() {
+    std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+    auto &regions = blocks_manager_.by_offset_;
+    if (regions.empty()) return false;
+    auto last = std::prev(regions.end());
+    std::lock_guard<std::mutex> header_lock(archive_->header_mutex);
+    if (last->first + last->second != readonly(archive_->header, header)->file_size) return false;
 
-    // B-tree nodes and storage blocks share the same file address space; both are
-    // moved down, a node by rewriting it and repointing its parent.
-    uint64_t btree_node_size = 0;
-    std::unordered_map<uint64_t, btree::node_link> node_links;
-    auto node_addrs_opt = archive_->index->_collect_node_addresses(btree_node_size, &node_links);
-    if (!node_addrs_opt) return false;
-    const auto &node_addrs = *node_addrs_opt;
+    const uint64_t offset = last->first;
+    blocks_manager_.total_free_ -= last->second;
+    blocks_manager_.erase_region(last);
+    blocks_manager_.fragmentation_dirty_ = true;
+    archive_->header->file_size = offset;
+    // The physical file is cut once a header with the smaller size is durable.
+    archive_->truncate_after_publish = true;
+    return true;
+}
 
-    // Build a set for O(log n) lookup of reserved ranges.
-    // Each node occupies [addr, addr + btree_node_size).
-    auto overlaps_btree_node = [&](uint64_t start, uint64_t size) -> bool {
-        // Binary search for the first node_addr <= start + size
-        auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), start);
-        // Check the node before (its range might extend into [start, start+size))
-        if (it != node_addrs.begin()) {
-            auto prev = std::prev(it);
-            if (*prev + btree_node_size > start) return true;
-        }
-        // Check the node at/after start (it might start within [start, start+size))
-        if (it != node_addrs.end() && *it < start + size) return true;
-        return false;
-    };
+bool block_allocator::compaction_round(bool &moved, bool validate_only) {
+    const auto &hdr = *readonly(archive_->header, header);
+    const uint64_t container_end = hdr.file_size;
+    const uint64_t seekable_end = std::min(container_end,
+                                           static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
 
-    constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024; // 1 MB
-    std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
-
+    // Blocks first: updating their index entries copies the leaves they live in.
     constexpr tree_key key_min{};
     tree_key key_max{};
     key_max.hash = UINT64_MAX;
-    key_max.pos  = UINT64_MAX;
-
-    auto used_blocks_opt = archive_->index->_get_range_impl(key_min, key_max);
+    key_max.pos = UINT64_MAX;
+    auto used_blocks_opt = archive_->index->get_range(key_min, key_max);
     if (!used_blocks_opt) {
         WARNING_PRINT("defragmentation aborted: index read failed\n");
         errno = EIO;
         return false;
     }
     auto &used_blocks = *used_blocks_opt;
-
-    std::sort(used_blocks.begin(), used_blocks.end(),
-              [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
-
-    const auto &hdr = *readonly(archive_->header, header);
-    const uint64_t reserved_end = hdr.reserved_size();
-    const uint64_t container_end = hdr.file_size;
-    const uint64_t seekable_end = std::min(container_end,
-                                         static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
-    uint64_t write_pos = reserved_end;
-
-    // The files table is an obstacle while blocks are being moved.
-    uint64_t ft_addr = hdr.files_table_addr;
-    const uint64_t ft_size = hdr.files_table_size;
-    // The table is moved by rewriting it from memory, which must match the copy
-    // the header describes; a flush always precedes compaction.
-    if (ft_size != 0 && hdr.ftable.serialized_size() != ft_size) {
-        WARNING_PRINT("warning: perform_defragmentation: files table not flushed\n");
+    uint64_t node_size = 0;
+    auto node_addrs_opt = archive_->index->collect_node_addresses(node_size);
+    if (!node_addrs_opt) {
+        errno = EIO;
         return false;
     }
+    const auto &node_addrs = *node_addrs_opt;
 
-    // The durable header references the published allocator state until the
-    // compacted layout is published, so it stays in place like the files table.
-    const uint64_t st_addr = archive_->published_allocator_state_offset;
-    const uint64_t st_size = archive_->published_allocator_state_size;
-
+    const uint64_t ft_addr = hdr.files_table_addr;
+    const uint64_t ft_size = hdr.files_table_size;
+    if (!validate_only && ft_size != 0 && hdr.ftable.serialized_size() != ft_size) {
+        WARNING_PRINT("warning: perform_defragmentation: files table not flushed\n");
+        errno = EIO;
+        return false;
+    }
     auto overlaps = [](uint64_t start, uint64_t size, uint64_t other, uint64_t other_size) {
         if (size == 0 || other_size == 0) return false;
         return start <= other ? size > other - start : other_size > start - other;
     };
+    auto overlaps_metadata = [&](uint64_t start, uint64_t size) {
+        return overlaps(start, size, ft_addr, ft_size) ||
+               overlaps(start, size, hdr.allocator_state_offset, hdr.allocator_state_size) ||
+               overlaps(start, size, archive_->published_allocator_state_offset,
+                        archive_->published_allocator_state_size);
+    };
+    auto overlaps_node = [&](uint64_t start, uint64_t size) {
+        auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), start);
+        if (it != node_addrs.begin() && *std::prev(it) + node_size > start) return true;
+        return it != node_addrs.end() && *it < start + size;
+    };
+    for (uint64_t na : node_addrs) {
+        if (overlaps_metadata(na, node_size)) {
+            WARNING_PRINT("warning: perform_defragmentation: index node overlaps metadata at %" PRIu64 "\n", na);
+            errno = EIO;
+            return false;
+        }
+    }
 
-    // Check every source before moving any block or changing an index entry.
-    std::vector<uint64_t> block_sizes;
-    block_sizes.reserve(used_blocks.size());
-    uint64_t previous_end = reserved_end;
+    // Check every source before moving anything.
+    struct source {
+        tree_key key;
+        tree_val val;
+        uint64_t size;
+    };
+    std::vector<source> sources;
+    sources.reserve(used_blocks.size());
+    std::sort(used_blocks.begin(), used_blocks.end(),
+              [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
+    uint64_t previous_end = hdr.reserved_size();
     for (const auto &[key, val] : used_blocks) {
-        (void)key;
         const uint64_t src = val.addr;
-
-        // Validate the common prefix before seeking or reading outside the
-        // logical container, including the second copy of the header.
         constexpr uint64_t prefix_size = 2 + sizeof(uint64_t);
         if (src < previous_end || src > seekable_end || prefix_size > seekable_end - src) {
             WARNING_PRINT("warning: perform_defragmentation: invalid block address %" PRIu64 "\n", src);
@@ -1046,247 +1056,159 @@ bool block_allocator::perform_defragmentation() {
             return false;
         }
 
-        // Read signature + compressed size from on-disk metadata. The signature
-        // determines the metadata footprint (v1=22, v2=38 with {hash,pos} back-ref).
-        uint64_t compressed_size = 0;
+        // The signature determines the metadata footprint of the block.
         uint8_t sig = 0;
-        {
-            if (fseek64(archive_->file, static_cast<int64_t>(src), SEEK_SET) != 0 ||
-                fread(&sig, 1, 1, archive_->file) != 1) {
-                WARNING_PRINT("warning: perform_defragmentation: failed to read signature at %" PRIu64 "\n", src);
-                return false;
-            }
-            const int64_t meta_offset = static_cast<int64_t>(src + 2);
-            if (fseek64(archive_->file, meta_offset, SEEK_SET) != 0 ||
-                lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
-                compressed_size == 0) {
-                WARNING_PRINT("warning: perform_defragmentation: failed to read metadata at %" PRIu64 "\n", src);
-                return false;
-            }
-        }
-        const uint64_t meta_size = storage_block::meta_size_for(sig);
-        if (meta_size == 0) {
-            WARNING_PRINT("warning: perform_defragmentation: bad signature %u at %" PRIu64 "\n", sig, src);
+        uint64_t compressed_size = 0;
+        if (fseek64(archive_->file, static_cast<int64_t>(src), SEEK_SET) != 0 ||
+            fread(&sig, 1, 1, archive_->file) != 1 ||
+            fseek64(archive_->file, static_cast<int64_t>(src + 2), SEEK_SET) != 0 ||
+            lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
+            compressed_size == 0) {
+            WARNING_PRINT("warning: perform_defragmentation: failed to read block header at %" PRIu64 "\n", src);
             errno = EIO;
             return false;
         }
-        if (compressed_size > seekable_end - src ||
+        const uint64_t meta_size = storage_block::meta_size_for(sig);
+        if (meta_size == 0 || compressed_size > seekable_end - src ||
             meta_size > seekable_end - src - compressed_size) {
-            WARNING_PRINT("warning: perform_defragmentation: block exceeds container at %" PRIu64 "\n", src);
+            WARNING_PRINT("warning: perform_defragmentation: bad block at %" PRIu64 "\n", src);
             errno = EIO;
             return false;
         }
         const uint64_t block_size = meta_size + compressed_size;
-        if (overlaps_btree_node(src, block_size) || overlaps(src, block_size, ft_addr, ft_size) ||
-            overlaps(src, block_size, hdr.allocator_state_offset, hdr.allocator_state_size) ||
-            overlaps(src, block_size, archive_->published_allocator_state_offset,
-                     archive_->published_allocator_state_size)) {
+        if (overlaps_node(src, block_size) || overlaps_metadata(src, block_size)) {
             WARNING_PRINT("warning: perform_defragmentation: block overlaps metadata at %" PRIu64 "\n", src);
             errno = EIO;
             return false;
         }
         previous_end = src + block_size;
-        block_sizes.push_back(block_size);
+        sources.push_back({key, val, block_size});
     }
 
-    for (uint64_t na : node_addrs) {
-        if (overlaps(na, btree_node_size, ft_addr, ft_size) ||
-            overlaps(na, btree_node_size, hdr.allocator_state_offset, hdr.allocator_state_size) ||
-            overlaps(na, btree_node_size, st_addr, st_size)) {
-            WARNING_PRINT("warning: perform_defragmentation: index node overlaps metadata at %" PRIu64 "\n", na);
-            errno = EIO;
+    if (validate_only) return true;
+
+    constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024;
+    std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
+
+    for (auto it = sources.rbegin(); it != sources.rend(); ++it) {
+        const tree_key &key = it->key;
+        const tree_val &val = it->val;
+        const uint64_t src = val.addr;
+        const uint64_t block_size = it->size;
+
+        const uint64_t target = allocate_below(block_size, src);
+        if (target == UINT64_MAX) continue;
+
+        uint64_t src_cursor = src;
+        uint64_t dst_cursor = target;
+        uint64_t remaining = block_size;
+        bool copied = true;
+        while (remaining > 0 && copied) {
+            const size_t chunk = static_cast<size_t>(std::min<uint64_t>(remaining, MOVE_BUFFER_SIZE));
+            copied = fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) == 0 &&
+                     fread(move_buffer.data(), 1, chunk, archive_->file) == chunk &&
+                     fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) == 0 &&
+                     fwrite(move_buffer.data(), 1, chunk, archive_->file) == chunk;
+            src_cursor += chunk;
+            dst_cursor += chunk;
+            remaining -= chunk;
+        }
+        if (!copied || !archive_->index->update(key, tree_val{target, val.size})) {
+            WARNING_PRINT("warning: perform_defragmentation: failed to move block at %" PRIu64 "\n", src);
+            deallocate(target, block_size, false);
+            if (errno == 0) errno = EIO;
             return false;
         }
+        // The old copy stays reserved until the header that no longer references it is durable.
+        deallocate(src, block_size, false);
+        moved = true;
     }
 
-    // Blocks and nodes in address order; a node is marked by block_index == SIZE_MAX.
-    struct movable {
-        uint64_t src;
-        uint64_t size;
-        size_t block_index;
-    };
-    std::vector<movable> items;
-    items.reserve(used_blocks.size() + node_addrs.size());
-    for (size_t i = 0; i < used_blocks.size(); ++i) {
-        items.push_back({used_blocks[i].second.addr, block_sizes[i], i});
-    }
-    for (uint64_t na : node_addrs) items.push_back({na, btree_node_size, SIZE_MAX});
-    std::sort(items.begin(), items.end(), [](const movable &a, const movable &b) { return a.src < b.src; });
-
-    // Final positions of everything placed, for the free-space rebuild.
-    std::vector<std::pair<uint64_t, uint64_t>> placed;
-    placed.reserve(items.size());
-
-    for (const movable &item : items) {
-        const uint64_t src = item.src;
-        const uint64_t item_size = item.size;
-
-        // Items never overlap and are visited in address order, so skipping an
-        // obstacle never moves write_pos past src: every move goes down.
-        while (true) {
-            if (overlaps(write_pos, item_size, ft_addr, ft_size)) {
-                write_pos = ft_addr + ft_size;
-            } else if (overlaps(write_pos, item_size, st_addr, st_size)) {
-                write_pos = st_addr + st_size;
-            } else {
-                break;
+    // The files table is referenced from the header; the copy it describes stays reserved until the next header is durable.
+    if (ft_addr != 0 && ft_size != 0) {
+        const uint64_t target = allocate_below(ft_size, ft_addr);
+        if (target != UINT64_MAX) {
+            std::vector<uint8_t> table(ft_size);
+            if (fseek64(archive_->file, static_cast<int64_t>(ft_addr), SEEK_SET) != 0 ||
+                fread(table.data(), 1, table.size(), archive_->file) != table.size() ||
+                fseek64(archive_->file, static_cast<int64_t>(target), SEEK_SET) != 0 ||
+                fwrite(table.data(), 1, table.size(), archive_->file) != table.size()) {
+                deallocate(target, ft_size, false);
+                if (errno == 0) errno = EIO;
+                return false;
             }
+            archive_->header->files_table_addr = target;
+            deallocate(ft_addr, ft_size, false);
+            moved = true;
         }
-
-        if (src != write_pos) {
-            if (item.block_index == SIZE_MAX) {
-                auto link = node_links.find(src);
-                std::vector<uint64_t> children;
-                if (link == node_links.end() ||
-                    !archive_->index->_relocate_node(src, write_pos, link->second, children)) {
-                    WARNING_PRINT("warning: perform_defragmentation: failed to move index node at %" PRIu64 "\n", src);
-                    if (errno == 0) errno = EIO;
-                    return false;
-                }
-                node_links.emplace(write_pos, link->second);
-                node_links.erase(link);
-                for (uint64_t child : children) {
-                    auto child_link = node_links.find(child);
-                    if (child_link == node_links.end()) {
-                        errno = EIO;
-                        return false;
-                    }
-                    child_link->second.parent = write_pos;
-                }
-            } else {
-                auto &[key, val] = used_blocks[item.block_index];
-                uint64_t src_cursor = src;
-                uint64_t dst_cursor = write_pos;
-                uint64_t remaining = item_size;
-                while (remaining > 0) {
-                    const size_t chunk = static_cast<size_t>(std::min<uint64_t>(remaining, MOVE_BUFFER_SIZE));
-                    if (fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) != 0 ||
-                        fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                        WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n", src_cursor);
-                        return false;
-                    }
-                    if (fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) != 0 ||
-                        fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                        WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n", dst_cursor);
-                        return false;
-                    }
-                    src_cursor += chunk;
-                    dst_cursor += chunk;
-                    remaining -= chunk;
-                }
-
-                const tree_val moved{write_pos, val.size};
-                if (!archive_->index->_update_impl(key, moved)) {
-                    WARNING_PRINT("warning: perform_defragmentation: failed to update index at %" PRIu64 "\n", src);
-                    errno = EIO;
-                    return false;
-                }
-                val = moved;
-            }
-        }
-
-        placed.push_back({write_pos, item_size});
-        write_pos += item_size;
     }
 
-    // Flush all updated index nodes to disk BEFORE truncating the file.
-    // If we crash after truncation but before index write, we lose data.
-    if (!archive_->index->_clear_cache()) return false;
+    // Index nodes, planned on the tree as it is now.
+    auto current_nodes = archive_->index->collect_node_addresses(node_size);
+    if (!current_nodes) {
+        errno = EIO;
+        return false;
+    }
+    std::unordered_map<uint64_t, uint64_t> node_moves;
+    for (auto it = current_nodes->rbegin(); it != current_nodes->rend(); ++it) {
+        const uint64_t target = allocate_below(node_size, *it);
+        if (target != UINT64_MAX) node_moves.emplace(*it, target);
+    }
+    if (!node_moves.empty()) {
+        if (!archive_->index->relocate_nodes(node_moves)) {
+            WARNING_PRINT("warning: perform_defragmentation: failed to move index nodes\n");
+            if (errno == 0) errno = EIO;
+            return false;
+        }
+        moved = true;
+    }
 
-    if (fflush(archive_->file) != 0 || !sync_file(archive_->file)) {
-        WARNING_PRINT("warning: perform_defragmentation: failed to sync moved blocks\n");
+    archive_->block_reader->invalidate_temporary_index();
+    return true;
+}
+
+bool block_allocator::perform_defragmentation() {
+    // Everything moves into space that is free in the durable state as well, so a
+    // crash at any point leaves the previous layout intact. Vacated space is
+    // reusable only after the header that no longer references it is published,
+    // hence several rounds, each ending in a checkpoint.
+    if (!archive_->checkpoint) return false;
+    constexpr int MAX_ROUNDS = 8;
+
+    // A damaged index is reported before anything is written.
+    bool unused = false;
+    if (!compaction_round(unused, true)) return false;
+
+    if (!archive_->checkpoint()) return false;
+    {
+        std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+        // Deferred frees mean the checkpoint did not complete a full cycle.
+        if (!blocks_manager_.deferred_.empty()) return true;
+    }
+
+    ++maintenance_suspended_;
+    archive_->compacting = true;
+    bool ok = true;
+    int idle = 0;
+    for (int round = 0; round < MAX_ROUNDS && idle < 2; ++round) {
+        bool moved = false;
+        if (!compaction_round(moved) || !archive_->checkpoint()) {
+            ok = false;
+            break;
+        }
+        const bool trimmed = trim_tail();
+        idle = (moved || trimmed) ? 0 : idle + 1;
+    }
+    --maintenance_suspended_;
+    if (!ok) {
+        archive_->compacting = false;
         return false;
     }
 
-    // The files table is an obstacle while blocks are being moved, so a table
-    // that sits behind the data keeps a hole in front of it. Move it down to the
-    // first position after the compacted blocks. This is only done when the
-    // caller publishes a header right away: the durable header must never
-    // reference a table copy that later writes can reuse.
-    if (ft_addr != 0 && ft_size != 0) {
-        uint64_t table_pos = write_pos;
-        if (overlaps(table_pos, ft_size, st_addr, st_size)) table_pos = st_addr + st_size;
-
-        auto write_table = [&](uint64_t pos) {
-            return readonly(archive_->header, header)->ftable.write_to(archive_->file, pos) &&
-                   fflush(archive_->file) == 0 && sync_file(archive_->file);
-        };
-
-        if (table_pos < ft_addr) {
-            if (table_pos + ft_size > ft_addr) {
-                // The target overlaps the copy the durable header references.
-                // Park the table behind everything and make that copy durable
-                // first, so the overlapping write below cannot lose the table.
-                const uint64_t park_pos = readonly(archive_->header, header)->file_size;
-                if (!write_table(park_pos)) return false;
-                archive_->header->files_table_addr = park_pos;
-                archive_->header->file_size = park_pos + ft_size;
-                archive_->header->allocator_state_offset = 0;
-                archive_->header->allocator_state_size = 0;
-                ft_addr = park_pos;
-                if (!archive_->publish_header || !archive_->publish_header()) return false;
-            }
-            if (!write_table(table_pos)) return false;
-            archive_->header->files_table_addr = table_pos;
-            ft_addr = table_pos;
-        }
-    }
-
-    uint64_t truncate_pos = write_pos;
-    // The files table may be located after data/nodes.
-    if (ft_addr != 0 && ft_addr + ft_size > truncate_pos) {
-        truncate_pos = ft_addr + ft_size;
-    }
-
-    // The physical file is cut later, once a header describing the compacted
-    // layout is durable: until then the previous header still references the
-    // tail (files table, allocator state).
-    archive_->truncate_after_publish = true;
-
-    // Update logical file_size in header and rebuild free-block manager.
-    archive_->header->file_size = truncate_pos;
-    // The saved allocator state is not an obstacle for compaction, so its slots
-    // are gone now; the next save starts with fresh ones.
-    archive_->header->allocator_state_offset = 0;
-    archive_->header->allocator_state_size = 0;
-
-    blocks_manager_ = free_blocks_manager(&archive_->header->file_size);
-
-    // Rebuild free blocks from gaps between all occupied regions (storage blocks + B-tree nodes).
-    std::vector<std::pair<uint64_t, uint64_t>> occupied = std::move(placed);
-    
-    // Mark the files table as occupied so the allocator does not hand it out as free space.
-    if (ft_addr != 0) {
-        occupied.push_back({ft_addr, ft_size});
-    }
-    if (st_size != 0 && st_addr < truncate_pos) {
-        occupied.push_back({st_addr, st_size});
-    }
-
-    std::sort(occupied.begin(), occupied.end());
-
-    uint64_t scan = readonly(archive_->header, header)->disk_size() * 2;
-    for (auto &[occ_start, occ_size] : occupied) {
-        if (occ_start > scan) {
-            blocks_manager_.add_free_block(scan, occ_start - scan);
-        }
-        uint64_t occ_end = occ_start + occ_size;
-        if (occ_end > scan) {
-            scan = occ_end;
-        }
-    }
-    if (scan < truncate_pos) {
-        blocks_manager_.add_free_block(scan, truncate_pos - scan);
-    }
-
-    // Invalidate the temporary index — it was populated with pre-move addresses
-    // by clear_cache() above. After moving blocks the B-tree holds the correct
-    // addresses; any stale temporary_index entries would cause reads to use
-    // wrong offsets.
-    archive_->block_reader->invalidate_temporary_index();
-    
-    DEBUG_PRINT("[AL] perform_defragmentation complete. New file size: %" PRIu64 "\n", write_pos);
-    return true;
+    // Publish the final container size; the file is cut after that.
+    const bool published = archive_->checkpoint();
+    archive_->compacting = false;
+    return published;
 }
 
 } // namespace compio

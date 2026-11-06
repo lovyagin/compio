@@ -81,6 +81,14 @@ public:
     uint64_t allocate_block(uint64_t size, allocation_strategy strategy);
 
     /**
+     * @brief Allocate from the lowest free region that fits, if it lies below a limit
+     * @param size Required block size
+     * @param limit The block must start below this offset
+     * @return Offset of the allocated block or UINT64_MAX if no region below the limit fits
+     */
+    uint64_t allocate_below(uint64_t size, uint64_t limit);
+
+    /**
      * @brief Merge adjacent free blocks and restart the next-fit search from the beginning
      */
     void defragment();
@@ -204,6 +212,8 @@ private:
     region_map::iterator erase_region(region_map::iterator it);
     void clear_regions();
 
+    /** Take the start of a region, leaving the rest free */
+    uint64_t take_region(region_map::iterator target, uint64_t size);
     /** Lowest region that can hold @p size, or end() */
     region_map::iterator find_first_fit(uint64_t size);
     /** Smallest region that can hold @p size (the lowest one among equals), or end() */
@@ -355,6 +365,11 @@ private:
      * @brief Perform defragmentation of the storage
      */
     bool perform_defragmentation();
+    /** Move blocks and index nodes into free space below them; @p moved is set if anything moved. With @p validate_only just check the layout. */
+    bool compaction_round(bool &moved, bool validate_only = false);
+    /** Give back a free region that ends at the container end; false if there is none */
+    bool trim_tail();
+    uint64_t allocate_below(uint64_t size, uint64_t limit);
 
     friend class TestAllocatorAccess;
 };

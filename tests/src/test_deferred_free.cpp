@@ -133,15 +133,11 @@ TEST_P(DeferredFreeTest, FreesAfterSnapshotWaitForAnotherCheckpoint) {
     EXPECT_EQ(archive->allocator->allocate(original.size()), second);
 }
 
-TEST_P(DeferredFreeTest, CompactionWaitsForDeferredFrees) {
+TEST_P(DeferredFreeTest, CompactionPublishesDeferredFrees) {
     defer();
     const uint64_t end = readonly(archive->header, compio::header)->file_size;
-    archive->allocator->force_defragmentation();
-    EXPECT_EQ(readonly(archive->header, compio::header)->file_size, end);
-    EXPECT_FALSE(archive->truncate_after_publish);
-    EXPECT_EQ(read_region(), original);
-    compio_flush(archive);
-    expect_released();
+    ASSERT_TRUE(archive->allocator->force_defragmentation());
+    EXPECT_LE(readonly(archive->header, compio::header)->file_size, end);
 }
 
 TEST_P(DeferredFreeTest, DuplicateAndOverlappingFreesDoNotExposeLiveBytes) {

@@ -43,12 +43,16 @@ struct compio_archive {
     uint8_t mode_b;
     uint32_t open_files_count;
     std::vector<compio_file *> auto_batching_files; /**< Files that hold a batch opened automatically */
-    // Makes the in-memory header durable (data is synced first). Lets the
-    // allocator checkpoint in the middle of a compaction.
+    // Makes the in-memory header durable (data is synced first).
     std::function<bool()> publish_header;
+    // Flushes everything and publishes a header. Lets the allocator checkpoint
+    // between the rounds of a compaction.
+    std::function<bool()> checkpoint;
     // Set by a compaction: the physical file is cut down to header->file_size
     // once the next header is durable.
     bool truncate_after_publish = false;
+    // True while a compaction runs: the allocator state then moves down into free space.
+    bool compacting = false;
 
     compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;

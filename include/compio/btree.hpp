@@ -295,6 +295,13 @@ struct btree {
     std::optional<std::vector<uint64_t>> collect_node_addresses(uint64_t &node_size);
 
     /**
+     * @brief Move nodes to new addresses, copying the path from the root to each of them
+     *
+     * @param moves Source address -> target address; the targets are owned by the caller
+     */
+    bool relocate_nodes(const std::unordered_map<uint64_t, uint64_t> &moves);
+
+    /**
      * @brief Tell the tree that a header referencing its current nodes is durable
      *
      * From now on every node is again referenced by durable state, so the next
@@ -346,8 +353,6 @@ private:
     std::unordered_set<uint64_t> fresh;
     uint64_t fresh_epoch = 0;
     std::atomic<uint64_t> epoch{0};
-    /** @brief False while compaction rearranges nodes itself */
-    bool copy_on_write = true;
 
     /**
      * @brief Insert into a node that is guaranteed not to be full
@@ -517,24 +522,9 @@ private:
 
     // Internal unlocked implementations for friend classes (block_allocator)
     bool _clear_cache();
-    /** @brief Where a node is referenced from: parent node and child slot, parent 0 for the root */
-    struct node_link {
-        uint64_t parent;
-        uint32_t index;
-    };
-    std::optional<std::vector<uint64_t>> _collect_node_addresses(
-        uint64_t &node_size, std::unordered_map<uint64_t, node_link> *links = nullptr);
-    /**
-     * @brief Move a node to another address and repoint its parent (or the root) at it
-     *
-     * The caller owns both ranges; the old copy is discarded, not written back.
-     *
-     * @param children Output: child addresses of the moved node (empty for a leaf)
-     */
-    bool _relocate_node(uint64_t from, uint64_t to, const node_link &link, std::vector<uint64_t> &children);
+    std::optional<std::vector<uint64_t>> _collect_node_addresses(uint64_t &node_size);
     std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
     bool _update_impl(const tree_key &key, const tree_val &new_value);
-    bool _update_locked(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Allocate space for a new node in the archive

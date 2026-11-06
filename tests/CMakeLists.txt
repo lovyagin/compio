@@ -78,6 +78,15 @@ if (UNIX)
 
     add_executable(index_corruption crash/index_corruption.cpp)
     target_link_libraries(index_corruption PRIVATE compio)
+
+    add_executable(compaction_crash crash/compaction_crash.cpp)
+    target_link_libraries(compaction_crash PRIVATE compio)
+    target_include_directories(compaction_crash PRIVATE ${PROJECT_SOURCE_DIR})
+    foreach (wal 0 1)
+        add_test(NAME compaction_crash_wal${wal}
+            COMMAND compaction_crash 25 ${wal} 2 4096 1 4000)
+        set_tests_properties(compaction_crash_wal${wal} PROPERTIES TIMEOUT 120)
+    endforeach()
 endif()
 
 enable_testing()
