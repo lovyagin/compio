@@ -256,6 +256,78 @@ TEST_F(StatsAfterDefragTest, ZeroFreeRegionsAfterFullDefrag) {
     }
 }
 
+TEST(NodeCompactionTest, IndexNodesMoveDownWithData) {
+    char fn[256];
+    generate_tmp_fn(fn, sizeof(fn));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    compio_build_dummy_compressor(&cfg.compressor);
+    cfg.fragmentation_threshold = 100;
+    cfg.b_tree_degree = 2;
+    cfg.block_size = 1024;
+    cfg.block_size__minimum = 512;
+    cfg.block_size__maximum = 2048;
+    compio_archive *archive = compio_open_archive(fn, "w+", &cfg);
+    ASSERT_NE(archive, nullptr);
+
+    // A large file first, then small files whose index nodes land behind it.
+    const auto big = make_random_bytes(256 * 1024, 1);
+    compio_file *f = compio_open_file("big", archive);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(big.data(), big.size(), f), big.size());
+    ASSERT_EQ(compio_close_file(f), 0);
+    compio_flush(archive);
+
+    const int small_files = 64;
+    for (int i = 0; i < small_files; ++i) {
+        const auto data = make_random_bytes(700, 100 + i);
+        const std::string name = "s" + std::to_string(i);
+        f = compio_open_file(name.c_str(), archive);
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(compio_write(data.data(), data.size(), f), data.size());
+        ASSERT_EQ(compio_close_file(f), 0);
+    }
+    compio_flush(archive);
+    ASSERT_EQ(compio_remove_file(archive, "big"), COMPIO_SUCCESS);
+    compio_flush(archive);
+
+    uint64_t node_size = 0;
+    auto before = archive->index->collect_node_addresses(node_size);
+    ASSERT_TRUE(before);
+    ASSERT_GT(before->size(), 1u);
+    const uint64_t size_before = readonly(archive->header, header)->file_size;
+    ASSERT_GT(before->back(), size_before / 2) << "setup must leave index nodes behind the freed range";
+
+    ASSERT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
+
+    compio_fragmentation_stats stats{};
+    ASSERT_EQ(compio_get_fragmentation_stats(archive, &stats), COMPIO_SUCCESS);
+    EXPECT_EQ(stats.total_free_bytes, 0u);
+    const uint64_t size_after = readonly(archive->header, header)->file_size;
+    EXPECT_LT(size_after, size_before / 2);
+    auto after = archive->index->collect_node_addresses(node_size);
+    ASSERT_TRUE(after);
+    EXPECT_EQ(after->size(), before->size());
+    EXPECT_LE(after->back() + node_size, size_after);
+    ASSERT_EQ(compio_close_archive(archive), 0);
+
+    cfg.b_tree_degree = 0;
+    archive = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(archive, nullptr);
+    EXPECT_EQ(compio_open_file("big", archive), nullptr);
+    for (int i = 0; i < small_files; ++i) {
+        const auto data = make_random_bytes(700, 100 + i);
+        const std::string name = "s" + std::to_string(i);
+        f = compio_open_file(name.c_str(), archive);
+        ASSERT_NE(f, nullptr) << name;
+        EXPECT_EQ(read_file_bytes(f, data.size()), data) << name;
+        ASSERT_EQ(compio_close_file(f), 0);
+    }
+    ASSERT_EQ(compio_close_archive(archive), 0);
+    remove(fn);
+    remove((std::string(fn) + ".wal").c_str());
+}
+
 TEST_F(StatsAfterDefragTest, TotalFreeMatchesEraseBeforeDefrag) {
     // Use enough data to guarantee multiple storage blocks are allocated,
     // so that erasing leaves measurable free space tracked in the allocator.

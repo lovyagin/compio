@@ -15,6 +15,7 @@
 #include <iterator>
 #include <limits>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include "compio/compio_file.hpp"
@@ -959,10 +960,11 @@ bool block_allocator::perform_defragmentation() {
     // BEFORE holding allocator_mutex to avoid deadlocks, as clear_cache() triggers
     // block destructors which call allocate/deallocate.
 
-    // Collect B-tree node addresses so we don't overwrite them during compaction.
-    // B-tree nodes and storage blocks share the same file address space.
+    // B-tree nodes and storage blocks share the same file address space; both are
+    // moved down, a node by rewriting it and repointing its parent.
     uint64_t btree_node_size = 0;
-    auto node_addrs_opt = archive_->index->_collect_node_addresses(btree_node_size);
+    std::unordered_map<uint64_t, btree::node_link> node_links;
+    auto node_addrs_opt = archive_->index->_collect_node_addresses(btree_node_size, &node_links);
     if (!node_addrs_opt) return false;
     const auto &node_addrs = *node_addrs_opt;
 
@@ -1087,138 +1089,104 @@ bool block_allocator::perform_defragmentation() {
         block_sizes.push_back(block_size);
     }
 
-    // Collect final positions of placed storage blocks for gap computation.
-    std::vector<std::pair<uint64_t, uint64_t>> placed_blocks;
-
-    for (size_t block_index = 0; block_index < used_blocks.size(); ++block_index) {
-        auto &[key, val] = used_blocks[block_index];
-        const uint64_t src = val.addr;
-        const uint64_t block_size = block_sizes[block_index];
-
-        // Ensure write_pos doesn't overlap with ANY reserved region (Files Table or B-tree nodes)
-        while (true) {
-            bool collision = false;
-            
-            // 1. Check files table
-            if (ft_addr != 0) {
-                 // Check intersection [write_pos, write_pos + block_size) AND [ft_addr, ft_addr + ft_size)
-                 if (write_pos < ft_addr + ft_size && write_pos + block_size > ft_addr) {
-                     // Collision! Skip past the files table.
-                     write_pos = ft_addr + ft_size;
-                     collision = true;
-                 }
-            }
-            
-            if (!collision && overlaps(write_pos, block_size, st_addr, st_size)) {
-                write_pos = st_addr + st_size;
-                collision = true;
-            }
-
-            // 2. Check B-tree nodes
-            if (!collision && overlaps_btree_node(write_pos, block_size)) {
-                auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
-                if (it != node_addrs.begin()) {
-                    auto prev = std::prev(it);
-                    if (*prev + btree_node_size > write_pos) {
-                        write_pos = *prev + btree_node_size;
-                        collision = true;
-                    }
-                }
-                if (!collision && it != node_addrs.end() && *it < write_pos + block_size) {
-                    write_pos = *it + btree_node_size;
-                    collision = true;
-                }
-            }
-            
-            if (!collision) break;
-        }
-
-        if (src == write_pos) {
-            placed_blocks.push_back({write_pos, block_size});
-            write_pos += block_size;
-            continue;
-        }
-
-        // Move the block chunk-by-chunk with explicit seeks (shared FILE*).
-        // When dst > src (block moved forward past a B-tree node), use backward
-        // copy to avoid corrupting overlapping source data.
-        bool     io_error   = false;
-        const bool backward = write_pos > src &&
-                              write_pos < src + block_size; // regions overlap
-
-        if (backward) {
-            uint64_t src_cursor = src + block_size;
-            uint64_t dst_cursor = write_pos + block_size;
-            size_t   remaining  = block_size;
-
-            while (remaining > 0) {
-                size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
-                src_cursor -= chunk;
-                dst_cursor -= chunk;
-
-                if (fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) != 0 ||
-                    fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                    WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
-                                  src_cursor);
-                    io_error = true;
-                    break;
-                }
-
-                if (fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) != 0 ||
-                    fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                    WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
-                                  dst_cursor);
-                    io_error = true;
-                    break;
-                }
-
-                remaining -= chunk;
-            }
-        } else {
-            uint64_t src_cursor = src;
-            uint64_t dst_cursor = write_pos;
-            size_t   remaining  = block_size;
-
-            while (remaining > 0) {
-                size_t chunk = std::min(remaining, MOVE_BUFFER_SIZE);
-
-                if (fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) != 0 ||
-                    fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                    WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n",
-                                  src_cursor);
-                    io_error = true;
-                    break;
-                }
-
-                if (fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) != 0 ||
-                    fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
-                    WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n",
-                                  dst_cursor);
-                    io_error = true;
-                    break;
-                }
-
-                src_cursor += chunk;
-                dst_cursor += chunk;
-                remaining  -= chunk;
-            }
-        }
-
-        if (io_error) {
-            WARNING_PRINT("warning: perform_defragmentation aborted due to I/O error\n");
-            return false;
-        }
-
-        const tree_val moved{write_pos, val.size};
-        if (!archive_->index->_update_impl(key, moved)) {
-            WARNING_PRINT("warning: perform_defragmentation: failed to update index at %" PRIu64 "\n", src);
+    for (uint64_t na : node_addrs) {
+        if (overlaps(na, btree_node_size, ft_addr, ft_size) ||
+            overlaps(na, btree_node_size, hdr.allocator_state_offset, hdr.allocator_state_size) ||
+            overlaps(na, btree_node_size, st_addr, st_size)) {
+            WARNING_PRINT("warning: perform_defragmentation: index node overlaps metadata at %" PRIu64 "\n", na);
             errno = EIO;
             return false;
         }
-        val = moved;
+    }
 
-        placed_blocks.push_back({write_pos, block_size});
-        write_pos += block_size;
+    // Blocks and nodes in address order; a node is marked by block_index == SIZE_MAX.
+    struct movable {
+        uint64_t src;
+        uint64_t size;
+        size_t block_index;
+    };
+    std::vector<movable> items;
+    items.reserve(used_blocks.size() + node_addrs.size());
+    for (size_t i = 0; i < used_blocks.size(); ++i) {
+        items.push_back({used_blocks[i].second.addr, block_sizes[i], i});
+    }
+    for (uint64_t na : node_addrs) items.push_back({na, btree_node_size, SIZE_MAX});
+    std::sort(items.begin(), items.end(), [](const movable &a, const movable &b) { return a.src < b.src; });
+
+    // Final positions of everything placed, for the free-space rebuild.
+    std::vector<std::pair<uint64_t, uint64_t>> placed;
+    placed.reserve(items.size());
+
+    for (const movable &item : items) {
+        const uint64_t src = item.src;
+        const uint64_t item_size = item.size;
+
+        // Items never overlap and are visited in address order, so skipping an
+        // obstacle never moves write_pos past src: every move goes down.
+        while (true) {
+            if (overlaps(write_pos, item_size, ft_addr, ft_size)) {
+                write_pos = ft_addr + ft_size;
+            } else if (overlaps(write_pos, item_size, st_addr, st_size)) {
+                write_pos = st_addr + st_size;
+            } else {
+                break;
+            }
+        }
+
+        if (src != write_pos) {
+            if (item.block_index == SIZE_MAX) {
+                auto link = node_links.find(src);
+                std::vector<uint64_t> children;
+                if (link == node_links.end() ||
+                    !archive_->index->_relocate_node(src, write_pos, link->second, children)) {
+                    WARNING_PRINT("warning: perform_defragmentation: failed to move index node at %" PRIu64 "\n", src);
+                    if (errno == 0) errno = EIO;
+                    return false;
+                }
+                node_links.emplace(write_pos, link->second);
+                node_links.erase(link);
+                for (uint64_t child : children) {
+                    auto child_link = node_links.find(child);
+                    if (child_link == node_links.end()) {
+                        errno = EIO;
+                        return false;
+                    }
+                    child_link->second.parent = write_pos;
+                }
+            } else {
+                auto &[key, val] = used_blocks[item.block_index];
+                uint64_t src_cursor = src;
+                uint64_t dst_cursor = write_pos;
+                uint64_t remaining = item_size;
+                while (remaining > 0) {
+                    const size_t chunk = static_cast<size_t>(std::min<uint64_t>(remaining, MOVE_BUFFER_SIZE));
+                    if (fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) != 0 ||
+                        fread(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                        WARNING_PRINT("warning: perform_defragmentation: read failed at %" PRIu64 "\n", src_cursor);
+                        return false;
+                    }
+                    if (fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) != 0 ||
+                        fwrite(move_buffer.data(), 1, chunk, archive_->file) != chunk) {
+                        WARNING_PRINT("warning: perform_defragmentation: write failed at %" PRIu64 "\n", dst_cursor);
+                        return false;
+                    }
+                    src_cursor += chunk;
+                    dst_cursor += chunk;
+                    remaining -= chunk;
+                }
+
+                const tree_val moved{write_pos, val.size};
+                if (!archive_->index->_update_impl(key, moved)) {
+                    WARNING_PRINT("warning: perform_defragmentation: failed to update index at %" PRIu64 "\n", src);
+                    errno = EIO;
+                    return false;
+                }
+                val = moved;
+            }
+        }
+
+        placed.push_back({write_pos, item_size});
+        write_pos += item_size;
     }
 
     // Flush all updated index nodes to disk BEFORE truncating the file.
@@ -1237,18 +1205,7 @@ bool block_allocator::perform_defragmentation() {
     // reference a table copy that later writes can reuse.
     if (ft_addr != 0 && ft_size != 0) {
         uint64_t table_pos = write_pos;
-        while (overlaps(table_pos, ft_size, st_addr, st_size) || overlaps_btree_node(table_pos, ft_size)) {
-            if (overlaps(table_pos, ft_size, st_addr, st_size)) {
-                table_pos = st_addr + st_size;
-                continue;
-            }
-            auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), table_pos);
-            if (it != node_addrs.begin() && *std::prev(it) + btree_node_size > table_pos) {
-                table_pos = *std::prev(it) + btree_node_size;
-            } else {
-                table_pos = *it + btree_node_size;
-            }
-        }
+        if (overlaps(table_pos, ft_size, st_addr, st_size)) table_pos = st_addr + st_size;
 
         auto write_table = [&](uint64_t pos) {
             return readonly(archive_->header, header)->ftable.write_to(archive_->file, pos) &&
@@ -1275,15 +1232,7 @@ bool block_allocator::perform_defragmentation() {
         }
     }
 
-    // Compute the new end of the container: max of write_pos and end of last B-tree node.
     uint64_t truncate_pos = write_pos;
-    if (!node_addrs.empty()) {
-        uint64_t last_node_end = node_addrs.back() + btree_node_size;
-        if (last_node_end > truncate_pos) {
-            truncate_pos = last_node_end;
-        }
-    }
-    
     // The files table may be located after data/nodes.
     if (ft_addr != 0 && ft_addr + ft_size > truncate_pos) {
         truncate_pos = ft_addr + ft_size;
@@ -1304,15 +1253,7 @@ bool block_allocator::perform_defragmentation() {
     blocks_manager_ = free_blocks_manager(&archive_->header->file_size);
 
     // Rebuild free blocks from gaps between all occupied regions (storage blocks + B-tree nodes).
-    std::vector<std::pair<uint64_t, uint64_t>> occupied;
-    occupied.reserve(placed_blocks.size() + node_addrs.size() + 1);
-    for (auto &pb : placed_blocks) {
-        occupied.push_back(pb);
-    }
-    for (uint64_t na : node_addrs) {
-        if (na >= truncate_pos) break;
-        occupied.push_back({na, btree_node_size});
-    }
+    std::vector<std::pair<uint64_t, uint64_t>> occupied = std::move(placed);
     
     // Mark the files table as occupied so the allocator does not hand it out as free space.
     if (ft_addr != 0) {
