@@ -239,6 +239,12 @@ typedef enum {
  */
 typedef struct {
     compio_compressor compressor; /**< Compressor for data blocks */
+    bool allow_compressor_change; /**< Opening an archive written with another compressor (default:
+                                       false, the open fails with EINVAL). When true, the compressor
+                                       above compresses the blocks written from now on and is recorded
+                                       in the header at the next publication; stored blocks keep their
+                                       codec. Blocks of a custom codec need compio_register_compressor()
+                                       before they are read. */
 
     int b_tree_degree;       /**< B-Tree branching factor (typically 3-10). Set to 0 to auto-detect on open. */
     int block_size;          /**< Block size for splitting files (in bytes). Set to 0 to auto-detect on open. */

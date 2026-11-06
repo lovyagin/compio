@@ -37,7 +37,10 @@ one; `compio_build_compressor_by_type` builds the matching built-in compressor.
 The header field names the compressor of *new* blocks. Every block records the codec that packed
 it (`0` = stored as is, otherwise a `compression_type`), so one archive can hold blocks of several
 algorithms. `compio_set_compressor` switches the algorithm for new blocks while the archive is
-open, and `compio_recompress` rewrites the blocks of other codecs with the current one; a block
+open. Opening an archive with a compressor other than the one in the header fails with `EINVAL`
+unless `allow_compressor_change` is set in the config; then the config compressor packs the new
+blocks and replaces the header field at the next publication (a read-only open leaves the header
+as it is). `compio_recompress` rewrites the blocks of other codecs with the current one; a block
 stored uncompressed stays as it is. Blocks of a built-in codec are decoded without any setup. A
 block of an external codec needs `compio_register_compressor` after the archive is opened (a
 block whose codec is unknown fails to read with `ENOTSUP`). A compressed block also carries a

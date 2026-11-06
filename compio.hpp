@@ -40,6 +40,11 @@ public:
         return *this;
     }
 
+    Config& set_allow_compressor_change(bool allow) {
+        config_.allow_compressor_change = allow;
+        return *this;
+    }
+
     Config& set_btree_degree(int degree) {
         config_.b_tree_degree = degree;
         return *this;

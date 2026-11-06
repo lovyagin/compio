@@ -135,6 +135,50 @@ TEST_F(BlockCodecTest, BlocksKeepTheirCodecAfterSwitch) {
     EXPECT_EQ(recorded, COMPIO_COMPRESS_ZSTD);
 }
 
+TEST_F(BlockCodecTest, OpenWithAnotherCompressorNeedsPermission) {
+    const auto before = pattern(40000, 4);
+    const auto after = pattern(40000, 5);
+    compio_archive *archive = open("w+", config);
+    ASSERT_NE(archive, nullptr);
+    write_file(archive, "before", before);
+    ASSERT_EQ(compio_close_archive(archive), 0);
+
+    compio_config other = config;
+    compio_build_zstd_compressor(&other.compressor);
+    errno = 0;
+    EXPECT_EQ(open("r+", other), nullptr);
+    EXPECT_EQ(errno, EINVAL);
+
+    // A read-only open with permission reads the archive and leaves the header alone.
+    other.allow_compressor_change = true;
+    archive = open("r", other);
+    ASSERT_NE(archive, nullptr);
+    EXPECT_TRUE(read_matches(archive, "before", before));
+    ASSERT_EQ(compio_close_archive(archive), 0);
+    compio_compression_type recorded;
+    ASSERT_EQ(compio_get_compression_type(fn, &recorded), 0);
+    EXPECT_EQ(recorded, COMPIO_COMPRESS_LZ4);
+
+    archive = open("r+", other);
+    ASSERT_NE(archive, nullptr);
+    write_file(archive, "after", after);
+    compio_flush(archive);
+    const auto kinds = codecs(archive);
+    EXPECT_GT(kinds.count(COMPIO_COMPRESS_LZ4), 0u);
+    EXPECT_GT(kinds.count(COMPIO_COMPRESS_ZSTD), 0u);
+    ASSERT_EQ(compio_close_archive(archive), 0);
+    ASSERT_EQ(compio_get_compression_type(fn, &recorded), 0);
+    EXPECT_EQ(recorded, COMPIO_COMPRESS_ZSTD);
+
+    // The new compressor is now the archive's own: no permission needed.
+    other.allow_compressor_change = false;
+    archive = open("r", other);
+    ASSERT_NE(archive, nullptr);
+    EXPECT_TRUE(read_matches(archive, "before", before));
+    EXPECT_TRUE(read_matches(archive, "after", after));
+    ASSERT_EQ(compio_close_archive(archive), 0);
+}
+
 TEST_F(BlockCodecTest, RecompressRewritesOnlyBlocksOfOtherCodecs) {
     const auto data = pattern(60000, 3);
     compio_archive *archive = open("w+", config);
