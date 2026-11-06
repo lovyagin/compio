@@ -322,6 +322,39 @@ public:
     }
 
     /**
+     * @brief Pack new blocks with another compressor; stored blocks keep their codec
+     */
+    void set_compressor(const compio_compressor &compressor) {
+        if (!archive_) throw Exception("Archive is not open");
+        if (compio_set_compressor(archive_, &compressor) != COMPIO_SUCCESS) {
+            throw Exception("Setting the compressor failed");
+        }
+    }
+
+    /**
+     * @brief Make blocks written by an external compressor readable
+     */
+    void register_compressor(const compio_compressor &compressor) {
+        if (!archive_) throw Exception("Archive is not open");
+        if (compio_register_compressor(archive_, &compressor) != COMPIO_SUCCESS) {
+            throw Exception("Registering the compressor failed");
+        }
+    }
+
+    /**
+     * @brief Rewrite blocks of other codecs with the current compressor
+     * @return number of rewritten blocks
+     */
+    uint64_t recompress() {
+        if (!archive_) throw Exception("Archive is not open");
+        uint64_t rewritten = 0;
+        if (compio_recompress(archive_, &rewritten) != COMPIO_SUCCESS) {
+            throw Exception("Recompression failed");
+        }
+        return rewritten;
+    }
+
+    /**
      * @brief Check if archive is open
      */
     bool is_open() const {

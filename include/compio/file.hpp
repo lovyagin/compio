@@ -151,7 +151,7 @@ struct header : public infile_object {
  *
  */
 struct index_node : public infile_object {
-    static constexpr uint8_t signature = 67;
+    static constexpr uint8_t signature = 68;
     uint8_t is_leaf;                /**< Is this node a leaf */
     uint32_t num_keys;              /**< Number of used keys in node */
     std::vector<tree_key> keys;     /**< Blocks start positions in uncompressed file */
@@ -178,7 +178,8 @@ struct index_node : public infile_object {
  * @brief Size of index node metadata (without arrays)
  */
 #define INDEX_NODE_METASIZE                                                                        \
-    (sizeof(uint8_t) /* signature */ + sizeof(index_node::is_leaf) + sizeof(index_node::num_keys))
+    (sizeof(uint8_t) /* signature */ + sizeof(index_node::is_leaf) + sizeof(index_node::num_keys) +   \
+     sizeof(uint32_t) /* CRC32C of the preceding bytes */)
 /**
  * @brief Whole size of index node
  */
@@ -192,28 +193,25 @@ struct index_node : public infile_object {
  *
  */
 struct storage_block : public infile_object {
-    static constexpr uint8_t signature = 171; // FNV-1a (v1, no back-ref)
-    static constexpr uint8_t signature_crc32c = 172; // CRC32C (v1, no back-ref)
-    // v2 self-describing blocks: carry their owning {hash,pos} key, enabling
-    // index reconstruction from blocks alone after partial/total index loss.
-    static constexpr uint8_t signature_backref = 173; // FNV-1a (v2, back-ref)
-    static constexpr uint8_t signature_backref_crc32c = 174; // CRC32C (v2, back-ref)
+    static constexpr uint8_t signature = 175;        // FNV-1a checksums
+    static constexpr uint8_t signature_crc32c = 176; // CRC32C checksums
 
-    uint8_t is_compressed;           /**< Is this block compressed */
+    /** @brief Codec of a block that is stored as is (the compression_type values name the others) */
+    static constexpr uint32_t codec_stored = 0;
+
+    uint32_t codec;                  /**< codec_stored or the compression_type that packed the data */
     uint64_t size;                   /**< Size of data array */
     uint64_t original_size;          /**< Original size (size of uncompressed data) */
     std::unique_ptr<uint8_t[]> data; /**< Data block */
-    uint32_t checksum;               /**< Checksum (4 bytes) */
+    uint32_t checksum;               /**< Checksum of the owning key and the stored bytes */
+    uint32_t data_checksum;          /**< Checksum of the uncompressed bytes; 0 for a stored block */
 
-    compio_checksum_type checksum_type; /**< Algorithm used for checksum */
+    compio_checksum_type checksum_type; /**< Algorithm used for checksums */
 
-    /** @brief Owning B-tree key (v2 only). Written into the block, read back on
-     * recovery. has_backref tells whether src_key is present on disk. */
+    /** @brief Owning B-tree key, kept in the block so that the index can be rebuilt from blocks alone */
     tree_key src_key{};
-    bool has_backref = false;
 
-    /** @brief On-disk metadata size implied by a block signature byte */
-    static uint64_t meta_size_for(uint8_t sig);
+    bool is_compressed() const { return codec != codec_stored; }
 
     storage_block();
 
@@ -244,24 +242,20 @@ struct storage_block : public infile_object {
      */
     bool verify_checksum() const;
 
-    /** @brief Compute checksum over (back-ref key if v2) + data */
+    /** @brief Checksum over the owning key and the stored bytes */
     uint32_t compute_checksum() const;
+
+    /** @brief Checksum of the uncompressed bytes */
+    static uint32_t compute_data_checksum(compio_checksum_type type, const uint8_t *plain, uint64_t plain_size);
 };
 
 /**
- * @brief Size of v1 storage block metadata (without data, no back-ref)
+ * @brief Size of storage block metadata (without data)
  */
 #define STORAGE_BLOCK_METASIZE                                                                     \
-    (sizeof(uint8_t) /* signature */ + sizeof(storage_block::is_compressed) +                      \
-     sizeof(storage_block::size) + sizeof(storage_block::original_size) +                          \
-     sizeof(uint32_t) /* FNV-1a 32-bit checksum */)
-
-/**
- * @brief Size of v2 storage block metadata (back-ref {hash,pos} added).
- * New blocks are always written in v2 layout.
- */
-#define STORAGE_BLOCK_METASIZE_V2                                                                  \
-    (STORAGE_BLOCK_METASIZE + sizeof(tree_key) /* hash + pos */)
+    (sizeof(uint8_t) /* signature */ + sizeof(uint32_t) /* codec */ +                              \
+     sizeof(uint64_t) /* size */ + sizeof(uint64_t) /* original size */ +                          \
+     sizeof(compio::tree_key) /* owning key */ + 2 * sizeof(uint32_t) /* checksums */)
 
 } // namespace compio
 

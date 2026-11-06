@@ -163,10 +163,11 @@ TEST_P(CompactionSourceTest, RejectsInvalidRangesBeforeMovingData) {
     case source_corruption::second_header: {
         const uint64_t addr = hdr->disk_size();
         ASSERT_EQ(fseek64(archive->file, first.addr, SEEK_SET), 0);
-        std::vector<uint8_t> bytes(storage_block::meta_size_for(storage_block::signature_backref) + 1);
+        constexpr size_t size_offset = sizeof(uint8_t) + sizeof(uint32_t);
+        std::vector<uint8_t> bytes(STORAGE_BLOCK_METASIZE + 1);
         ASSERT_EQ(fread(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
-        std::fill(bytes.begin() + 2, bytes.begin() + 2 + sizeof(uint64_t), 0);
-        bytes[2] = 1;
+        std::fill(bytes.begin() + size_offset, bytes.begin() + size_offset + sizeof(uint64_t), 0);
+        bytes[size_offset] = 1;
         ASSERT_EQ(fseek64(archive->file, addr, SEEK_SET), 0);
         ASSERT_EQ(fwrite(bytes.data(), 1, bytes.size(), archive->file), bytes.size());
         ASSERT_TRUE(archive->index->update(first_key, {addr, first.size}));
@@ -185,8 +186,8 @@ TEST_P(CompactionSourceTest, RejectsInvalidRangesBeforeMovingData) {
                                 hdr->allocator_state_offset;
         ASSERT_GT(target, metadata_addr);
         const uint64_t size = target - metadata_addr + 1 -
-                              storage_block::meta_size_for(storage_block::signature_backref);
-        ASSERT_EQ(fseek64(archive->file, metadata_addr + 2, SEEK_SET), 0);
+                              STORAGE_BLOCK_METASIZE;
+        ASSERT_EQ(fseek64(archive->file, metadata_addr + sizeof(uint8_t) + sizeof(uint32_t), SEEK_SET), 0);
         ASSERT_EQ(lendian_fwrite(&size, sizeof(size), 1, archive->file), 1u);
     }
     ASSERT_TRUE(archive->index->clear_cache());

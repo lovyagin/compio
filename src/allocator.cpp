@@ -950,20 +950,19 @@ bool block_allocator::trim_tail() {
 }
 
 bool block_allocator::block_footprint(uint64_t addr, uint64_t seekable_end, uint64_t &size) {
-    // The signature determines the metadata footprint of the block.
     uint8_t sig = 0;
     uint64_t compressed_size = 0;
     if (fseek64(archive_->file, static_cast<int64_t>(addr), SEEK_SET) != 0 ||
         fread(&sig, 1, 1, archive_->file) != 1 ||
-        fseek64(archive_->file, static_cast<int64_t>(addr + 2), SEEK_SET) != 0 ||
+        fseek64(archive_->file, static_cast<int64_t>(addr + sizeof(uint8_t) + sizeof(uint32_t)), SEEK_SET) != 0 ||
         lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
         compressed_size == 0) {
         WARNING_PRINT("warning: failed to read block header at %" PRIu64 "\n", addr);
         errno = EIO;
         return false;
     }
-    const uint64_t meta_size = storage_block::meta_size_for(sig);
-    if (meta_size == 0 || compressed_size > seekable_end - addr ||
+    const uint64_t meta_size = STORAGE_BLOCK_METASIZE;
+    if ((sig != storage_block::signature && sig != storage_block::signature_crc32c) || compressed_size > seekable_end - addr ||
         meta_size > seekable_end - addr - compressed_size) {
         WARNING_PRINT("warning: bad block at %" PRIu64 "\n", addr);
         errno = EIO;

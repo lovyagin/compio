@@ -1076,7 +1076,7 @@ protected:
         ASSERT_TRUE(value.has_value());
         compio::storage_block stored;
         ASSERT_TRUE(stored.read_from(archive->file, value->addr));
-        ASSERT_EQ(stored.is_compressed, std::get<1>(GetParam()));
+        ASSERT_EQ(stored.is_compressed(), std::get<1>(GetParam()));
         block = archive->block_reader->read_block(value->addr, key);
         ASSERT_NE(block, nullptr);
         ASSERT_EQ(block->size(), replacement.size());
@@ -1136,7 +1136,7 @@ protected:
     void check_write_failure(failure kind, int write_call = 1) {
         ASSERT_EQ(fflush(archive->file), 0);
         const auto old_addr = block->addr();
-        const auto old_size = block->c_size() + block->disk_meta_size();
+        const auto old_size = block->c_size() + STORAGE_BLOCK_METASIZE;
         std::vector<unsigned char> old_bytes(old_size);
         ASSERT_EQ(pread(fileno(archive->file), old_bytes.data(), old_size, old_addr),
                   static_cast<ssize_t>(old_size));

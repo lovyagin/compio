@@ -138,10 +138,10 @@ TEST_F(FilesTableV6Test, PreviousFormatIsRejected) {
     ASSERT_NE(archive, nullptr);
     ASSERT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
 
-    // Both header slots start with the magic number; 27110662 was format v5.
-    const uint32_t v5 = 27110662;
+    // Both header slots start with the magic number; 27110663 was format v6.
+    const uint32_t v6 = 27110663;
     for (uint64_t slot : {uint64_t{0}, compio::header::disk_size_bytes}) {
-        for (int i = 0; i < 4; ++i) patch(slot + i, static_cast<uint8_t>(v5 >> (8 * i)));
+        for (int i = 0; i < 4; ++i) patch(slot + i, static_cast<uint8_t>(v6 >> (8 * i)));
     }
     EXPECT_EQ(open("r"), nullptr);
 }

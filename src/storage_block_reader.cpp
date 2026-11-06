@@ -50,14 +50,11 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
         }
     }
 
-    _disk_meta_size = b.has_backref ? STORAGE_BLOCK_METASIZE_V2 : STORAGE_BLOCK_METASIZE;
-
-    // Verify-on-read: a v2 block carries its owning {hash,pos}. Only the hash
-    // (file identity) is checked: pos legitimately drifts when add_to_range/shift
-    // moves keys without rewriting on-disk blocks, so a pos mismatch is expected.
-    // A hash mismatch means the index points at a block of a different file —
-    // genuine corruption, reject it.
-    if (b.has_backref && b.src_key.hash != key.hash) {
+    // Only the hash (file identity) is checked: pos legitimately drifts when
+    // add_to_range/shift moves keys without rewriting on-disk blocks, so a pos
+    // mismatch is expected. A hash mismatch means the index points at a block
+    // of a different file: genuine corruption, reject it.
+    if (b.src_key.hash != key.hash) {
         WARNING_PRINT("warning: storage block at addr %" PRIu64 " hash mismatch: "
                       "index {%" PRIu64 ",%" PRIu64 "} != block {%" PRIu64 ",%" PRIu64 "}\n",
                       addr, key.hash, key.pos, b.src_key.hash, b.src_key.pos);
@@ -65,23 +62,36 @@ block::block(context_t &context, const tree_key &key, uint64_t addr)
         return;
     }
 
+    _codec = b.codec;
     _c_size = b.size;
     _size = b.original_size;
 
-    if (b.is_compressed) {
+    if (b.is_compressed()) {
+        const compio_compressor *compressor = context.compressors->find(b.codec);
+        if (!compressor) {
+            WARNING_PRINT("warning: no compressor registered for codec %u of the block at addr %" PRIu64 "\n",
+                          b.codec, addr);
+            _is_valid = false;
+            return;
+        }
         _data = std::make_unique<uint8_t[]>(_size);
-        int ret = context.compressor->decompress(context.compressor, _data.get(), &_size, b.data.get(), b.size);
-        if (ret != 0) {
-            WARNING_PRINT(
-                "warning: compressed data is too big after decompression (%" PRIu64 " is not enough)\n",
-                _size);
+        int ret = compressor->decompress(compressor, _data.get(), &_size, b.data.get(), b.size);
+        if (ret != 0 || _size != b.original_size) {
+            WARNING_PRINT("warning: block at addr %" PRIu64 " does not decompress to %" PRIu64 " bytes\n", addr,
+                          b.original_size);
+            errno = EIO;
+            _is_valid = false;
+            return;
+        }
+        if (storage_block::compute_data_checksum(b.checksum_type, _data.get(), _size) != b.data_checksum) {
+            WARNING_PRINT("warning: decompressed data of the block at addr %" PRIu64 " fails its checksum\n", addr);
+            errno = EIO;
             _is_valid = false;
             return;
         }
 #ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
         bm_n_decompressed_bytes += _size;
 #endif
-        assert(b.original_size == _size);
     } else {
         _data = std::move(b.data);
     }
@@ -108,18 +118,19 @@ bool block::write_back() {
     }
     if (!_is_modified || _is_removed) return true;
 
-    storage_block b(context.compressor->get_bufsize(context.compressor, _size));
+    const compio_compressor *compressor = context.compressors->active();
+    storage_block b(compressor->get_bufsize(compressor, _size));
     b.original_size = _size;
     b.checksum_type = context.checksum_type;
-    b.src_key = _key; // v2 self-describing back-ref
+    b.src_key = _key;
 
-    int ret = context.compressor->compress(context.compressor, b.data.get(), &b.size, _data.get(), _size);
+    int ret = compressor->compress(compressor, b.data.get(), &b.size, _data.get(), _size);
     if (ret != 0 || b.size > _size) {
         if (ret != 0) {
             WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
         }
 
-        b.is_compressed = false;
+        b.codec = storage_block::codec_stored;
         b.data = std::make_unique<uint8_t[]>(_size);
         std::memcpy(b.data.get(), _data.get(), _size);
         b.size = _size;
@@ -127,10 +138,11 @@ bool block::write_back() {
 #ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
         bm_n_compressed_bytes += _size;
 #endif
-        b.is_compressed = true;
+        b.codec = static_cast<uint32_t>(compressor->compression_type);
+        b.data_checksum = storage_block::compute_data_checksum(b.checksum_type, _data.get(), _size);
     }
 
-    const uint64_t disk_size = STORAGE_BLOCK_METASIZE_V2 + b.size;
+    const uint64_t disk_size = STORAGE_BLOCK_METASIZE + b.size;
     const uint64_t new_addr = context.allocator->allocate(disk_size);
     if (new_addr == UINT64_MAX) {
         if (!errno) errno = ENOSPC;
@@ -156,7 +168,7 @@ bool block::write_back() {
     }
     // Preserve the old allocation until the replacement is written and indexed.
     if (_addr != 0) {
-        context.allocator->deallocate(_addr, _c_size + _disk_meta_size, false);
+        context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE, false);
     }
 
     {
@@ -169,7 +181,7 @@ bool block::write_back() {
 
     _addr = new_addr;
     _c_size = b.size;
-    _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
+    _codec = b.codec;
     _is_modified = false;
     context.clear_dirty(this);
     return true;
@@ -234,13 +246,11 @@ uint64_t block::addr() const { return _addr; }
 
 uint64_t block::c_size() const { return _c_size; }
 
-uint64_t block::disk_meta_size() const { return _disk_meta_size; }
-
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
-                                           const compio_compressor *compressor, int max_size,
+                                           compressor_set *compressors, int max_size,
                                            std::mutex *io_mutex, compio::WalManager *wal,
                                            compio_checksum_type checksum_type)
-    : context{file, allocator, index, compressor, io_mutex, wal, checksum_type},
+    : context{file, allocator, index, compressors, io_mutex, wal, checksum_type},
       cache(max_size, shard_by_hash{},
             [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }) {}
 
@@ -480,7 +490,7 @@ void storage_block_reader::remove_block(std::shared_ptr<block> b) {
     }
     context.index->remove(key);
     if (b->addr() != 0) {
-        context.allocator->deallocate(b->addr(), b->c_size() + b->disk_meta_size());
+        context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
     }
 #ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
     --bm_n_blocks;
