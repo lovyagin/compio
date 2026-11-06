@@ -18,19 +18,20 @@ The archive header stores metadata including:
 ### 2. Compression System
 
 #### Supported Algorithms
-- **ZLIB** - Default, balanced compression
-- **LZ4** - Fast compression/decompression
+- **ZLIB** - Balanced compression
+- **LZ4** - Default, fast compression/decompression
 - **Zstandard** - Modern efficient compression
 - **Brotli** - High compression ratio
 - **Dummy** - No compression
 
 #### Compression Type Persistence
-The compression algorithm type is stored in the archive header as `compression_type` field. When an archive is created, the selected compressor is identified and its type is saved. When reopening an archive, the library automatically:
-1. Reads `compression_type` from header
-2. Builds the appropriate compressor
-3. Uses it for all decompression operations
-
-This ensures data integrity regardless of the config passed when opening an existing archive.
+The compressor identifier is stored in the archive header as the `compression_type` field.
+Built-in compressors use identifiers 1..5; values up to `COMPIO_COMPRESS_CUSTOM - 1` are
+reserved for future built-ins, and custom compressors take identifiers from
+`COMPIO_COMPRESS_CUSTOM` (0x10000) up. When an existing archive is opened, the identifier of the
+supplied compressor must equal the stored one, otherwise opening fails with `EINVAL`. The library
+cannot adopt the compressor from the header, because only the caller has the code of a custom
+one; `compio_build_compressor_by_type` builds the matching built-in compressor.
 
 ### 3. Storage System
 
