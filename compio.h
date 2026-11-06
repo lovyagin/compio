@@ -59,7 +59,7 @@
 extern "C" {
 #endif
 
-#define COMPIO_MAGIC_NUMBER 27110663 /**< Format v6: variable-length files table records */
+#define COMPIO_MAGIC_NUMBER 27110664 /**< Format v7: checksummed index nodes, codec per block */
 
 /**
  * @brief Checksum algorithm types
@@ -668,6 +668,47 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
  * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
  */
 int compio_defragment(compio_archive *archive);
+
+/**
+ * @brief Pack new blocks with another compressor
+ *
+ * Blocks written from now on use the compressor; blocks already stored keep the codec they were
+ * written with and stay readable as long as the codec is built in or registered with
+ * compio_register_compressor(). The archive records the compressor's compression_type, so that it
+ * has to be passed again when the archive is reopened. Cached blocks that are not written yet
+ * are packed with the new compressor too.
+ *
+ * @param archive opened archive (write mode)
+ * @param compressor compressor to use; its type must be built in or >= COMPIO_COMPRESS_CUSTOM
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure (errno: EINVAL, EROFS)
+ */
+int compio_set_compressor(compio_archive *archive, const compio_compressor *compressor);
+
+/**
+ * @brief Make blocks written by an external compressor readable
+ *
+ * Built-in algorithms need no registration. A block written by an unregistered external
+ * compressor fails to read (errno = ENOTSUP).
+ *
+ * @param archive opened archive
+ * @param compressor compressor that decodes the blocks of its compression_type
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure (errno = EINVAL)
+ */
+int compio_register_compressor(compio_archive *archive, const compio_compressor *compressor);
+
+/**
+ * @brief Rewrite blocks that use another codec than the current compressor
+ *
+ * Compresses every such block again with the compressor set by compio_set_compressor() (or given
+ * at open) and publishes the result. Blocks stored uncompressed stay as they are. The old copies
+ * are reclaimed by the next compaction. Open files stay usable; no WAL batch may be active
+ * (errno = EBUSY).
+ *
+ * @param archive opened archive (write mode)
+ * @param rewritten receives the number of rewritten blocks; may be NULL
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ */
+int compio_recompress(compio_archive *archive, uint64_t *rewritten);
 
 /**
  * @brief Begin a batch of write operations

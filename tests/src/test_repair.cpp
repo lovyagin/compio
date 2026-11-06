@@ -223,11 +223,10 @@ static int drift_block_backrefs(const std::string &path, int64_t delta) {
     int drifted = 0;
     for (uint64_t off = 1; off < size; ++off) {
         const uint8_t sig = bytes[off];
-        if (sig != compio::storage_block::signature_backref &&
-            sig != compio::storage_block::signature_backref_crc32c) continue;
+        if (sig != compio::storage_block::signature &&
+            sig != compio::storage_block::signature_crc32c) continue;
         compio::storage_block b;
         if (!b.read_from(fw, off)) continue;
-        if (!b.has_backref) continue;
         b.src_key.pos = static_cast<uint64_t>(static_cast<int64_t>(b.src_key.pos) + delta);
         b.write_to(fw, off, nullptr);
         ++drifted;
@@ -315,7 +314,7 @@ TEST_F(RepairTest, StorageBlockBackrefRoundTripAndChecksum) {
 
     {
         compio::storage_block b;
-        b.is_compressed = 0;
+        b.codec = compio::storage_block::codec_stored;
         b.size = N;
         b.original_size = N;
         b.data = std::make_unique<uint8_t[]>(N);
@@ -334,7 +333,6 @@ TEST_F(RepairTest, StorageBlockBackrefRoundTripAndChecksum) {
         ASSERT_NE(f, nullptr);
         ASSERT_TRUE(b.read_from(f, addr));
         fclose(f);
-        EXPECT_TRUE(b.has_backref);
         EXPECT_EQ(b.src_key.hash, key.hash);
         EXPECT_EQ(b.src_key.pos, key.pos);
         ASSERT_EQ(b.size, N);
@@ -342,15 +340,15 @@ TEST_F(RepairTest, StorageBlockBackrefRoundTripAndChecksum) {
     }
 
     // Corrupt one byte of the on-disk back-ref (hash starts right after the
-    // 18-byte common prefix). Checksum covers it, so read_from must fail.
+    // signature, codec and two sizes). Checksum covers it, so read_from must fail.
     {
         FILE *f = fopen(blk_path.c_str(), "rb+");
         ASSERT_NE(f, nullptr);
-        compio::fseek64(f, addr + 18, SEEK_SET);
+        compio::fseek64(f, addr + 21, SEEK_SET);
         uint8_t v = 0;
         ASSERT_EQ(fread(&v, 1, 1, f), 1u);
         v ^= 0xFF;
-        compio::fseek64(f, addr + 18, SEEK_SET);
+        compio::fseek64(f, addr + 21, SEEK_SET);
         fwrite(&v, 1, 1, f);
         fclose(f);
     }
@@ -361,42 +359,4 @@ TEST_F(RepairTest, StorageBlockBackrefRoundTripAndChecksum) {
         EXPECT_FALSE(b.read_from(f, addr)) << "corrupted back-ref must fail checksum";
         fclose(f);
     }
-}
-
-// Backward compatibility: a hand-written legacy v1 block (no back-ref, 22-byte
-// meta, checksum over data only) must still read correctly.
-TEST_F(RepairTest, ReadsLegacyV1Block) {
-    std::string blk_path = (fs::path(tmp_dir) / "v1block.bin").string();
-    const uint64_t addr = 8; // non-zero (read_from asserts addr != 0)
-    const uint64_t N = 200;
-    auto data = pseudo_random(N, 7);
-    const uint32_t cksum = compio::fnv1a_32(data.data(), N);
-
-    std::vector<uint8_t> buf(addr, 0); // leading padding so block starts at addr
-    auto put_u8 = [&](uint8_t v) { buf.push_back(v); };
-    auto put_u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) buf.push_back((uint8_t)(v >> (i * 8))); };
-    auto put_u64 = [&](uint64_t v) { for (int i = 0; i < 8; ++i) buf.push_back((uint8_t)(v >> (i * 8))); };
-
-    put_u8(compio::storage_block::signature); // 171, v1 FNV
-    put_u8(0);                                 // is_compressed
-    put_u64(N);                                // size
-    put_u64(N);                                // original_size
-    put_u32(cksum);                            // checksum (data only)
-    buf.insert(buf.end(), data.begin(), data.end());
-
-    {
-        FILE *f = fopen(blk_path.c_str(), "wb");
-        ASSERT_NE(f, nullptr);
-        ASSERT_EQ(fwrite(buf.data(), 1, buf.size(), f), buf.size());
-        fclose(f);
-    }
-
-    compio::storage_block b;
-    FILE *f = fopen(blk_path.c_str(), "rb");
-    ASSERT_NE(f, nullptr);
-    ASSERT_TRUE(b.read_from(f, addr));
-    fclose(f);
-    EXPECT_FALSE(b.has_backref);
-    ASSERT_EQ(b.size, N);
-    EXPECT_EQ(std::memcmp(b.data.get(), data.data(), N), 0);
 }

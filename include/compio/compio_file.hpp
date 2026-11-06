@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "compio/compressor_set.hpp"
 #include "compio/infile_object.hpp"
 #include "compio/storage_block_reader.hpp"
 #include "compio/wal.hpp"
@@ -39,6 +40,7 @@ struct compio_archive {
     const compio_config config;
     smart_infile_object<compio::header> header;
     compio::btree *index;
+    compio::compressor_set compressors; // outlives the block reader, whose blocks use it
     compio::storage_block_reader *block_reader;
     compio::block_allocator *allocator;
     std::unique_ptr<compio::WalManager> wal;

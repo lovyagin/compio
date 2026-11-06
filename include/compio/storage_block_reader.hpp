@@ -11,6 +11,7 @@
 
 #include "compio/allocator.hpp"
 #include "compio/btree.hpp"
+#include "compio/compressor_set.hpp"
 #include "compio/tree_types.hpp"
 
 #include "lru_2q_cache.hpp"
@@ -29,7 +30,7 @@ struct context_t {
     FILE *file;
     block_allocator *allocator;
     btree *index;
-    const compio_compressor *compressor;
+    compressor_set *compressors;
     std::mutex *io_mutex;
     WalManager *wal;
     compio_checksum_type checksum_type;
@@ -56,12 +57,12 @@ struct context_t {
     context_t& operator=(const context_t&) = delete;
 
     context_t(FILE *file, block_allocator *allocator, btree *index,
-              const compio_compressor *compressor, std::mutex *io_mutex, compio::WalManager *wal,
+              compressor_set *compressors, std::mutex *io_mutex, compio::WalManager *wal,
               compio_checksum_type checksum_type)
         : file(file),
           allocator(allocator),
           index(index),
-          compressor(compressor),
+          compressors(compressors),
           io_mutex(io_mutex),
           wal(wal),
           checksum_type(checksum_type) {}
@@ -94,9 +95,7 @@ class block {
         _is_modified = true;
         context.mark_dirty(this);
     }
-    /** @brief On-disk metadata size of the block as read (v1=22, v2=38), so
-     * deallocation frees the exact on-disk footprint. */
-    uint64_t _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
+    uint32_t _codec = storage_block::codec_stored;
 
 public:
     /**
@@ -126,6 +125,12 @@ public:
      * @param unused Unused parameter to distinguish from other constructor
      */
     block(context_t &context, const tree_key &key, uint64_t size, bool unused);
+
+    /** @brief Codec the block was last read or written with */
+    uint32_t codec() const { return _codec; }
+
+    /** @brief Mark the block for writing back, so that it is packed again */
+    void rewrite() { set_modified(); }
 
     // Write-back must be checked by the reader before destruction.
     ~block() { context.clear_dirty(this); }
@@ -247,13 +252,6 @@ public:
      * @return Size of the block in bytes when compressed (0 if not yet compressed)
      */
     uint64_t c_size() const;
-
-    /**
-     * @brief Get the on-disk metadata size of this block (v1=22, v2=38)
-     *
-     * @return Byte size of the block's on-disk metadata header
-     */
-    uint64_t disk_meta_size() const;
 };
 
 /**
@@ -307,11 +305,11 @@ public:
      * @param file File handle for reading/writing storage blocks
      * @param allocator Memory allocator for managing file space
      * @param index B-tree index for block lookup and management
-     * @param compressor Compression interface for block compression/decompression
+     * @param compressors Compressors for block compression/decompression
      * @param max_size Maximum number of blocks to keep in the LRU cache
      */
     storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
-                         const compio_compressor *compressor, int max_size, std::mutex *io_mutex, compio::WalManager *wal,
+                         compressor_set *compressors, int max_size, std::mutex *io_mutex, compio::WalManager *wal,
                          compio_checksum_type checksum_type);
 
     storage_block_reader(const storage_block_reader &) = delete;

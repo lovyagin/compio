@@ -17,7 +17,7 @@ using namespace compio;
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
-static const uint8_t index_node_signature = 67;
+static const uint8_t index_node_signature = 68; // 67: nodes without a checksum
 
 static void put_le(std::vector<uint8_t> &out, uint64_t value, size_t bytes) {
     for (size_t i = 0; i < bytes; ++i) out.push_back(static_cast<uint8_t>(value >> (8 * i)));
@@ -271,6 +271,24 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
         return false;
     }
 
+    if (is_leaf > 1) {
+        WARNING_PRINT("error: index_node is_leaf invalid (%u) at addr=%" PRIu64 "\n", is_leaf, addr);
+        return false;
+    }
+
+    const size_t body_size = sizeof(tree_key) * num_keys + sizeof(tree_val) * num_keys +
+                             (is_leaf ? 0 : (sizeof(uint64_t) + sizeof(int64_t)) * (num_keys + 1));
+    std::vector<uint8_t> body(body_size);
+    if (body_size > 0 && fread(body.data(), 1, body_size, file) != body_size) return false;
+    uint8_t crc_buf[4];
+    if (fread(crc_buf, 1, sizeof(crc_buf), file) != sizeof(crc_buf)) return false;
+    const uint32_t stored_crc = static_cast<uint32_t>(crc_buf[0]) | (static_cast<uint32_t>(crc_buf[1]) << 8) |
+                                (static_cast<uint32_t>(crc_buf[2]) << 16) | (static_cast<uint32_t>(crc_buf[3]) << 24);
+    if (stored_crc != crc32c_continue(crc32c(header_buf, sizeof(header_buf)), body.data(), body.size())) {
+        WARNING_PRINT("warning: index_node checksum mismatch at addr=%" PRIu64 "\n", addr);
+        return false;
+    }
+
     keys.resize(num_keys);
     values.resize(num_keys);
     if (!is_leaf) {
@@ -279,22 +297,20 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
     }
 
     bool is_be = is_big_endian();
+    const uint8_t *cursor = body.data();
+    auto take = [&](void *dst, size_t bytes) {
+        std::memcpy(dst, cursor, bytes);
+        cursor += bytes;
+    };
 
-    // Batch read keys (num_keys * 16 bytes)
     if (num_keys > 0) {
-        if (fread(keys.data(), sizeof(tree_key), num_keys, file) != num_keys) return false;
+        take(keys.data(), sizeof(tree_key) * num_keys);
+        take(values.data(), sizeof(tree_val) * num_keys);
         if (is_be) {
             for (auto &key : keys) {
                 swap_uint64(&key.hash);
                 swap_uint64(&key.pos);
             }
-        }
-    }
-
-    // Batch read values (num_keys * 16 bytes)
-    if (num_keys > 0) {
-        if (fread(values.data(), sizeof(tree_val), num_keys, file) != num_keys) return false;
-        if (is_be) {
             for (auto &val : values) {
                 swap_uint64(&val.addr);
                 swap_uint64(&val.size);
@@ -303,15 +319,10 @@ bool index_node::read_from(FILE *file, uint64_t addr) {
     }
 
     if (!is_leaf) {
-        // Batch read children
-        if (fread(children.data(), sizeof(uint64_t), children.size(), file) != children.size()) return false;
+        take(children.data(), sizeof(uint64_t) * children.size());
+        take(key_additions.data(), sizeof(int64_t) * key_additions.size());
         if (is_be) {
             for (auto &child : children) swap_uint64(&child);
-        }
-
-        // Batch read key_additions
-        if (fread(key_additions.data(), sizeof(int64_t), key_additions.size(), file) != key_additions.size()) return false;
-        if (is_be) {
             for (auto &add : key_additions) {
                 uint64_t tmp;
                 std::memcpy(&tmp, &add, sizeof(int64_t));
@@ -392,6 +403,8 @@ bool index_node::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_man
         }
     }
 
+    push_u32(crc32c(buffer.data(), buffer.size()));
+
     if (wal_manager) {
         wal_manager->begin_transaction();
         if (!wal_manager->log_write(WalRecordType::INDEX_NODE, addr, buffer.data(), buffer.size())) {
@@ -469,12 +482,8 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         return false;
     }
 
-    // Read the common prefix shared by v1 and v2 layouts:
-    // signature(1) + is_compressed(1) + size(8) + original_size(8) = 18 bytes.
-    // The signature then tells us whether a {hash,pos} back-ref follows.
-    constexpr size_t PREFIX_SIZE = sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t) * 2;
-    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE_V2];
-    if (lendian_fread(meta_buffer, 1, PREFIX_SIZE, file) != PREFIX_SIZE) {
+    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE];
+    if (lendian_fread(meta_buffer, 1, sizeof(meta_buffer), file) != sizeof(meta_buffer)) {
         return false;
     }
 
@@ -491,29 +500,17 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
         return v;
     };
 
-    uint8_t signature = read_u8();
-    if (signature == storage_block::signature) {
+    const uint8_t sig = read_u8();
+    if (sig == storage_block::signature) {
         checksum_type = COMPIO_CHECKSUM_FNV1A;
-        has_backref = false;
-    } else if (signature == storage_block::signature_crc32c) {
+    } else if (sig == storage_block::signature_crc32c) {
         checksum_type = COMPIO_CHECKSUM_CRC32C;
-        has_backref = false;
-    } else if (signature == storage_block::signature_backref) {
-        checksum_type = COMPIO_CHECKSUM_FNV1A;
-        has_backref = true;
-    } else if (signature == storage_block::signature_backref_crc32c) {
-        checksum_type = COMPIO_CHECKSUM_CRC32C;
-        has_backref = true;
     } else {
-        WARNING_PRINT("warning: storage_block signature does not match (got %d)\n", signature);
+        WARNING_PRINT("warning: storage_block signature does not match (got %d)\n", sig);
         return false;
     }
 
-    is_compressed = read_u8();
-    if (is_compressed > 1) {
-        WARNING_PRINT("error: storage_block is_compressed invalid (%u) at addr=%" PRIu64 "\n", is_compressed, addr);
-        return false;
-    }
+    codec = read_u32();
 
     size = read_u64();
     if (size == 0) {
@@ -531,19 +528,12 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
     }
 
     original_size = read_u64();
-
-    // Read the variable tail: [hash, pos] for v2, then the checksum.
-    const size_t tail = (has_backref ? sizeof(uint64_t) * 2 : 0) + sizeof(uint32_t);
-    if (lendian_fread(meta_buffer + PREFIX_SIZE, 1, tail, file) != tail) {
-        return false;
-    }
-    if (has_backref) {
-        src_key.hash = read_u64();
-        src_key.pos = read_u64();
-    }
+    src_key.hash = read_u64();
+    src_key.pos = read_u64();
     checksum = read_u32();
+    data_checksum = read_u32();
 
-    assert(meta_idx == PREFIX_SIZE + tail);
+    assert(meta_idx == STORAGE_BLOCK_METASIZE);
 
     data = std::unique_ptr<uint8_t[]>(new uint8_t[size]);
     if (lendian_fread(data.get(), 1, size, file) != size) {
@@ -558,20 +548,16 @@ bool storage_block::read_from(FILE *file, uint64_t addr) {
 }
 
 bool storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager) const {
-    DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE_V2 + size);
+    DEBUG_PRINT("[W][storage_block]addr=%" PRIu64 ";size=%" PRIu64 "\n", addr, STORAGE_BLOCK_METASIZE + size);
     assert(addr != 0);
     assert(size > 0);
     assert(original_size > 0);
-    assert(is_compressed || size == original_size);
-
-    // New blocks are always written in v2 (self-describing) layout.
-    const_cast<storage_block*>(this)->has_backref = true;
+    assert(is_compressed() || size == original_size);
 
     // Calculate checksum before writing (non-const, so we cast)
     const_cast<storage_block*>(this)->calculate_checksum();
 
-    // Prepare metadata buffer
-    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE_V2];
+    uint8_t meta_buffer[STORAGE_BLOCK_METASIZE];
     size_t meta_idx = 0;
 
     auto push_u8 = [&](uint8_t v) { meta_buffer[meta_idx++] = v; };
@@ -582,22 +568,21 @@ bool storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
         for(int i=0; i<8; ++i) meta_buffer[meta_idx++] = static_cast<uint8_t>(v >> (i*8));
     };
 
-    uint8_t sig = (checksum_type == COMPIO_CHECKSUM_CRC32C) ? storage_block::signature_backref_crc32c
-                                                            : storage_block::signature_backref;
-    push_u8(sig);
-    push_u8(is_compressed);
+    push_u8(checksum_type == COMPIO_CHECKSUM_CRC32C ? storage_block::signature_crc32c : storage_block::signature);
+    push_u32(codec);
     push_u64(size);
     push_u64(original_size);
     push_u64(src_key.hash);
     push_u64(src_key.pos);
     push_u32(checksum);
+    push_u32(data_checksum);
 
-    assert(meta_idx == STORAGE_BLOCK_METASIZE_V2);
+    assert(meta_idx == STORAGE_BLOCK_METASIZE);
 
     if (wal_manager) {
         wal_manager->begin_transaction();
         std::vector<compio::WalManager::iovec_buf> buffers;
-        buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE_V2});
+        buffers.push_back({meta_buffer, STORAGE_BLOCK_METASIZE});
         if (size > 0 && data) buffers.push_back({data.get(), size});
         if (!wal_manager->log_write_vectored(WalRecordType::BLOCK, addr, buffers)) {
             wal_manager->rollback_transaction();
@@ -612,7 +597,7 @@ bool storage_block::write_to(FILE *file, uint64_t addr, compio::WalManager* wal_
 
     clearerr(file);
     if (fseek64(file, addr, SEEK_SET) != 0) return false;
-    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE_V2, file) != STORAGE_BLOCK_METASIZE_V2 ||
+    if (fwrite(meta_buffer, 1, STORAGE_BLOCK_METASIZE, file) != STORAGE_BLOCK_METASIZE ||
         (size > 0 && data && fwrite(data.get(), 1, size, file) != size) || ferror(file)) {
         if (!errno) errno = EIO;
         return false;
@@ -634,32 +619,21 @@ index_node::index_node(int tree_degree)
     key_additions.clear();
 }
 
-uint64_t storage_block::meta_size_for(uint8_t sig) {
-    switch (sig) {
-        case storage_block::signature:
-        case storage_block::signature_crc32c:
-            return STORAGE_BLOCK_METASIZE;
-        case storage_block::signature_backref:
-        case storage_block::signature_backref_crc32c:
-            return STORAGE_BLOCK_METASIZE_V2;
-        default:
-            return 0;
-    }
-}
-
-storage_block::storage_block() : data(nullptr), checksum_type(COMPIO_CHECKSUM_FNV1A) {}
+storage_block::storage_block()
+    : codec(codec_stored), size(0), original_size(0), data(nullptr), checksum(0), data_checksum(0),
+      checksum_type(COMPIO_CHECKSUM_FNV1A) {}
 
 storage_block::storage_block(std::unique_ptr<uint8_t[]> &&data, uint64_t size)
-    : is_compressed(0),
+    : codec(codec_stored),
       size(size),
       original_size(0),
       data(std::move(data)),
+      checksum(0),
+      data_checksum(0),
       checksum_type(COMPIO_CHECKSUM_FNV1A) {}
 
 storage_block::storage_block(uint64_t size)
-    : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {
-        checksum_type = COMPIO_CHECKSUM_FNV1A;
-    }
+    : storage_block(std::unique_ptr<uint8_t[]>(new uint8_t[size]), size) {}
 
 files_table::files_table(uint32_t expected_files) {
     files.reserve(expected_files);
@@ -736,32 +710,25 @@ int files_table::remove(const char *name) {
     return 0;
 }
 
-// Serialize the back-ref key to a little-endian byte buffer, so the checksum
-// is computed over the same bytes that hit the disk (portable across endianness).
-static void backref_key_bytes(const tree_key &key, uint8_t out[16]) {
+// The owning key is serialized little-endian, so that the checksum covers the same
+// bytes on every platform.
+static void key_bytes(const tree_key &key, uint8_t out[16]) {
     for (int i = 0; i < 8; ++i) out[i] = static_cast<uint8_t>(key.hash >> (i * 8));
     for (int i = 0; i < 8; ++i) out[8 + i] = static_cast<uint8_t>(key.pos >> (i * 8));
 }
 
 uint32_t storage_block::compute_checksum() const {
-    // v2 blocks fold {hash,pos} into the checksum so back-ref corruption is caught.
+    uint8_t kb[16];
+    key_bytes(src_key, kb);
     if (checksum_type == COMPIO_CHECKSUM_CRC32C) {
-        uint32_t c = 0;
-        if (has_backref) {
-            uint8_t kb[16];
-            backref_key_bytes(src_key, kb);
-            c = crc32c(kb, sizeof(kb));
-        }
-        return crc32c_continue(c, data.get(), size);
-    } else {
-        uint32_t h = 0x811c9dc5;
-        if (has_backref) {
-            uint8_t kb[16];
-            backref_key_bytes(src_key, kb);
-            h = fnv1a_32_continue(h, kb, sizeof(kb));
-        }
-        return fnv1a_32_continue(h, data.get(), size);
+        return crc32c_continue(crc32c(kb, sizeof(kb)), data.get(), size);
     }
+    return fnv1a_32_continue(fnv1a_32_continue(0x811c9dc5, kb, sizeof(kb)), data.get(), size);
+}
+
+uint32_t storage_block::compute_data_checksum(compio_checksum_type type, const uint8_t *plain, uint64_t plain_size) {
+    if (type == COMPIO_CHECKSUM_CRC32C) return crc32c(plain, plain_size);
+    return fnv1a_32_continue(0x811c9dc5, plain, plain_size);
 }
 
 void storage_block::calculate_checksum() {

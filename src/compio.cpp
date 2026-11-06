@@ -25,6 +25,7 @@
 #include "compio/file.hpp"
 #include "compio/utils.hpp"
 #include "compio/btree.hpp"
+#include "compio/compressor_set.hpp"
 
 using namespace compio;
 namespace fs = std::filesystem;
@@ -470,9 +471,10 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_index;
     }
 
+    if (!archive->compressors.activate(archive->config.compressor)) goto no_block_reader;
     archive->block_reader = new compio::storage_block_reader(
         file, archive->allocator, archive->index,
-        &archive->config.compressor, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get(),
+        &archive->compressors, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get(),
         archive->config.checksum_type);
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
@@ -646,8 +648,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
                 storage_block sb;
                 valid = sb.read_from(archive->file, val.addr);
                 if (valid) {
-                    const uint64_t meta = sb.has_backref ? STORAGE_BLOCK_METASIZE_V2 : STORAGE_BLOCK_METASIZE;
-                    blocks[i].disk_size = meta + sb.size;
+                    blocks[i].disk_size = STORAGE_BLOCK_METASIZE + sb.size;
                 }
             }
             if (!valid) {
@@ -1042,6 +1043,81 @@ int compio_defragment(compio_archive *archive) {
     // Publish the compacted layout right away: the file is only cut down to
     // its new size once a header describing that layout is durable.
     return flush_impl(archive) ? COMPIO_SUCCESS : COMPIO_ERROR;
+}
+
+static bool compressor_is_valid(const compio_compressor *c) {
+    return c && valid_compression_type(c->compression_type) && compio::compressor_set::is_usable(*c);
+}
+
+int compio_set_compressor(compio_archive *archive, const compio_compressor *compressor) {
+    if (!archive || !compressor_is_valid(compressor)) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    if (archive->is_readonly()) {
+        errno = EROFS;
+        return COMPIO_ERROR;
+    }
+    if (!archive->compressors.activate(*compressor)) return COMPIO_ERROR;
+    // The header records the codec of new blocks; the check on open compares it with the config.
+    archive->header->compression_type = static_cast<uint32_t>(compressor->compression_type);
+    return COMPIO_SUCCESS;
+}
+
+int compio_register_compressor(compio_archive *archive, const compio_compressor *compressor) {
+    if (!archive || !compressor_is_valid(compressor)) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    return archive->compressors.add(*compressor) ? COMPIO_SUCCESS : COMPIO_ERROR;
+}
+
+int compio_recompress(compio_archive *archive, uint64_t *rewritten) {
+    if (rewritten) *rewritten = 0;
+    if (!archive) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    if (archive->is_readonly()) {
+        errno = EROFS;
+        return COMPIO_ERROR;
+    }
+    if (!archive->index || !archive->block_reader || !archive->file) return COMPIO_ERROR;
+    if (archive->wal && archive->wal->get_batch_depth() > 0) {
+        errno = EBUSY;
+        return COMPIO_ERROR;
+    }
+
+    // Every block is on disk and in the index, so the loop sees final addresses.
+    if (!flush_impl(archive)) return COMPIO_ERROR;
+    const auto blocks = archive->index->get_range({0, 0}, {UINT64_MAX, UINT64_MAX});
+    if (!blocks) {
+        errno = EIO;
+        return COMPIO_ERROR;
+    }
+
+    const uint32_t target = static_cast<uint32_t>(archive->compressors.active()->compression_type);
+    uint64_t count = 0;
+    bool ok = true;
+    for (const auto &[key, val] : *blocks) {
+        if (val.addr == 0) continue;
+        const auto block = archive->block_reader->read_block(val.addr, key);
+        if (!block || !block->is_valid()) {
+            ok = false;
+            break;
+        }
+        // A stored block stays stored: it did not shrink with its former codec either.
+        if (block->codec() == target || block->codec() == storage_block::codec_stored) continue;
+        block->rewrite();
+        ++count;
+    }
+    drop_file_caches(archive);
+    const bool flushed = flush_impl(archive);
+    if (rewritten) *rewritten = count;
+    return ok && flushed ? COMPIO_SUCCESS : COMPIO_ERROR;
 }
 
 static bool flush_header_double_buffered(compio_archive *archive) {
@@ -2668,13 +2744,7 @@ int compio_repair(const char *path, const char *output_dir) {
             WARNING_PRINT("info: header valid, degree=%u, compression=%u\n", h.b_tree_degree, h.compression_type);
         }
 
-        compio_compressor compressor;
-        if (compio_build_compressor_by_type(&compressor, (compio_compression_type)h.compression_type) !=
-            COMPIO_SUCCESS) {
-            WARNING_PRINT("error: archive uses compressor %u, which is not built in; cannot decode blocks\n",
-                          h.compression_type);
-            return COMPIO_ERROR;
-        }
+        compio::compressor_set compressors;
 
         std::map<uint64_t, std::string> hash_to_name;
         if (valid_header) {
@@ -2738,21 +2808,23 @@ int compio_repair(const char *path, const char *output_dir) {
                     fseek64(f, saved_pos, SEEK_SET);
                 }
 
-                if (sig == storage_block::signature || sig == storage_block::signature_crc32c ||
-                    sig == storage_block::signature_backref || sig == storage_block::signature_backref_crc32c) {
+                if (sig == storage_block::signature || sig == storage_block::signature_crc32c) {
                     uint64_t saved_pos = ftell64(f);
                     storage_block sb;
                     if (sb.read_from(f, current_addr)) {
+                        if (sb.is_compressed() && !compressors.find(sb.codec)) {
+                            WARNING_PRINT("error: block at %" PRIu64 " uses codec %u, which is not built in; cannot decode blocks\n",
+                                          current_addr, sb.codec);
+                            return COMPIO_ERROR;
+                        }
                         discovered_blocks[current_addr] = {
                             current_addr,
                             sb.size,
                             sb.original_size,
-                            (bool)sb.is_compressed
+                            sb.is_compressed()
                         };
-                        if (sb.has_backref) {
-                            block_backrefs.push_back({sb.src_key.hash, sb.src_key.pos,
-                                                      current_addr, sb.original_size});
-                        }
+                        block_backrefs.push_back({sb.src_key.hash, sb.src_key.pos,
+                                                  current_addr, sb.original_size});
                     }
                     fseek64(f, saved_pos, SEEK_SET);
                 }
@@ -2760,7 +2832,7 @@ int compio_repair(const char *path, const char *output_dir) {
             offset += bytes_read;
         }
 
-        // Re-attribute v2 blocks whose owning index node was lost: if no surviving
+        // Re-attribute blocks whose owning index node was lost: if no surviving
         // node references the block's address, trust its self-describing back-ref.
         int reattributed = 0;
         for (const auto &br : block_backrefs) {
@@ -2780,14 +2852,20 @@ int compio_repair(const char *path, const char *output_dir) {
             // Read block again to get data
             storage_block sb;
             if (sb.read_from(f, addr)) {
-                 if (sb.is_compressed) {
+                 if (sb.is_compressed()) {
+                    const compio_compressor *compressor = compressors.find(sb.codec);
+                    if (!compressor) {
+                         WARNING_PRINT("warning: block at %" PRIu64 " uses codec %u, which is not built in\n", addr, sb.codec);
+                         return;
+                    }
                     uint64_t decomp_size = sb.original_size;
                     if (decomp_size > 1024 * 1024 * 1024) {
                          WARNING_PRINT("warning: skipping huge block decompression %" PRIu64 "\n", addr);
                          return;
                     }
                     std::vector<uint8_t> decomp_buf(decomp_size);
-                    if (compressor.decompress(&compressor, decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0) {
+                    if (compressor->decompress(compressor, decomp_buf.data(), &decomp_size, sb.data.get(), sb.size) == 0 &&
+                        storage_block::compute_data_checksum(sb.checksum_type, decomp_buf.data(), decomp_size) == sb.data_checksum) {
                         fseek64(out_f, file_pos, SEEK_SET);
                         fwrite(decomp_buf.data(), 1, decomp_size, out_f);
                     } else {

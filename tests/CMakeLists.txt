@@ -11,6 +11,7 @@ add_executable(compio_gtest
     src/test_allocator_strategies.cpp
     src/test_allocator_drift.cpp
     src/test_api_limits.cpp
+    src/test_block_codec.cpp
     src/test_compression_type.cpp
     src/test_compressor.cpp
     src/test_data_integrity.cpp
