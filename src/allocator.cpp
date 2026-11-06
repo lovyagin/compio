@@ -1024,6 +1024,11 @@ bool block_allocator::perform_defragmentation() {
         }
     }
 
+    // The durable header references the published allocator state until the
+    // compacted layout is published, so it stays in place like the files table.
+    const uint64_t st_addr = archive_->published_allocator_state_offset;
+    const uint64_t st_size = archive_->published_allocator_state_size;
+
     auto overlaps = [](uint64_t start, uint64_t size, uint64_t other, uint64_t other_size) {
         if (size == 0 || other_size == 0) return false;
         return start <= other ? size > other - start : other_size > start - other;
@@ -1111,6 +1116,11 @@ bool block_allocator::perform_defragmentation() {
                  }
             }
             
+            if (!collision && overlaps(write_pos, block_size, st_addr, st_size)) {
+                write_pos = st_addr + st_size;
+                collision = true;
+            }
+
             // 2. Check B-tree nodes
             if (!collision && overlaps_btree_node(write_pos, block_size)) {
                 auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
@@ -1234,7 +1244,11 @@ bool block_allocator::perform_defragmentation() {
     // reference a table copy that later writes can reuse.
     if (ft_addr != 0 && ft_size != 0) {
         uint64_t table_pos = write_pos;
-        while (overlaps_btree_node(table_pos, ft_size)) {
+        while (overlaps(table_pos, ft_size, st_addr, st_size) || overlaps_btree_node(table_pos, ft_size)) {
+            if (overlaps(table_pos, ft_size, st_addr, st_size)) {
+                table_pos = st_addr + st_size;
+                continue;
+            }
             auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), table_pos);
             if (it != node_addrs.begin() && *std::prev(it) + btree_node_size > table_pos) {
                 table_pos = *std::prev(it) + btree_node_size;
@@ -1310,6 +1324,9 @@ bool block_allocator::perform_defragmentation() {
     // v5: Mark files_table as occupied so allocator doesn't hand it out as free space.
     if (ft_addr != 0) {
         occupied.push_back({ft_addr, ft_size});
+    }
+    if (st_size != 0 && st_addr < truncate_pos) {
+        occupied.push_back({st_addr, st_size});
     }
 
     std::sort(occupied.begin(), occupied.end());
