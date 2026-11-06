@@ -791,6 +791,76 @@ TEST_F(ThresholdCompactionTest, HalfFreeContainerIsCompactedOnClose) {
     compio_close_archive(ar);
 }
 
+TEST_F(ThresholdCompactionTest, StaleFreeSpaceIsCompactedOnFlush) {
+    constexpr std::size_t SZ = 1 << 20;
+    const compio_config cfg = config(30);
+    const auto keep = make_random_bytes(SZ, 1);
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    write_file(ar, "drop", make_random_bytes(SZ, 2));
+    write_file(ar, "keep", keep);
+    compio_flush(ar);
+
+    compio_file *f = compio_open_file("keep", ar);
+    ASSERT_NE(f, nullptr);
+    EXPECT_EQ(read_file_bytes(f, SZ), keep);
+
+    // Freed space stays reserved until the next header, so the first flush
+    // after the removal cannot reclaim it; the next one does.
+    ASSERT_EQ(compio_remove_file(ar, "drop"), 0);
+    compio_flush(ar);
+    EXPECT_GE(physical_size(), 2 * SZ);
+    compio_flush(ar);
+    EXPECT_LT(physical_size(), SZ + SZ / 10);
+
+    // The open handle survives the move of its blocks.
+    EXPECT_EQ(read_file_bytes(f, SZ), keep);
+    const auto tail = make_random_bytes(4096, 3);
+    compio_seek(f, 0, COMPIO_SEEK_END);
+    ASSERT_EQ(compio_write(tail.data(), tail.size(), f), tail.size());
+    compio_close_file(f);
+    ASSERT_EQ(compio_close_archive(ar), 0);
+
+    ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr);
+    f = compio_open_file("keep", ar);
+    ASSERT_NE(f, nullptr);
+    auto expected = keep;
+    expected.insert(expected.end(), tail.begin(), tail.end());
+    EXPECT_EQ(read_file_bytes(f, expected.size()), expected);
+    compio_close_file(f);
+    compio_close_archive(ar);
+}
+
+TEST_F(ThresholdCompactionTest, OverwriteChurnIsNotCompactedOnFlush) {
+    constexpr std::size_t SZ = 1 << 20;
+    compio_config cfg = config(30);
+    compio_build_dummy_compressor(&cfg.compressor);
+
+    compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *f = compio_open_file("data", ar);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(make_random_bytes(SZ, 0).data(), SZ, f), SZ);
+    compio_flush(ar);
+
+    // Each round rewrites the whole file: the previous copy becomes free and
+    // the next round takes it again, so about half the container is free at
+    // every flush, but none of it stays unused.
+    std::vector<uint8_t> last;
+    for (uint32_t round = 1; round <= 6; ++round) {
+        last = make_random_bytes(SZ, round);
+        compio_seek(f, 0, COMPIO_SEEK_SET);
+        ASSERT_EQ(compio_write(last.data(), SZ, f), SZ);
+        compio_flush(ar);
+        if (round >= 2) EXPECT_GE(physical_size(), 2 * SZ) << "round " << round;
+    }
+    EXPECT_EQ(read_file_bytes(f, SZ), last);
+    compio_close_file(f);
+    ASSERT_EQ(compio_close_archive(ar), 0);
+}
+
 TEST_F(ThresholdCompactionTest, NegligibleFreeSpaceDoesNotTriggerCompaction) {
     constexpr std::size_t SZ = 1 << 20;
     const compio_config cfg = config(30);

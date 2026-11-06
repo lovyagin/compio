@@ -258,8 +258,11 @@ typedef struct {
                                           is overwritten with zeros instead. */
     uint8_t fragmentation_threshold; /**< Compact the archive when free regions take more than this
                                         percentage of the container (default: 30; 100 disables
-                                        automatic compaction). Checked when the archive is closed;
-                                        compio_defragment() compacts regardless of it. */
+                                        automatic compaction). Checked when the archive is closed
+                                        and at every header publication (compio_flush,
+                                        compio_end_batch, a checkpoint at wal_max_size_bytes); a
+                                        publication counts only space that stayed free since the
+                                        previous one. compio_defragment() compacts regardless of it. */
     int max_files; /**< Expected number of files; memory for that many entries is reserved
                         (default: COMPIO_MAX_FILES, 0 = default). Not a limit and not stored in
                         the archive: the table grows up to COMPIO_MAX_FILES_LIMIT files. */
@@ -657,8 +660,8 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
  * threshold): data blocks, index nodes and the files table are moved towards the
  * start of the container and the file is truncated. Only the allocator state
  * referenced by the last published header stays in place, so a gap in front of it
- * may remain. All files of the archive must be closed, and any
- * active WAL batch must be ended before compaction; otherwise it fails with
+ * may remain. Open files stay usable: their cached index entries are dropped.
+ * Any active WAL batch must be ended before compaction; otherwise it fails with
  * errno set to EBUSY.
  *
  * @param archive opened archive (write mode)

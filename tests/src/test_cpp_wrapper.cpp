@@ -44,18 +44,17 @@ TEST_F(CppWrapperTest, InsertEraseAndSize) {
     EXPECT_EQ(read_all(f), "01456789");
 }
 
-TEST_F(CppWrapperTest, DefragmentNeedsClosedFiles) {
+TEST_F(CppWrapperTest, DefragmentKeepsOpenFilesUsable) {
     compio::Archive ar(fn, "w");
-    {
-        compio::File f = ar.open_file("data");
-        const std::string data(1 << 16, 'x');
-        ASSERT_EQ(f.write(data.data(), data.size()), data.size());
-        EXPECT_THROW(ar.defragment(), compio::Exception);
-    }
-    EXPECT_NO_THROW(ar.defragment());
-
     compio::File f = ar.open_file("data");
+    const std::string data(1 << 16, 'x');
+    ASSERT_EQ(f.write(data.data(), data.size()), data.size());
+    EXPECT_NO_THROW(ar.defragment());
     EXPECT_EQ(f.get_size(), 1u << 16);
+    std::string back(data.size(), '\0');
+    f.seek(0);
+    ASSERT_EQ(f.read(back.data(), back.size()), back.size());
+    EXPECT_EQ(back, data);
 }
 
 TEST_F(CppWrapperTest, ClosedHandlesThrow) {

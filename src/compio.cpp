@@ -77,7 +77,7 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
 
 static bool fsync_archive(FILE *file);
 static bool flush_header_double_buffered(compio_archive *archive);
-static bool flush_impl(compio_archive *archive);
+static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold = nullptr);
 static bool log_operation_state(compio_archive *archive);
 
 // Adopt the state of the last committed operation found in the journal.
@@ -156,8 +156,7 @@ compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *fi
       block_reader(nullptr),
       allocator(nullptr),
       wal(std::move(wal)),
-      mode_b(mode_b),
-      open_files_count(0) {
+      mode_b(mode_b) {
     published_allocator_state_offset = readonly(header, compio::header)->allocator_state_offset;
     published_allocator_state_size = readonly(header, compio::header)->allocator_state_size;
     published_file_size = readonly(header, compio::header)->file_size;
@@ -581,7 +580,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     file->cached_range_min = 0;
     file->cached_range_max = 0;
 
-    archive->open_files_count++;
+    archive->open_files.insert(file);
 
     return file;
 }
@@ -710,7 +709,6 @@ int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation
 // Forward declarations
 static void end_auto_batch_if_active(compio_file *file);
 static bool flush_header_double_buffered(compio_archive *archive);
-static bool flush_impl(compio_archive *archive);
 static bool flush_archive_impl(compio_archive *archive);
 static void begin_batch_impl(compio_archive *archive);
 
@@ -833,6 +831,37 @@ static void end_auto_batch_if_active(compio_file *file) {
     }
 }
 
+/**
+ * Invalidate range cache (called on write/insert/erase operations)
+ */
+static void invalidate_range_cache(compio_file *file) {
+    file->cached_range.clear();
+    file->cached_range_min = 0;
+    file->cached_range_max = 0;
+}
+
+static void drop_file_caches(compio_archive *archive) {
+    for (compio_file *file : archive->open_files) {
+        file->cached_leaf = {};
+        invalidate_range_cache(file);
+    }
+}
+
+// Space freed since the last publication stays reserved until the next one,
+// and overwrites reuse it in the interval after that. Only space that stayed
+// unused over a whole interval counts: compacting freshly freed space would
+// move data that the next writes displace again.
+static bool publish(compio_archive *archive) {
+    bool compact = false;
+    if (!flush_impl(archive, &compact)) return false;
+    if (!compact || archive->is_readonly() || !archive->index || !archive->file ||
+        (archive->wal && archive->wal->get_batch_depth() > 0)) {
+        return true;
+    }
+    drop_file_caches(archive);
+    return archive->allocator->force_defragmentation() && flush_impl(archive);
+}
+
 // The journal can only be truncated by a checkpoint over a published header, so
 // a full journal triggers a flush. Inside a batch the flush waits for its end.
 // A pending write error is left for the caller's next flush to report.
@@ -841,7 +870,7 @@ static void checkpoint_if_wal_full(compio_archive *archive) {
     const uint64_t limit = archive->config.wal_max_size_bytes;
     if (!wal || limit == 0 || wal->get_batch_depth() > 0 || wal->get_size() < limit) return;
     if (archive->block_reader->has_write_error() || archive->index->has_write_error()) return;
-    flush_impl(archive);
+    publish(archive);
 }
 
 /**
@@ -917,15 +946,6 @@ static void cache_range_results(compio_file *file,
     file->cached_range_max = max_pos;
 }
 
-/**
- * Invalidate range cache (called on write/insert/erase operations)
- */
-static void invalidate_range_cache(compio_file *file) {
-    file->cached_range.clear();
-    file->cached_range_min = 0;
-    file->cached_range_max = 0;
-}
-
 // Caller must hold archive->mutex so a batch cannot start during publication.
 static void begin_batch_impl(compio_archive *archive) {
     if (archive->wal) archive->wal->begin_batch();
@@ -972,7 +992,7 @@ static bool end_batch_impl(compio_archive *archive) {
     }
 
     // Publish an up-to-date allocator snapshot together with the batch's data.
-    return flush_impl(archive);
+    return publish(archive);
 }
 
 int compio_end_batch(compio_archive *archive) {
@@ -1008,12 +1028,6 @@ int compio_defragment(compio_archive *archive) {
         return COMPIO_ERROR;
     }
 
-    if (archive->open_files_count > 0) {
-        WARNING_PRINT("warning: compio_defragment called with %u open file(s)\n",
-                       archive->open_files_count);
-        return COMPIO_ERROR;
-    }
-
     if (archive->wal && archive->wal->get_batch_depth() > 0) {
         WARNING_PRINT("warning: compio_defragment called with an active WAL batch\n");
         errno = EBUSY;
@@ -1023,6 +1037,7 @@ int compio_defragment(compio_archive *archive) {
     // Write out pending changes first, so that the compaction works on the
     // final layout and the files table is not rewritten behind it afterwards.
     if (!flush_impl(archive)) return COMPIO_ERROR;
+    drop_file_caches(archive);
     if (!archive->allocator->force_defragmentation()) return COMPIO_ERROR;
     // Publish the compacted layout right away: the file is only cut down to
     // its new size once a header describing that layout is durable.
@@ -1097,9 +1112,7 @@ int compio_close_file(compio_file *file) {
     // End any active auto-batch before closing
     end_auto_batch_if_active(file);
 
-    if (file->archive->open_files_count > 0) {
-        file->archive->open_files_count--;
-    }
+    file->archive->open_files.erase(file);
 
     delete file;
     return 0;
@@ -2491,7 +2504,7 @@ static bool sync_files_table(compio_archive *archive) {
 }
 
 // Caller must hold archive->mutex.
-static bool flush_impl(compio_archive *archive) {
+static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold) {
     if (archive->is_readonly()) return true;
 
     // Start atomic transaction for the entire flush operation
@@ -2518,6 +2531,13 @@ static bool flush_impl(compio_archive *archive) {
     // Save allocator state (updates header fields)
     if (archive->allocator) {
         if (!archive->allocator->save_state(archive)) durable = false;
+    }
+
+    // Every allocation of the interval is done, and what it freed is still
+    // reserved: the free list now holds only space that stayed unused.
+    if (stale_space_over_threshold && archive->allocator) {
+        *stale_space_over_threshold =
+            archive->allocator->get_fragmentation() > archive->config.fragmentation_threshold;
     }
 
     // Commit the transaction FIRST, so the data, allocator state and files table
@@ -2578,7 +2598,7 @@ static bool flush_archive_impl(compio_archive *archive) {
 
     // Finish automatic batches; explicit batches keep deferring publication.
     if (!end_auto_batches(archive)) return false;
-    return flush_impl(archive);
+    return publish(archive);
 }
 
 void compio_flush(compio_archive *archive) {

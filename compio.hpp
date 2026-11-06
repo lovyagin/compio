@@ -312,7 +312,7 @@ public:
     }
 
     /**
-     * @brief Compact the archive; all files of the archive must be closed
+     * @brief Compact the archive; open files stay usable, no batch may be active
      */
     void defragment() {
         if (!archive_) throw Exception("Archive is not open");

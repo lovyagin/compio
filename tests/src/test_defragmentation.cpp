@@ -298,29 +298,47 @@ TEST(DefragmentationApiTest, NullArchiveReturnsError) {
     EXPECT_NE(compio_defragment(nullptr), COMPIO_SUCCESS);
 }
 
-TEST(DefragmentationApiTest, RejectsDefragWithOpenFiles) {
+TEST(DefragmentationApiTest, OpenFilesStayUsableAcrossDefrag) {
     char fn[256];
     generate_tmp_fn(fn, sizeof(fn));
     compio_config cfg;
     compio_build_default_config(&cfg);
+    compio_build_dummy_compressor(&cfg.compressor);
     cfg.fragmentation_threshold = 100;
     compio_archive *archive = compio_open_archive(fn, "w+", &cfg);
     ASSERT_NE(archive, nullptr);
 
+    std::vector<uint8_t> gap(64 * 1024, 0x11);
+    compio_file *g = compio_open_file("gap", archive);
+    ASSERT_NE(g, nullptr);
+    ASSERT_EQ(compio_write(gap.data(), gap.size(), g), gap.size());
+    ASSERT_EQ(compio_close_file(g), 0);
+
+    std::vector<uint8_t> data(64 * 1024);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i * 7);
     compio_file *f = compio_open_file("test", archive);
     ASSERT_NE(f, nullptr);
-    uint8_t data[64] = {0xAB};
-    compio_write(data, sizeof(data), f);
+    ASSERT_EQ(compio_write(data.data(), data.size(), f), data.size());
+    compio_flush(archive);
 
-    // Defrag must fail while a file is open
-    EXPECT_NE(compio_defragment(archive), COMPIO_SUCCESS);
+    // Read once so the file caches index entries, then move its blocks.
+    std::vector<uint8_t> buf(data.size());
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_read(buf.data(), buf.size(), f), buf.size());
+    ASSERT_EQ(compio_remove_file(archive, "gap"), 0);
+    ASSERT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
 
-    compio_close_file(f);
+    std::fill(buf.begin(), buf.end(), 0);
+    compio_seek(f, 0, COMPIO_SEEK_SET);
+    ASSERT_EQ(compio_read(buf.data(), buf.size(), f), buf.size());
+    EXPECT_EQ(buf, data);
 
-    // After closing, defrag should succeed
-    EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
-
-    compio_close_archive(archive);
+    const uint8_t tail[3] = {1, 2, 3};
+    compio_seek(f, 0, COMPIO_SEEK_END);
+    ASSERT_EQ(compio_write(tail, sizeof(tail), f), sizeof(tail));
+    EXPECT_EQ(compio_get_size(f), data.size() + sizeof(tail));
+    ASSERT_EQ(compio_close_file(f), 0);
+    ASSERT_EQ(compio_close_archive(archive), 0);
     remove(fn); remove((std::string(fn) + ".wal").c_str());
 }
 
