@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['c_20api_0',['C API',['../index.html#autotoc_md4',1,'']]],
+  ['c_20api_20modern_1',['C++ API (Modern)',['../index.html#autotoc_md5',1,'']]],
+  ['c_20wrapper_20api_2',['C++ Wrapper API',['../md_docs_2cpp__wrapper.html',1,'']]],
+  ['caching_3',['5. Caching',['../md_docs_2architecture.html#autotoc_md34',1,'']]],
+  ['command_20line_20tools_4',['Command-line tools',['../index.html#autotoc_md6',1,'']]],
+  ['compio_5',['Compio',['../index.html#autotoc_md0',1,'']]],
+  ['compio_6',['compio',['../index.html',1,'']]],
+  ['compio_5frepair_7',['compio_repair',['../md_docs_2api__usage.html#autotoc_md20',1,'']]],
+  ['compio_5funpack_8',['compio_unpack',['../md_docs_2api__usage.html#autotoc_md21',1,'']]],
+  ['components_9',['Core Components',['../md_docs_2architecture.html#autotoc_md24',1,'']]],
+  ['compression_20algorithm_10',['Selecting Compression Algorithm',['../md_docs_2api__usage.html#autotoc_md11',1,'']]],
+  ['compression_20algorithms_11',['Compression Algorithms',['../md_docs_2api__usage.html#autotoc_md10',1,'']]],
+  ['compression_20level_12',['Selecting Compression Level',['../md_docs_2api__usage.html#autotoc_md12',1,'']]],
+  ['compression_20system_13',['2. Compression System',['../md_docs_2architecture.html#autotoc_md26',1,'']]],
+  ['compression_20type_20persistence_14',['Compression Type Persistence',['../md_docs_2architecture.html#autotoc_md28',1,'']]],
+  ['compressor_20per_20block_15',['Compressor per block',['../md_docs_2architecture.html#autotoc_md29',1,'']]],
+  ['compressors_16',['Compressors',['../md_docs_2cpp__wrapper.html#autotoc_md49',1,'Compressors'],['../md_docs_2api__usage.html#autotoc_md14',1,'Custom Compressors']]],
+  ['config_17',['Config',['../md_docs_2cpp__wrapper.html#autotoc_md45',1,'']]],
+  ['configuration_20options_18',['Configuration Options',['../md_docs_2api__usage.html#autotoc_md16',1,'']]],
+  ['core_20components_19',['Core Components',['../md_docs_2architecture.html#autotoc_md24',1,'']]],
+  ['crash_20safety_20',['6. Crash Safety',['../md_docs_2architecture.html#autotoc_md35',1,'']]],
+  ['custom_20compressors_21',['Custom Compressors',['../md_docs_2api__usage.html#autotoc_md14',1,'']]]
+];
