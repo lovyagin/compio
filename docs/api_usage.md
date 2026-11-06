@@ -103,15 +103,16 @@ config.fragmentation_threshold = 30;                // Compact when free regions
 config.fill_holes_with_zeros = false;               // Return freed regions to the filesystem (hole punching)
 config.wal_sync_mode = COMPIO_WAL_SYNC_NORMAL;      // WAL synchronization mode (ALWAYS, NORMAL, OFF)
 config.wal_max_size_bytes = 64 * 1024 * 1024;       // Max WAL size before checkpoint
-config.max_files = 4096;                            // Initial file table capacity (grows dynamically)
+config.max_files = 4096;                            // Expected number of files (a hint, not a limit)
 config.checksum_type = COMPIO_CHECKSUM_CRC32C;      // Checksum algorithm (FNV1A or CRC32C)
 config.auto_batch_size = 8;                         // Auto-batch sequential ops (0 = disabled)
 config.enable_wal = true;                           // Maintain the write-ahead log
 ```
 
 Archive open modes are `"r"`, `"r+"`, `"w"`, `"w+"`, `"a"`, `"a+"` (an optional `b` is
-ignored); any other string is rejected with `EINVAL`. File names are limited to
-`COMPIO_FNAME_MAX_SIZE - 1` (31) characters.
+ignored); any other string is rejected with `EINVAL`. File names are 1 to
+`COMPIO_FNAME_MAX_SIZE - 1` (4095) bytes long and may contain `/`; a longer name is
+rejected with `ENAMETOOLONG`, an empty one with `EINVAL`.
 
 ### Allocation Strategies
 
