@@ -262,7 +262,10 @@ typedef struct {
                         beyond the initial value (subject to the hard upper bound COMPIO_MAX_FILES_LIMIT).
                         For legacy/fixed-table formats, the on-disk files table size is fixed, so this
                         may act as an effective limit. Set to 0 to use the default capacity. */
-    uint64_t wal_max_size_bytes; /**< Maximum size of WAL file in bytes before forcing a checkpoint. 0 = unlimited. */
+    uint64_t wal_max_size_bytes; /**< WAL size in bytes that forces a flush with header publication, which
+                                      truncates the WAL (default: 64 MB, 0 = unlimited). Checked after each
+                                      write, insert and erase; inside compio_begin_batch() it waits for
+                                      compio_end_batch(). */
     compio_checksum_type checksum_type; /**< Checksum algorithm for data blocks */
     compio_wal_sync_mode wal_sync_mode; /**< WAL synchronization mode */
     int auto_batch_size; /**< Number of sequential operations grouped into one WAL transaction

@@ -294,6 +294,14 @@ public:
     }
 
     /**
+     * @brief Gets the number of bytes written to the WAL since the last checkpoint
+     */
+    uint64_t get_size() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return current_wal_size_;
+    }
+
+    /**
      * @brief Recovers from WAL after crash
      *
      * Replays all committed transactions from WAL to the main archive file.

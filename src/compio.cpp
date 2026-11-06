@@ -801,6 +801,17 @@ static void end_auto_batch_if_active(compio_file *file) {
     }
 }
 
+// The journal can only be truncated by a checkpoint over a published header, so
+// a full journal triggers a flush. Inside a batch the flush waits for its end.
+// A pending write error is left for the caller's next flush to report.
+static void checkpoint_if_wal_full(compio_archive *archive) {
+    compio::WalManager *wal = archive->wal.get();
+    const uint64_t limit = archive->config.wal_max_size_bytes;
+    if (!wal || limit == 0 || wal->get_batch_depth() > 0 || wal->get_size() < limit) return;
+    if (archive->block_reader->has_write_error() || archive->index->has_write_error()) return;
+    flush_impl(archive);
+}
+
 /**
  * Check if a range is covered by the cached range
  */
@@ -1620,6 +1631,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+    checkpoint_if_wal_full(file->archive);
 
     // Invalidate range cache after successful write operations
     invalidate_range_cache(file);
@@ -2107,6 +2119,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+    checkpoint_if_wal_full(file->archive);
 
     return size;
 }
@@ -2358,6 +2371,7 @@ after_merge:
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+    checkpoint_if_wal_full(file->archive);
 
     return size;
 }

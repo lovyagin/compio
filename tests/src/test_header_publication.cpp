@@ -174,7 +174,8 @@ protected:
         compio_build_default_config(&cfg);
         cfg.max_files = 16;
         cfg.enable_wal = wal_enabled();
-        cfg.wal_max_size_bytes = 1;
+        // Only the explicit flush and close under test may publish.
+        cfg.wal_max_size_bytes = 0;
         cfg.auto_batch_size = 0;
         cfg.fragmentation_threshold = 100;
         archive = compio_open_archive(path, "w", &cfg);

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <random>
 #include "compio.h"
+#include "compio/compio_file.hpp"
 #include "test_util.hpp"
 
 namespace fs = std::filesystem;
@@ -32,49 +33,71 @@ protected:
     }
 };
 
-TEST_F(AutoCheckpointTest, RetainWalUntilHeaderPublication) {
+static uint64_t published_sequence(compio_archive *archive) {
+    return readonly(archive->header, compio::header)->sequence_id;
+}
+
+static compio_config tiny_wal_limit_config() {
     compio_config config;
     compio_build_default_config(&config);
-    
     // Set tiny limit so even a COMMIT record exceeds it.
     config.wal_max_size_bytes = 1;
     config.block_size = 512;
-    // Set cache size to 1 to force eviction (Write-Back -> Write-Through-ish)
-    // This ensures data hits WAL during write, not just at flush.
+    // Evict on every block so the data reaches the WAL during the write.
     config.cache_size__blocks = 1;
+    return config;
+}
 
+static std::vector<uint8_t> random_bytes(size_t size) {
+    std::mt19937 rng(12345);
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
+    std::vector<uint8_t> data(size);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
+    return data;
+}
+
+TEST_F(AutoCheckpointTest, PublishesHeaderWhenWalExceedsLimit) {
+    const compio_config config = tiny_wal_limit_config();
     compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
     ASSERT_NE(archive, nullptr);
-    
     compio_file* file = compio_open_file("data", archive);
     ASSERT_NE(file, nullptr);
 
-    std::mt19937 rng(12345);
-    std::uniform_int_distribution<unsigned int> dist(0, 255);
-    
-    // Use random data to ensure it doesn't compress much
-    std::vector<uint8_t> data(2000);
-    for(size_t i=0; i<data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
-    
-    // Write enough data to guarantee at least one WAL commit.
-    // The size limit must not discard WAL while the published header is old.
-    
-    uint64_t written = compio_write(data.data(), data.size(), file);
-    ASSERT_EQ(written, data.size());
-    
-    // Eviction writes and commits records, but the header is not yet published.
-    uint64_t wal_size = get_wal_size();
-    EXPECT_GT(wal_size, 0);
-    
-    // Verify data
-    compio_seek(file, 0, COMPIO_SEEK_SET);
-    std::vector<uint8_t> read_buf(2000);
-    ASSERT_EQ(compio_read(read_buf.data(), 2000, file), 2000);
-    EXPECT_EQ(std::memcmp(read_buf.data(), data.data(), 2000), 0);
+    const std::vector<uint8_t> data = random_bytes(2000);
+    const uint64_t sequence = published_sequence(archive);
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
 
-    compio_flush(archive);
+    // The journal is truncated only after a newer header is published.
+    EXPECT_GT(published_sequence(archive), sequence);
     EXPECT_EQ(get_wal_size(), 0);
-    
+
+    compio_seek(file, 0, COMPIO_SEEK_SET);
+    std::vector<uint8_t> read_buf(data.size());
+    ASSERT_EQ(compio_read(read_buf.data(), read_buf.size(), file), read_buf.size());
+    EXPECT_EQ(read_buf, data);
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+TEST_F(AutoCheckpointTest, ExplicitBatchDefersLimitCheckpoint) {
+    const compio_config config = tiny_wal_limit_config();
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file* file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+
+    const std::vector<uint8_t> data = random_bytes(2000);
+    const uint64_t sequence = published_sequence(archive);
+    ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    EXPECT_EQ(published_sequence(archive), sequence);
+    EXPECT_GT(get_wal_size(), 0);
+
+    ASSERT_EQ(compio_end_batch(archive), COMPIO_SUCCESS);
+    EXPECT_GT(published_sequence(archive), sequence);
+    EXPECT_EQ(get_wal_size(), 0);
+
     compio_close_file(file);
     compio_close_archive(archive);
 }

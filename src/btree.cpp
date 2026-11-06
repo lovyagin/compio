@@ -114,6 +114,11 @@ bool node_reader::flush_cache() {
     return flush_nodes();
 }
 
+bool node_reader::has_write_error() const {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    return write_error != 0;
+}
+
 double node_reader::get_cache_hit_probability() const {
     std::lock_guard<std::mutex> lock(cache_mutex);
     return reads ? static_cast<double>(hits) / reads : 0.0;
@@ -512,6 +517,11 @@ bool btree::_clear_cache() {
 bool btree::flush_cache() {
     std::unique_lock<std::shared_mutex> lock(mutex);
     return reader.flush_cache();
+}
+
+bool btree::has_write_error() const {
+    std::shared_lock<std::shared_mutex> lock(mutex);
+    return reader.has_write_error();
 }
 
 double btree::get_cache_hit_probability() const {
