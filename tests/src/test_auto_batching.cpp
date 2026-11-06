@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "compio.h"
+#include "compio/compio_file.hpp"
 #include <cstring>
 #include <string>
 #include "test_util.hpp"
@@ -18,6 +19,7 @@ protected:
     
     void TearDown() override {
         remove(archive_path.c_str());
+        remove((archive_path + ".wal").c_str());
     }
     
     std::string archive_path;
@@ -211,6 +213,67 @@ TEST_F(AutoBatchingTest, BreaksOnNonSequentialAccess) {
     
     EXPECT_FALSE(compio_is_auto_batching(file));
     
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+static uint64_t published_sequence(compio_archive *archive) {
+    return readonly(archive->header, compio::header)->sequence_id;
+}
+
+TEST_F(AutoBatchingTest, BatchEndDoesNotPublishHeader) {
+    compio_archive* archive = compio_open_archive(archive_path.c_str(), "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file* file = compio_open_file("test", archive);
+    ASSERT_NE(file, nullptr);
+
+    const char data[] = "test";
+    const int ops = 2 + config.auto_batch_size + 2;
+    const uint64_t sequence = published_sequence(archive);
+    bool batched = false;
+    for (int i = 0; i < ops; i++) {
+        ASSERT_EQ(compio_write(data, 4, file), 4u);
+        batched = batched || compio_is_auto_batching(file);
+    }
+    EXPECT_TRUE(batched);
+    EXPECT_EQ(published_sequence(archive), sequence);
+
+    compio_flush(archive);
+    EXPECT_GT(published_sequence(archive), sequence);
+
+    EXPECT_EQ(compio_close_file(file), 0);
+    EXPECT_EQ(compio_close_archive(archive), 0);
+
+    archive = compio_open_archive(archive_path.c_str(), "r", &config);
+    ASSERT_NE(archive, nullptr);
+    file = compio_open_file("test", archive);
+    ASSERT_NE(file, nullptr);
+    EXPECT_EQ(compio_get_size(file), static_cast<uint64_t>(4 * ops));
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+TEST_F(AutoBatchingTest, ExplicitBatchEndsAutoBatchAndPublishes) {
+    compio_archive* archive = compio_open_archive(archive_path.c_str(), "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file* file = compio_open_file("test", archive);
+    ASSERT_NE(file, nullptr);
+
+    const char data[] = "test";
+    for (int i = 0; i < 3; i++) ASSERT_EQ(compio_write(data, 4, file), 4u);
+    ASSERT_TRUE(compio_is_auto_batching(file));
+
+    ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
+    EXPECT_FALSE(compio_is_auto_batching(file));
+    for (int i = 0; i < config.auto_batch_size + 2; i++) {
+        ASSERT_EQ(compio_write(data, 4, file), 4u);
+        EXPECT_FALSE(compio_is_auto_batching(file));
+    }
+
+    const uint64_t sequence = published_sequence(archive);
+    ASSERT_EQ(compio_end_batch(archive), COMPIO_SUCCESS);
+    EXPECT_GT(published_sequence(archive), sequence);
+
     compio_close_file(file);
     compio_close_archive(archive);
 }

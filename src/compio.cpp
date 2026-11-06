@@ -682,8 +682,6 @@ static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_impl(compio_archive *archive);
 static bool flush_archive_impl(compio_archive *archive);
 static void begin_batch_impl(compio_archive *archive);
-// Commit a batch and publish the header. Caller must hold archive->mutex.
-static bool end_batch_impl(compio_archive *archive);
 
 // Flush stdio buffers and fsync the archive to disk. Used to force the data a
 // header is about to reference onto stable storage BEFORE the header is
@@ -750,8 +748,13 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
     file->auto_batch_count++;
     file->last_operation_end = current_offset + size;
     
+    // An explicit batch already groups these operations; nesting inside it would
+    // leave that batch's publication to a commit that does not publish.
+    const bool explicit_batch = !file->is_auto_batching && file->archive->wal &&
+                                file->archive->wal->get_batch_depth() > 0;
+
     // Start auto-batch when we reach the threshold
-    if (!file->is_auto_batching && file->auto_batch_count >= 3) {
+    if (!file->is_auto_batching && !explicit_batch && file->auto_batch_count >= 3) {
         begin_batch_impl(file->archive); // Archive lock already held
         file->is_auto_batching = true;
         file->auto_batch_count = 1; // Reset counter to count batched operations
@@ -759,14 +762,24 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
     }
 }
 
-// Commit the batch that was opened automatically for this file.
+// An automatic batch only groups WAL commits. Publishing the header here would
+// cost a full flush and two fsyncs every auto_batch_size operations.
 static bool end_auto_batch(compio_file *file) {
-    const bool durable = end_batch_impl(file->archive); // Lock already held
+    compio::WalManager *wal = file->archive->wal.get();
+    const bool committed = !wal || wal->end_batch();
     file->is_auto_batching = false;
     file->auto_batch_count = 0;
     auto &batching = file->archive->auto_batching_files;
     batching.erase(std::remove(batching.begin(), batching.end(), file), batching.end());
-    return durable;
+    return committed;
+}
+
+static bool end_auto_batches(compio_archive *archive) {
+    bool committed = true;
+    while (!archive->auto_batching_files.empty()) {
+        if (!end_auto_batch(archive->auto_batching_files.back())) committed = false;
+    }
+    return committed;
 }
 
 /**
@@ -889,14 +902,18 @@ int compio_begin_batch(compio_archive *archive) {
     }
 
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    // An explicit batch must be outermost, so that its end publishes the header.
+    if (!end_auto_batches(archive)) {
+        if (errno == 0) errno = EIO;
+        return COMPIO_ERROR;
+    }
     begin_batch_impl(archive);
     return COMPIO_SUCCESS;
 }
 
 // Commit a batch and, once the outermost batch closes, publish the header over
-// the now-durable data. Caller must hold archive->mutex (auto-batch ends are
-// already under it; the public wrapper takes it). Header publication is safe
-// here because flush_header_double_buffered re-syncs the btree's header copy.
+// the now-durable data. Caller must hold archive->mutex. Header publication is
+// safe here because flush_header_double_buffered re-syncs the btree's header copy.
 static bool end_batch_impl(compio_archive *archive) {
     if (archive->wal) {
         // flush_impl checkpoints only after all writes and header publication succeed.
@@ -2521,11 +2538,7 @@ static bool flush_archive_impl(compio_archive *archive) {
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
 
     // Finish automatic batches; explicit batches keep deferring publication.
-    bool durable = true;
-    while (!archive->auto_batching_files.empty()) {
-        if (!end_auto_batch(archive->auto_batching_files.back())) durable = false;
-    }
-    if (!durable) return false;
+    if (!end_auto_batches(archive)) return false;
     return flush_impl(archive);
 }
 
