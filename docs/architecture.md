@@ -116,6 +116,20 @@ what the index references and publishes the result, so every completed operation
 survives a crash. An explicit batch is atomic: it is lost as a whole unless its
 end completed.
 
+#### Transactions
+`compio_begin_transaction` publishes the pending changes and opens a transaction
+over the whole archive; every operation of any thread until
+`compio_commit_transaction` belongs to it, without isolation. Inside it no header
+is published (`compio_flush` only writes data out), with or without the
+write-ahead log, so a crash returns the state the transaction started from.
+`compio_abort_transaction` returns to that state without a crash: it drops the
+cached blocks and nodes with their unwritten changes, reloads the published
+header, rebuilds the allocator, index and block reader from it, truncates the
+journal and cuts off what the transaction appended past the container end. Open
+files take their size from the restored files table. Closing the archive with a
+transaction open aborts it. Compaction and recompression wait for the end of the
+transaction (`EBUSY`).
+
 ## Data Flow
 
 ### Write Operation

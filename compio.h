@@ -747,6 +747,53 @@ int compio_begin_batch(compio_archive *archive);
 int compio_end_batch(compio_archive *archive);
 
 /**
+ * @brief Start a transaction over the whole archive
+ *
+ * Everything any thread does to the archive until compio_commit_transaction()
+ * belongs to the transaction: after a crash the archive holds either all of it
+ * or none of it, and compio_abort_transaction() drops all of it. There is no
+ * isolation: other threads see the changes as they are made.
+ *
+ * Pending changes made before the call are published first. Inside a
+ * transaction compio_flush() writes data out but publishes nothing, and
+ * compio_defragment() and compio_recompress() fail with EBUSY. Batches may be
+ * opened inside; they must be closed before the commit. The journal is not
+ * truncated until the commit, so its size is bounded only by the transaction.
+ *
+ * @param archive opened archive (write mode)
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ *         (EBUSY: a transaction or a batch is already open)
+ */
+int compio_begin_transaction(compio_archive *archive);
+
+/**
+ * @brief Make the changes of the transaction durable
+ *
+ * Publishes the header over the transaction's data. If the publication fails
+ * the transaction is over and its changes stay pending like those of a failed
+ * compio_flush().
+ *
+ * @param archive opened archive (write mode)
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure
+ *         (EINVAL: no transaction is open; EBUSY: a batch opened inside is still open)
+ */
+int compio_commit_transaction(compio_archive *archive);
+
+/**
+ * @brief Drop every change made since compio_begin_transaction()
+ *
+ * The archive returns to the state the transaction started from. Open files
+ * stay usable: their size is taken from the restored files table and the
+ * cursor is moved back to the end if it lay past it. Operations on a file the
+ * transaction created fail with ENOENT. Closing the archive with a transaction
+ * open aborts it.
+ *
+ * @param archive opened archive (write mode)
+ * @return COMPIO_SUCCESS on success, COMPIO_ERROR on failure (EINVAL: no transaction is open)
+ */
+int compio_abort_transaction(compio_archive *archive);
+
+/**
  * @brief Repairs/recovers data from a corrupted archive
  *
  * Scans the archive file for valid storage blocks and attempts to reconstruct

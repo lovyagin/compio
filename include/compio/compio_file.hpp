@@ -62,6 +62,8 @@ struct compio_archive {
     // CRC32C of the serialized files table the header references, so that a
     // flush packs the table only when it changed.
     uint32_t stored_table_crc = 0;
+    // Between compio_begin_transaction and its commit or abort: no header is published.
+    bool in_transaction = false;
 
     compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;

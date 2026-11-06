@@ -253,6 +253,16 @@ public:
      * @see begin_batch()
      */
     bool end_batch();
+
+    /**
+     * @brief Drops the open batches and truncates the journal
+     *
+     * Used when the changes of the batch are abandoned: the archive state the
+     * journal would replay them onto is already published.
+     *
+     * @return true if the journal was truncated
+     */
+    bool discard_batch();
     
     /**
      * @brief Gets current batch nesting depth

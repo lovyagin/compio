@@ -360,6 +360,36 @@ public:
     }
 
     /**
+     * @brief Start a transaction over the whole archive (see compio_begin_transaction)
+     */
+    void begin_transaction() {
+        if (!archive_) throw Exception("Archive is not open");
+        if (compio_begin_transaction(archive_) != COMPIO_SUCCESS) {
+            throw Exception("Starting the transaction failed");
+        }
+    }
+
+    /**
+     * @brief Make the transaction durable
+     */
+    void commit_transaction() {
+        if (!archive_) throw Exception("Archive is not open");
+        if (compio_commit_transaction(archive_) != COMPIO_SUCCESS) {
+            throw Exception("Committing the transaction failed");
+        }
+    }
+
+    /**
+     * @brief Drop the changes of the transaction
+     */
+    void abort_transaction() {
+        if (!archive_) throw Exception("Archive is not open");
+        if (compio_abort_transaction(archive_) != COMPIO_SUCCESS) {
+            throw Exception("Aborting the transaction failed");
+        }
+    }
+
+    /**
      * @brief Check if archive is open
      */
     bool is_open() const {

@@ -110,6 +110,14 @@ bool node_reader::clear_cache() {
     return true;
 }
 
+void node_reader::discard_cache() {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    for (const auto &node : nodes) node.unmodify();
+    nodes.clear();
+    positions.clear();
+    write_error = 0;
+}
+
 bool node_reader::flush_cache() {
     std::lock_guard<std::mutex> lock(cache_mutex);
     return flush_nodes();
@@ -611,6 +619,11 @@ bool btree::_clear_cache() {
 bool btree::flush_cache() {
     std::unique_lock<std::shared_mutex> lock(mutex);
     return reader.flush_cache();
+}
+
+void btree::discard_cache() {
+    std::unique_lock<std::shared_mutex> lock(mutex);
+    reader.discard_cache();
 }
 
 bool btree::has_write_error() const {
