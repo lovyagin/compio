@@ -1,4 +1,4 @@
-"""Integration checks for the crash harness, independent of crash-safety fixes."""
+"""Integration checks for the crash harness and for crash safety of the index."""
 
 from pathlib import Path
 import os
@@ -257,12 +257,11 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
                     values["read_size"] == values["checkpoint_size"]
                     and values["read_hash"] == values["checkpoint_hash"]
                 )
-                # Check harness classification without requiring the known COW gap.
-                self.assertEqual(result.returncode, 0 if preserved else 1)
-                self.assertEqual(values["outcome"], "consistent" if preserved else "lost_flushed")
-                self.assertEqual(values["matched_prefix"], "0" if preserved else "-1")
-                if not preserved and degree == 16:
-                    self.assertEqual(values["root_unchanged"], "0")
+                self.assertTrue(preserved)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(values["outcome"], "consistent")
+                self.assertEqual(values["matched_prefix"], "0")
+                self.assertEqual(values["root_unchanged"], "1")
                 original = (directory / "archive.compio").read_bytes()
                 checkpoint = (directory / "checkpoint.compio").read_bytes()
                 replay = subprocess.run(
@@ -278,6 +277,19 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
                     self.assertEqual(values[key], replay_values[key], key)
                 self.assertEqual((directory / "archive.compio").read_bytes(), original)
                 self.assertEqual((directory / "checkpoint.compio").read_bytes(), checkpoint)
+
+    def test_killed_writer_leaves_flushed_state_intact(self):
+        for wal in (0, 1):
+            for flush_every in (1, 10):
+                with self.subTest(wal=wal, flush_every=flush_every):
+                    result = subprocess.run(
+                        [str(EXECUTABLE), f"--dir={self.directory}", "--trials=15",
+                         f"--wal={wal}", f"--flush-every={flush_every}",
+                         "--degree=2", "--block=512"],
+                        capture_output=True, text=True, timeout=110,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("consistent              15", result.stdout)
 
     def test_invalid_options_fail_before_creating_artifacts(self):
         for arguments in (

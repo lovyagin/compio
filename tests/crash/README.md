@@ -1,9 +1,9 @@
 # Crash consistency checks
 
 Build `crash_consistency` and `index_corruption` with CMake on Unix. These tools
-measure known crash-safety gaps; a nonzero result does not necessarily indicate
-a regression. The separate `crash_consistency_harness` CTest checks the harness
-itself when Python 3.9 or later is available.
+measure crash safety. The separate `crash_consistency_harness` CTest checks
+the harness itself and runs a short kill matrix when Python 3.9 or later is
+available.
 
 ## Operation boundaries
 
@@ -103,14 +103,11 @@ requires the removed file to remain absent after flush and close. The same
 option restrictions apply. Other platforms reject this scenario before creating
 artifacts.
 
-Currently, interrupted runs return `lost_flushed` (exit 1) with both physical
-release settings. With the default degree, the headers are intact but the B-tree
-root was overwritten in place. With degree 2 and 1024-byte blocks, the root can
-remain intact while a descendant is overwritten. Copy-on-write for the full
-index path is required. The integration tests check boundary selection,
-classification against recovered size/hash, and replay;
-they allow this known failure and will also accept preserved data after a fix.
-This test covers process termination and does not simulate power loss.
+Interrupted runs return the initial file with both physical release settings:
+the index is copy-on-write, so the published root and every node below it stay
+untouched until the next header is durable. The scenario requires the header
+slots and the root to be unchanged. This test covers process termination and
+does not simulate power loss.
 
 The manifest adds `header_cut_reached`, `headers_unchanged`, and `root_unchanged`.
 The root comparison uses its saved address and serialized node region. A changed

@@ -138,6 +138,39 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
     archive_header->index_root = root.addr();
 }
 
+bool btree::needs_copy(uint64_t addr) {
+    return copy_on_write && !is_readonly && !is_fresh(addr);
+}
+
+bool btree::is_fresh(uint64_t addr) {
+    const uint64_t current = epoch.load(std::memory_order_acquire);
+    if (fresh_epoch != current) {
+        fresh.clear();
+        fresh_epoch = current;
+    }
+    return fresh.count(addr) != 0;
+}
+
+void btree::mark_fresh(uint64_t addr) {
+    is_fresh(addr);
+    fresh.insert(addr);
+}
+
+shared_node btree::copy_node(const shared_node &node) {
+    auto copy = create_node();
+    *copy = *RO(node);
+    free_node(node);
+    return copy;
+}
+
+shared_node btree::write_root() {
+    auto root = read_root();
+    if (!root || !needs_copy(root.addr())) return root;
+    auto copy = copy_node(root);
+    archive_header->index_root = copy.addr();
+    return copy;
+}
+
 void btree::insert_nonfull(shared_node &node, const tree_key &key, const tree_val &value) {
     std::size_t idx = std::lower_bound(RO(node)->keys.begin(), RO(node)->keys.end(), key) -
                       RO(node)->keys.begin();
@@ -175,7 +208,7 @@ void btree::insert(const tree_key &key, const tree_val &value) {
     std::unique_lock<std::shared_mutex> lock(mutex);
     DEBUG_PRINT("[BTREE]: insert(key={...,%" PRIu64 "},value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, value.addr,
                 value.size);
-    auto root = read_root();
+    auto root = write_root();
     if (!root) {
         WARNING_PRINT("error: failed to read root node for insert\n");
         return;
@@ -259,7 +292,7 @@ void btree::_remove(shared_node &node, const tree_key &key) {
 void btree::remove(const tree_key &key) {
     std::unique_lock<std::shared_mutex> lock(mutex);
     DEBUG_PRINT("[BTREE]: remove(key={...,%" PRIu64 "})\n", key.pos);
-    auto root = read_root();
+    auto root = write_root();
     _remove(root, key);
     if (root->num_keys == 0 && !root->is_leaf) {
         archive_header->index_root = root->children[0];
@@ -369,13 +402,22 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
 
 bool btree::update(const tree_key &key, const tree_val &new_value) {
     std::unique_lock<std::shared_mutex> lock(mutex);
-    return _update_impl(key, new_value);
+    return _update_locked(key, new_value);
 }
 
 bool btree::_update_impl(const tree_key &key, const tree_val &new_value) {
+    // Compaction runs under the allocator lock and manages node placement itself.
+    const bool saved = copy_on_write;
+    copy_on_write = false;
+    const bool result = _update_locked(key, new_value);
+    copy_on_write = saved;
+    return result;
+}
+
+bool btree::_update_locked(const tree_key &key, const tree_val &new_value) {
     DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
-    auto root = read_root();
+    auto root = write_root();
     if (!root) {
         WARNING_PRINT("error: failed to read root node for update\n");
         return false;
@@ -478,7 +520,7 @@ void btree::add_to_range(int64_t addition, const tree_key &key_min, const tree_k
         return;
     }
 
-    auto root = read_root();
+    auto root = write_root();
     if (root) _add_to_range(root, addition, key_min, key_max);
 }
 
@@ -788,10 +830,15 @@ void btree::free_node(const shared_node &node) {
     auto removed = node;
     removed.remove();
     reader.remove_node(node);
+    fresh.erase(node.addr());
     allocator->deallocate(node.addr(), INDEX_NODE_SIZE(degree));
 }
 
-shared_node btree::create_node() { return reader.create_node(allocate_node()); }
+shared_node btree::create_node() {
+    auto node = reader.create_node(allocate_node());
+    mark_fresh(node.addr());
+    return node;
+}
 
 shared_node btree::read_node(uint64_t addr) {
     DEBUG_PRINT("[BTREE][read_node]: addr=%" PRIu64 "\n", addr);
@@ -809,6 +856,10 @@ shared_node btree::read_child(shared_node &node, uint64_t idx) {
     auto child = read_node(RO(node)->children[idx]);
     if (!child) {
         return child;
+    }
+    if (needs_copy(child.addr())) {
+        child = copy_node(child);
+        node->children[idx] = child.addr();
     }
     const int64_t addition = RO(node)->key_additions[idx];
     if (addition != 0) {
