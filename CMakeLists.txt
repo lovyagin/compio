@@ -83,6 +83,7 @@ endif()
 
 option(COMPIO_SANITIZE_ADDRESS   "compio: enable address sanitizer"   OFF)
 option(COMPIO_SANITIZE_UNDEFINED "compio: enable undefined sanitizer" OFF)
+option(COMPIO_SANITIZE_THREAD    "compio: enable thread sanitizer"    OFF)
 
 if (NOT MSVC)
     if (COMPIO_SANITIZE_ADDRESS)
@@ -97,6 +98,13 @@ if (NOT MSVC)
 
         add_compile_options(-fsanitize=undefined)
         link_libraries     (-fsanitize=undefined)
+    endif()
+
+    if (COMPIO_SANITIZE_THREAD)
+        message(STATUS "Using -fsanitize=thread")
+
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+        link_libraries     (-fsanitize=thread)
     endif()
 endif()
 
