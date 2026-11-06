@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the on-disk layout of a compio v5 archive.
+"""Print the on-disk layout of a compio v6 archive.
 
 The parser is written from the format description alone and shares no code with
 the library, so decoding a real archive without contradictions is a check of
@@ -8,21 +8,41 @@ both. Usage: dump_archive.py ARCHIVE [ARCHIVE ...]
 import struct
 import sys
 
-MAGIC_V5 = 27110662
-HEADER_SIZE = 108
-NAME_SIZE = 32
-TABLE_ENTRY_SIZE = NAME_SIZE + 8 + 8
+MAGIC_V6 = 27110663
+HEADER_SIZE = 120
+RECORD_HEADER_SIZE = 2 + 8 + 8
 NODE_SIGNATURE = 67
 BLOCK_SIGNATURES_WITH_BACKREF = (173, 174)
 STATE_TRAILER_SIZE = 8 + 8 + 4
 
 HEADER_FIELDS = ('magic', 'sha256', 'sequence_id', 'index_root', 'file_size', 'alloc_off',
                  'alloc_size', 'compression_type', 'block_size', 'b_tree_degree',
-                 'files_table_addr', 'files_table_capacity', 'n_files')
+                 'files_table_addr', 'files_table_size', 'n_files', 'files_table_crc',
+                 'files_table_encoding')
 
 
 def read_header(buf, off):
-    return dict(zip(HEADER_FIELDS, struct.unpack_from('<i32sQQQQQIIIQIQ', buf, off)))
+    return dict(zip(HEADER_FIELDS, struct.unpack_from('<i32sQQQQQIIIQQQII', buf, off)))
+
+
+def crc32c(data):
+    crc = 0xFFFFFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ (0x82F63B78 & -(crc & 1))
+    return crc ^ 0xFFFFFFFF
+
+
+def read_files_table(buf, addr, size, count):
+    files, pos = [], addr
+    while pos < addr + size:
+        name_len, file_size, file_id = struct.unpack_from('<HQQ', buf, pos)
+        pos += RECORD_HEADER_SIZE
+        files.append((buf[pos:pos + name_len].decode(errors='replace'), file_size, file_id))
+        pos += name_len
+    assert pos == addr + size and len(files) == count, 'files table does not match the header'
+    return files
 
 
 def read_node(buf, off, out, depth=0, shift=0):
@@ -81,20 +101,21 @@ def dump(path):
               f'root={h["index_root"]} file_size={h["file_size"]} '
               f'alloc=({h["alloc_off"]},{h["alloc_size"]}) comp={h["compression_type"]} '
               f'block={h["block_size"]} degree={h["b_tree_degree"]} '
-              f'ft=({h["files_table_addr"]},cap={h["files_table_capacity"]}) n_files={h["n_files"]}')
-    h = max((s for s in slots if s['magic'] == MAGIC_V5), key=lambda s: s['sequence_id'])
+              f'ft=({h["files_table_addr"]},{h["files_table_size"]}) n_files={h["n_files"]} '
+              f'ft_crc={h["files_table_crc"]:#010x} ft_encoding={h["files_table_encoding"]}')
+    h = max((s for s in slots if s['magic'] == MAGIC_V6), key=lambda s: s['sequence_id'])
     print(f' active header: seq={h["sequence_id"]}')
 
     node_size = 96 * h['b_tree_degree'] - 26
     regions = [(0, 2 * HEADER_SIZE, 'header x2')]
 
-    table, capacity = h['files_table_addr'], h['files_table_capacity']
+    table, table_size = h['files_table_addr'], h['files_table_size']
     if table:
-        regions.append((table, capacity * TABLE_ENTRY_SIZE, f'files table (capacity {capacity})'))
-        for i in range(h['n_files']):
-            name, size, file_id = struct.unpack_from(f'<{NAME_SIZE}sQQ', buf,
-                                                     table + i * TABLE_ENTRY_SIZE)
-            print(f'  file[{i}] name={name.split(b"\0")[0].decode()!r} size={size} file_id={file_id}')
+        data = buf[table:table + table_size]
+        assert crc32c(data) == h['files_table_crc'], 'files table checksum mismatch'
+        regions.append((table, table_size, f'files table ({h["n_files"]} records)'))
+        for i, (name, size, file_id) in enumerate(read_files_table(buf, table, table_size, h['n_files'])):
+            print(f'  file[{i}] name={name!r} size={size} file_id={file_id}')
 
     index = read_node(buf, h['index_root'], {'nodes': [], 'entries': []})
     for off, depth, leaf, n, used in index['nodes']:

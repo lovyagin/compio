@@ -93,17 +93,16 @@ int unpack(int argc, char **argv) {
     }
 
     const auto ftable = &archive->header->ftable;
-    if (ftable->n_files == 0) {
+    if (ftable->files.empty()) {
         throw std::runtime_error("archive has no files");
     }
 
-    for (std::size_t i = 0; i < ftable->n_files; ++i) {
-        const auto &f = ftable->files[i];
-        printf("reading file %s\n", f.name);
+    for (const auto &f : ftable->files) {
+        printf("reading file %s\n", f.name.c_str());
 
-        compio_file *file = compio_open_file(f.name, archive);
+        compio_file *file = compio_open_file(f.name.c_str(), archive);
         if (!file) {
-            throw std::runtime_error("failed to open file " + std::string(f.name));
+            throw std::runtime_error("failed to open file " + f.name);
         }
 
         printf("size = %" PRIu64 "\n", f.size);
@@ -129,7 +128,7 @@ int unpack(int argc, char **argv) {
              // Let's enforce that f.name does not contain ".."
              fs::path name_path(f.name);
              if (name_path.is_absolute() || name_path.string().find("..") != std::string::npos) {
-                 throw std::runtime_error("security error: invalid filename " + std::string(f.name));
+                 throw std::runtime_error("security error: invalid filename " + f.name);
              }
              out_fp = full_path;
         }
@@ -162,7 +161,7 @@ int unpack(int argc, char **argv) {
             if (read_bytes != to_read) {
                 fclose(out_file);
                 compio_close_file(file);
-                throw std::runtime_error("failed to read file " + std::string(f.name));
+                throw std::runtime_error("failed to read file " + f.name);
             }
             
             if (fwrite(buffer.get(), 1, read_bytes, out_file) != read_bytes) {

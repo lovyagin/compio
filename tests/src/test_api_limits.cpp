@@ -49,17 +49,6 @@ TEST_F(ApiLimitsTest, LongestNameIsFieldSizeMinusOne) {
     compio_close_archive(ar);
 }
 
-TEST_F(ApiLimitsTest, FilesTableRefusesToGrowPastHardLimit) {
-    compio::files_table table(16);
-    // Pretend the table is full at the hard limit without allocating 10M slots:
-    // add() must refuse before it touches the storage.
-    table.max_files = COMPIO_MAX_FILES_LIMIT;
-    table.n_files = COMPIO_MAX_FILES_LIMIT;
-    EXPECT_EQ(table.add("one_more", true), nullptr);
-    EXPECT_EQ(table.max_files, static_cast<uint32_t>(COMPIO_MAX_FILES_LIMIT));
-    table.n_files = 0;
-}
-
 TEST_F(ApiLimitsTest, InvalidOpenModeIsRejected) {
     compio_config cfg;
     compio_build_default_config(&cfg);

@@ -55,9 +55,7 @@ TEST_F(ScalabilityTest, HandleLargeFileCount) {
     archive = compio_open_archive(filename.c_str(), "r", &config);
     ASSERT_NE(archive, nullptr) << "Failed to reopen archive with Smart Open";
     
-    // Verify auto-detected value:
-    // smart-open (max_files = 0) should adopt the max_files stored on disk (NUM_FILES + 10 in this test).
-    EXPECT_EQ(archive->config.max_files, NUM_FILES + 10);
+    EXPECT_EQ(archive->header->ftable.files.size(), static_cast<size_t>(NUM_FILES));
 
     // Verify content of a few files to be sure
     // Check first, middle, last

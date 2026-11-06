@@ -111,9 +111,6 @@ TEST_F(HeaderValidationTest, SmartOpenAutoDetect) {
     ASSERT_NE(archive, nullptr) << "Smart Open failed to auto-detect parameters";
     
     // Verify that the archive adopted the file's parameters
-    // For v5, max_files is dynamic and adopts the capacity from the file header,
-    // which starts at the initial max_files (10).
-    EXPECT_EQ(archive->config.max_files, 10);
     EXPECT_EQ(archive->config.block_size, 4096);
     EXPECT_EQ(archive->config.b_tree_degree, 8);
     

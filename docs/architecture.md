@@ -11,7 +11,7 @@ The compio library provides compressed archive functionality with multiple compr
 The archive header stores metadata including:
 - Magic number (file signature)
 - B-Tree root address
-- File table (list of files with sizes)
+- Address, size and checksum of the files table (name, size and id of every file)
 - Allocator state (offset and size)
 - **Compression type** - identifies which compression algorithm was used
 
@@ -93,15 +93,32 @@ A flush writes what is modified and keeps both caches warm.
 
 ## File Format
 
+Format v6. Two header slots of 120 bytes each start the file; the slot with
+the larger valid `sequence_id` is current. All integers are little endian.
+
 ```
-[Header]
-  - magic_number (4 bytes)
+[Header slot] x 2
+  - magic_number (4 bytes, 27110663 = format v6)
+  - checksum (32 bytes, SHA-256 of the fields below)
+  - sequence_id (8 bytes)
   - index_root (8 bytes)
   - file_size (8 bytes)
   - allocator_state_offset (8 bytes)
   - allocator_state_size (8 bytes)
   - compression_type (4 bytes)
-  - files_table (variable)
+  - block_size (4 bytes)
+  - b_tree_degree (4 bytes)
+  - files_table_addr (8 bytes, 0 when there are no files)
+  - files_table_size (8 bytes)
+  - files_count (8 bytes)
+  - files_table_checksum (4 bytes, CRC32C of the files table)
+  - files_table_encoding (4 bytes, 0 = plain; other values are reserved)
+
+[Files Table] one record per file, packed
+  - name_len (2 bytes, 1..COMPIO_FNAME_MAX_SIZE - 1)
+  - size (8 bytes)
+  - file_id (8 bytes)
+  - name (name_len bytes, no terminator)
 
 [Allocator State]
   - Free block list

@@ -48,9 +48,9 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define COMPIO_MAX_FILES 4096        /**< Default maximum number of files in archive */
+#define COMPIO_MAX_FILES 4096        /**< Default expected number of files (memory reserved for the files table) */
 #define COMPIO_MAX_FILES_LIMIT 10000000 /**< Hard upper bound on the number of files in an archive (10M) */
-#define COMPIO_FNAME_MAX_SIZE 32   /**< Size of the file name field, including the terminating null byte */
+#define COMPIO_FNAME_MAX_SIZE 4096 /**< Longest file name plus the terminating null byte; names are stored with their own length */
 
 #define COMPIO_ERROR (-1)
 #define COMPIO_SUCCESS 0
@@ -59,7 +59,7 @@
 extern "C" {
 #endif
 
-#define COMPIO_MAGIC_NUMBER 27110662 /**< Bumped in format v5 (dynamic files table) */
+#define COMPIO_MAGIC_NUMBER 27110663 /**< Format v6: variable-length files table records */
 
 /**
  * @brief Checksum algorithm types
@@ -256,12 +256,9 @@ typedef struct {
                                         percentage of the container (default: 30; 100 disables
                                         automatic compaction). Checked when the archive is closed;
                                         compio_defragment() compacts regardless of it. */
-    int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).
-                        The table grows dynamically, so this is not a hard limit.
-                        For archives using the v5 dynamic files table, this capacity may grow
-                        beyond the initial value (subject to the hard upper bound COMPIO_MAX_FILES_LIMIT).
-                        For legacy/fixed-table formats, the on-disk files table size is fixed, so this
-                        may act as an effective limit. Set to 0 to use the default capacity. */
+    int max_files; /**< Expected number of files; memory for that many entries is reserved
+                        (default: COMPIO_MAX_FILES, 0 = default). Not a limit and not stored in
+                        the archive: the table grows up to COMPIO_MAX_FILES_LIMIT files. */
     uint64_t wal_max_size_bytes; /**< WAL size in bytes that forces a flush with header publication, which
                                       truncates the WAL (default: 64 MB, 0 = unlimited). Checked after each
                                       write, insert and erase; inside compio_begin_batch() it waits for

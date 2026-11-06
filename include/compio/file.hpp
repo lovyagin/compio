@@ -23,97 +23,101 @@
 namespace compio {
 
 /**
- * @brief Files table for archive header
+ * @brief Files table: name, size and id of every logical file
  *
+ * On disk the table is a sequence of variable-length records
+ * `name_len (u16) | size (u64) | file_id (u64) | name (name_len bytes)`, little
+ * endian, without padding or free slots. It is always rewritten as a whole to a
+ * new place (copy-on-write), so records never need room to grow in place.
  */
 struct files_table {
-    uint64_t n_files;
-    uint32_t max_files;
-    uint64_t next_file_id;
     struct file {
-        char name[COMPIO_FNAME_MAX_SIZE];
-        uint64_t size;
-        uint64_t file_id;
+        std::string name;
+        uint64_t size = 0;
+        uint64_t file_id = 0;
     };
-    std::vector<file> files;
-    
-    files_table();
-    explicit files_table(uint32_t max_files);
-    files_table(const files_table& other); // Custom copy constructor to skip index map
-    files_table& operator=(const files_table& other); // Custom assignment operator
-    files_table(files_table&& other) noexcept; // Custom move constructor
-    files_table& operator=(files_table&& other) noexcept; // Custom move assignment operator
+
+    /** Bytes of a record before its name */
+    static constexpr uint64_t record_header_size = sizeof(uint16_t) + 2 * sizeof(uint64_t);
+
+    uint64_t next_file_id = 1;
+    std::vector<file> files; /**< Live entries only */
+
+    files_table() = default;
+    explicit files_table(uint32_t expected_files);
+    files_table(const files_table& other);
+    files_table& operator=(const files_table& other);
+    files_table(files_table&& other) noexcept = default;
+    files_table& operator=(files_table&& other) noexcept = default;
 
     const file *find(const char *name) const;
     file *find(const char *name);
-    file *add(const char *name, bool allow_resize = true);
+    file *add(const char *name);
     int remove(const char *name);
-    
-    // Rebuild the index_map from the current files vector
-    void rebuild_index();
 
-    // Read from disk (external storage)
-    // capacity: number of slots allocated on disk
-    // n_files: number of used slots
-    bool read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64_t n_files);
+    /** @brief Exact on-disk size of the table */
+    uint64_t serialized_size() const;
+    std::vector<uint8_t> serialize() const;
 
-    // Write to disk (external storage)
+    /**
+     * @brief Parse a serialized table, rejecting malformed records and
+     *        duplicate names or ids
+     */
+    bool parse(const uint8_t *data, uint64_t size, uint64_t count);
+
+    bool read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t count, uint32_t checksum);
     bool write_to(FILE *file, uint64_t addr) const;
 
 private:
-    // Hash map for fast O(1) file lookups by name.
-    // Maps filename (std::string_view) to index in 'files' vector.
-    // Transient (not serialized to disk), rebuilt on load/add/remove.
-    // Key points to storage inside 'files' vector, so pointers must be stable.
-    // 'files' vector may resize (reallocating storage), invalidating pointers.
-    // When that happens, rebuild_index() MUST be called to update this map.
-    // USING CUSTOM FLAT MAP for memory efficiency and startup speed.
+    void rebuild_index();
+
+    // Keys point into the names stored in 'files'. Moving a std::string can move
+    // its characters (small-string storage), so the map is rebuilt whenever the
+    // vector reallocates.
     detail::flat_map index_map_;
 };
 
 /**
- * @brief Archive file header
- *
- * The on-disk size of the header is variable: it depends on @c ftable.max_files,
- * which is stored as the first field of the files table.  Use @c disk_size()
- * to obtain the actual byte count rather than @c sizeof(header).
+ * @brief Archive file header (format v6, fixed size)
  */
 struct header : public infile_object {
-    int32_t magic_number; /**< Constant bytes, file signature */
+    int32_t magic_number; /**< Constant bytes, file signature and format version */
     uint64_t index_root;  /**< Address of B-Tree root in file */
     uint64_t file_size;
-    files_table ftable; /**< Files table */
+    files_table ftable; /**< Files table, stored at files_table_addr */
     uint64_t allocator_state_offset;
     uint64_t allocator_state_size;
     uint32_t compression_type; /**< Type of compression algorithm used */
     uint32_t block_size;       /**< Size of data blocks */
     uint32_t b_tree_degree;    /**< Degree of B-Tree index */
     uint64_t sequence_id;      /**< Monotonic counter for double-buffering updates */
-    uint64_t files_table_addr;     /**< Address of dynamic files table (v5+) */
-    uint32_t files_table_capacity; /**< Capacity of dynamic files table (v5+) */
+    uint64_t files_table_addr;     /**< Address of the files table (0 when empty) */
+    uint64_t files_table_size;     /**< Size of the files table in bytes */
+    uint32_t files_table_checksum; /**< CRC32C of the files table */
+    uint32_t files_table_encoding; /**< Files table encoding; only 0 (plain) is defined */
     uint8_t checksum[32];      /**< SHA-256 checksum of the header (excluding this field) */
 
-    /**
-     * @brief Construct default header
-     *
-     */
+    /** @brief On-disk size of a header slot */
+    static constexpr uint64_t disk_size_bytes =
+        4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 8 + 4 + 4;
+
     header();
-    explicit header(uint32_t max_files);
+    explicit header(uint32_t expected_files);
 
     bool read_from(FILE *file, uint64_t addr) override;
     bool write_to(FILE *file, uint64_t addr, compio::WalManager* wal_manager = nullptr) const override;
 
-    /** Write a v5 header, reporting seek errors and incomplete writes. */
+    /** Write the header, reporting seek errors and incomplete writes. */
     bool write_checked(FILE *file, uint64_t addr) const;
 
     /** @brief On-disk size of this header */
-    uint64_t disk_size() const;
+    uint64_t disk_size() const { return disk_size_bytes; }
 
     /** @brief Size reserved for headers (double buffering implies 2x disk_size) */
     uint64_t reserved_size() const { return disk_size() * 2; }
 
-    /** @brief Calculate SHA-256 checksum of the header content */
-    void compute_checksum(uint8_t *out_hash) const;
+    /** @brief Calculate SHA-256 checksum of the header fields for a table of n_files */
+    void compute_checksum(uint8_t *out_hash, uint64_t n_files) const;
 
     /** 
      * @brief Read header and validate checksum without asserting

@@ -396,8 +396,15 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         errno = EOVERFLOW;
         return false;
     }
-    staged.spare_slot_offset_ = published_offset;
-    staged.spare_slot_size_ = published_size;
+    // Once the new header is published, the old slot becomes the spare. A slot
+    // past the container end (left by compaction) is not reserved: appended
+    // blocks reuse that space, so it must not be written to later.
+    const uint64_t container_end = std::max(logical_end, pos + slot_size);
+    const bool keep_spare = published_size != 0 && published_offset >= reserved_end &&
+                            published_offset < container_end &&
+                            published_size <= container_end - published_offset;
+    staged.spare_slot_offset_ = keep_spare ? published_offset : 0;
+    staged.spare_slot_size_ = keep_spare ? published_size : 0;
 
     free_blocks_manager snapshot(staged);
     for (const auto &[offset, size] : deferred_) {
@@ -1000,22 +1007,20 @@ bool block_allocator::perform_defragmentation() {
                                          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     uint64_t write_pos = reserved_end;
 
-    // v5 specific: The files table is stored as a reserved block in the archive.
-    // We must treat it as an obstacle during defragmentation to avoid overwriting it.
-    uint64_t ft_addr = 0;
-    uint64_t ft_size = 0;
-    {
-        const auto &hdr = readonly(archive_->header, header);
-        if (hdr->magic_number == COMPIO_MAGIC_NUMBER) {
-             ft_addr = hdr->files_table_addr;
-             // Must match the on-disk entry size used by files_table::write_to and
-             // sync_files_table: name + size(u64) + file_id(u64). Undercounting here
-             // makes the truncation guard below slice the tail off a files table that
-             // sits after the data, corrupting both header copies on reopen.
-             ft_size = (uint64_t)hdr->files_table_capacity *
-                       (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
-        }
+    // The files table is an obstacle while blocks are being moved.
+    uint64_t ft_addr = hdr.files_table_addr;
+    const uint64_t ft_size = hdr.files_table_size;
+    // The table is moved by rewriting it from memory, which must match the copy
+    // the header describes; a flush always precedes compaction.
+    if (ft_size != 0 && hdr.ftable.serialized_size() != ft_size) {
+        WARNING_PRINT("warning: perform_defragmentation: files table not flushed\n");
+        return false;
     }
+
+    // The durable header references the published allocator state until the
+    // compacted layout is published, so it stays in place like the files table.
+    const uint64_t st_addr = archive_->published_allocator_state_offset;
+    const uint64_t st_size = archive_->published_allocator_state_size;
 
     auto overlaps = [](uint64_t start, uint64_t size, uint64_t other, uint64_t other_size) {
         if (size == 0 || other_size == 0) return false;
@@ -1094,7 +1099,7 @@ bool block_allocator::perform_defragmentation() {
         while (true) {
             bool collision = false;
             
-            // 1. Check files table (v5)
+            // 1. Check files table
             if (ft_addr != 0) {
                  // Check intersection [write_pos, write_pos + block_size) AND [ft_addr, ft_addr + ft_size)
                  if (write_pos < ft_addr + ft_size && write_pos + block_size > ft_addr) {
@@ -1104,6 +1109,11 @@ bool block_allocator::perform_defragmentation() {
                  }
             }
             
+            if (!collision && overlaps(write_pos, block_size, st_addr, st_size)) {
+                write_pos = st_addr + st_size;
+                collision = true;
+            }
+
             // 2. Check B-tree nodes
             if (!collision && overlaps_btree_node(write_pos, block_size)) {
                 auto it = std::lower_bound(node_addrs.begin(), node_addrs.end(), write_pos);
@@ -1227,7 +1237,11 @@ bool block_allocator::perform_defragmentation() {
     // reference a table copy that later writes can reuse.
     if (ft_addr != 0 && ft_size != 0) {
         uint64_t table_pos = write_pos;
-        while (overlaps_btree_node(table_pos, ft_size)) {
+        while (overlaps(table_pos, ft_size, st_addr, st_size) || overlaps_btree_node(table_pos, ft_size)) {
+            if (overlaps(table_pos, ft_size, st_addr, st_size)) {
+                table_pos = st_addr + st_size;
+                continue;
+            }
             auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), table_pos);
             if (it != node_addrs.begin() && *std::prev(it) + btree_node_size > table_pos) {
                 table_pos = *std::prev(it) + btree_node_size;
@@ -1270,7 +1284,7 @@ bool block_allocator::perform_defragmentation() {
         }
     }
     
-    // v5: The files table may be located after data/nodes.
+    // The files table may be located after data/nodes.
     if (ft_addr != 0 && ft_addr + ft_size > truncate_pos) {
         truncate_pos = ft_addr + ft_size;
     }
@@ -1300,9 +1314,12 @@ bool block_allocator::perform_defragmentation() {
         occupied.push_back({na, btree_node_size});
     }
     
-    // v5: Mark files_table as occupied so allocator doesn't hand it out as free space.
+    // Mark the files table as occupied so the allocator does not hand it out as free space.
     if (ft_addr != 0) {
         occupied.push_back({ft_addr, ft_size});
+    }
+    if (st_size != 0 && st_addr < truncate_pos) {
+        occupied.push_back({st_addr, st_size});
     }
 
     std::sort(occupied.begin(), occupied.end());

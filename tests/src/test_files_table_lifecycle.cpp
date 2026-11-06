@@ -17,10 +17,10 @@ TEST(FilesTableLifecycleTest, MoveConstructorPreservesIndex) {
     files_table ft2(std::move(ft1));
     
     // ft1 should be empty/moved-from
-    EXPECT_EQ(ft1.n_files, 0);
+    EXPECT_TRUE(ft1.files.empty());
     
     // ft2 should have files and WORKING index
-    EXPECT_EQ(ft2.n_files, 2);
+    EXPECT_EQ(ft2.files.size(), 2u);
     EXPECT_NE(ft2.find("file1"), nullptr);
     EXPECT_NE(ft2.find("file2"), nullptr);
     
@@ -28,12 +28,12 @@ TEST(FilesTableLifecycleTest, MoveConstructorPreservesIndex) {
     // The pointer returned by find() should be inside ft2.files
     auto* f1 = ft2.find("file1");
     ASSERT_NE(f1, nullptr);
-    EXPECT_STREQ(f1->name, "file1");
+    EXPECT_EQ(f1->name, "file1");
     
     // Explicit pointer check: f1 should be within ft2.files vector storage
     // Assuming ft2.files is contiguous (std::vector)
     const files_table::file* base = ft2.files.data();
-    const files_table::file* end = base + ft2.max_files;
+    const files_table::file* end = base + ft2.files.size();
     EXPECT_GE(f1, base);
     EXPECT_LT(f1, end);
 }
@@ -46,7 +46,7 @@ TEST(FilesTableLifecycleTest, MoveAssignmentPreservesIndex) {
     ft2 = std::move(ft1);
     
     EXPECT_NE(ft2.find("file1"), nullptr);
-    EXPECT_EQ(ft2.n_files, 1);
+    EXPECT_EQ(ft2.files.size(), 1u);
 }
 
 TEST(FilesTableLifecycleTest, CopyConstructorRebuildsIndex) {

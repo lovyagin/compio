@@ -755,8 +755,7 @@ TEST_F(ThresholdCompactionTest, NegligibleFreeSpaceDoesNotTriggerCompaction) {
 TEST_F(ThresholdCompactionTest, SmallArchiveStaysTightAcrossSessions) {
     compio_config cfg = config(30);
     cfg.max_files = COMPIO_MAX_FILES;
-    const uint64_t table_size = static_cast<uint64_t>(COMPIO_MAX_FILES) *
-                                (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
+    const uint64_t table_size = compio::files_table::record_header_size + 3; // "log"
 
     std::vector<uint8_t> expected;
     for (int session = 0; session < 6; session++) {
