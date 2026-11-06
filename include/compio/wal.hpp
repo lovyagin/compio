@@ -65,14 +65,7 @@ struct WalRecordHeader {
  * wal.begin_transaction();
  * wal.log_write(WalRecordType::BLOCK, addr, data, size);
  * wal.log_write(WalRecordType::INDEX_NODE, addr2, node, size2);
- * wal.commit_transaction(archive_file, max_wal_size);
- *
- * // Or use RAII guard
- * {
- *     TransactionGuard guard(&wal);
- *     wal.log_write(WalRecordType::BLOCK, addr, data, size);
- *     guard.commit(archive_file);
- * }
+ * wal.commit_transaction();
  * @endcode
  */
 class WalManager {
@@ -195,28 +188,9 @@ public:
      * Decrements transaction nesting depth. When reaching 0, writes COMMIT record
      * and syncs WAL per configured sync_mode.
      *
-     * @param[in] archive_file Optional archive FILE* for auto-checkpoint
-     * @param[in] max_wal_size Max WAL size threshold (0 = no auto-checkpoint)
      * @return true if successfully committed, false on I/O error
-     *
-     * @note Uses sync_mode set by set_sync_mode()
-     * @note If WAL size exceeds max_wal_size, automatically checkpoints
-     *
-     * @see commit_transaction_explicit()
      */
-    bool commit_transaction(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
-
-    /**
-     * @brief Commits with explicit sync mode override
-     *
-     * @param[in] sync_mode Override sync mode for this commit only
-     * @param[in] archive_file Optional archive FILE* for auto-checkpoint
-     * @param[in] max_wal_size Max WAL size threshold (0 = no auto-checkpoint)
-     * @return true if successfully committed, false on I/O error
-     *
-     * @see commit_transaction()
-     */
-    bool commit_transaction_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
+    bool commit_transaction();
 
     /**
      * @brief Rolls back current transaction without committing
@@ -225,7 +199,6 @@ public:
      * All logged records in this transaction are discarded on next recovery.
      *
      * @note Buffered records are not immediately removed from WAL file
-     * @note Useful for error handling: construct with TransactionGuard for RAII
      */
     void rollback_transaction();
 
@@ -259,7 +232,6 @@ public:
      * @pre Transaction depth must be 0 (no active transactions)
      * @pre Main archive file must be fsync'd before calling this
      *
-     * @note Called automatically by commit_transaction() when WAL size exceeds limit
      */
     bool checkpoint();
 
@@ -274,15 +246,13 @@ public:
     void begin_batch();
 
     /**
-     * @brief Ends batch and optionally triggers checkpoint
+     * @brief Ends batch and commits the grouped records
      *
-     * @param[in] archive_file Optional archive FILE* for auto-checkpoint
-     * @param[in] max_wal_size Max WAL size threshold
      * @return true if successful, false on error
      *
      * @see begin_batch()
      */
-    bool end_batch(FILE* archive_file = nullptr, uint64_t max_wal_size = 0);
+    bool end_batch();
     
     /**
      * @brief Gets current batch nesting depth
@@ -335,98 +305,7 @@ private:
     
     // Internal implementations without mutex locking
     void begin_transaction_impl();
-    bool commit_transaction_explicit_impl(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size);
-};
-
-/**
- * @class TransactionGuard
- * @brief RAII guard for automatic transaction management
- *
- * Simplifies transaction handling by automatically calling begin_transaction()
- * on construction and commit_transaction() or rollback_transaction() on destruction.
- *
- * @par Usage:
- * @code
- * {
- *     TransactionGuard guard(&wal_manager);
- *     wal_manager.log_write(WalRecordType::BLOCK, addr, data, size);
- *     wal_manager.log_write(WalRecordType::INDEX_NODE, addr2, node, size2);
- *     guard.commit(archive_file);
- *     // On scope exit: if commit() was called, nothing happens
- *     // On scope exit: if commit() not called, rollback_transaction() is invoked
- * }
- * @endcode
- *
- * @note Non-copyable and non-movable for safety
- * @note Automatically rolls back if commit() not called before destruction
- */
-class TransactionGuard {
-    WalManager* wal_;
-    bool committed_;
-
-public:
-    /**
-     * @brief Constructs guard and begins transaction
-     *
-     * @param[in] wal Pointer to WalManager. Can be nullptr (safe no-op).
-     */
-    explicit TransactionGuard(WalManager* wal) : wal_(wal), committed_(false) {
-        if (wal_) {
-            wal_->begin_transaction();
-        }
-    }
-
-    /**
-     * @brief Destructor - rolls back if not committed
-     *
-     * If commit() or commit_explicit() was not called, calls rollback_transaction().
-     */
-    ~TransactionGuard() {
-        if (wal_ && !committed_) {
-            wal_->rollback_transaction();
-        }
-    }
-
-    // Disable copy/move to keep it simple
-    TransactionGuard(const TransactionGuard&) = delete;
-    TransactionGuard& operator=(const TransactionGuard&) = delete;
-
-    /**
-     * @brief Commits transaction using WalManager's configured sync mode
-     *
-     * @param[in] archive_file Optional archive FILE* for auto-checkpoint
-     * @param[in] max_wal_size Max WAL size threshold (0 = no auto-checkpoint)
-     * @return true if committed successfully, false on error
-     *
-     * @note Calling commit() multiple times is idempotent (returns true on 2nd+ call)
-     */
-    bool commit(FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
-        if (!wal_) return false;
-        if (committed_) return true;
-        
-        bool result = wal_->commit_transaction(archive_file, max_wal_size);
-        committed_ = true;
-        return result;
-    }
-
-    /**
-     * @brief Commits with explicit sync mode override
-     *
-     * @param[in] sync_mode Override sync mode for this commit
-     * @param[in] archive_file Optional archive FILE* for auto-checkpoint
-     * @param[in] max_wal_size Max WAL size threshold
-     * @return true if committed successfully, false on error
-     *
-     * @see commit()
-     */
-    bool commit_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file = nullptr, uint64_t max_wal_size = 0) {
-        if (!wal_) return false;
-        if (committed_) return true;
-        
-        bool result = wal_->commit_transaction_explicit(sync_mode, archive_file, max_wal_size);
-        committed_ = true;
-        return result;
-    }
+    bool commit_transaction_impl(compio_wal_sync_mode sync_mode);
 };
 
 } // namespace compio

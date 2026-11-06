@@ -32,9 +32,9 @@ protected:
             compio_close_archive(archive);
             archive = nullptr;
         }
-        if (fs::exists(test_file)) {
-            fs::remove(test_file);
-        }
+        std::error_code ec;
+        fs::remove(test_file, ec);
+        fs::remove(test_file + ".wal", ec);
     }
 
     void create_archive(int cache_blocks = 100) {

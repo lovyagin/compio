@@ -193,21 +193,12 @@ void WalManager::set_sync_mode(compio_wal_sync_mode mode) {
     sync_mode_ = mode;
 }
 
-bool WalManager::commit_transaction(FILE* archive_file, uint64_t max_wal_size) {
-    compio_wal_sync_mode mode;
-    {
-        std::unique_lock<std::mutex> lock(mutex_);
-        mode = sync_mode_;
-    }
-    return commit_transaction_explicit(mode, archive_file, max_wal_size);
-}
-
-bool WalManager::commit_transaction_explicit(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size) {
+bool WalManager::commit_transaction() {
     std::unique_lock<std::mutex> lock(mutex_);
-    return commit_transaction_explicit_impl(sync_mode, archive_file, max_wal_size);
+    return commit_transaction_impl(sync_mode_);
 }
 
-bool WalManager::commit_transaction_explicit_impl(compio_wal_sync_mode sync_mode, FILE* archive_file, uint64_t max_wal_size) {
+bool WalManager::commit_transaction_impl(compio_wal_sync_mode sync_mode) {
     if (transaction_depth_ > 0) {
         transaction_depth_--;
     } else {
@@ -248,45 +239,6 @@ bool WalManager::commit_transaction_explicit_impl(compio_wal_sync_mode sync_mode
         int fd = fileno(wal_file_);
         if (fsync(fd) != 0) return false;
 #endif
-    }
-
-    // Auto-Checkpoint if size exceeds limit and archive_file is provided
-    if (archive_file && max_wal_size > 0 && current_wal_size_ >= max_wal_size) {
-        // Must release lock for a moment? No, checkpoint takes lock.
-        // Wait, checkpoint takes unique_lock. But we already hold lock.
-        // We need an internal checkpoint function or recursive mutex?
-        // Or just implement logic here.
-        // Checkpoint logic: Sync Archive -> Flush WAL -> Truncate WAL -> Seek 0 -> Sync WAL.
-        
-        // 1. Sync Archive
-        if (fflush(archive_file) != 0) return false;
-#ifdef _WIN32
-        int arch_fd = _fileno(archive_file);
-        if (_commit(arch_fd) != 0) return false;
-#else
-        int arch_fd = fileno(archive_file);
-        if (fsync(arch_fd) != 0) return false;
-#endif
-
-        // 2. Truncate WAL (reuse checkpoint logic but without locking again)
-        // We can extract checkpoint logic to a private method `checkpoint_locked`.
-        // Or just copy it here since it is short.
-        
-        if (fflush(wal_file_) != 0) return false;
-
-#ifdef _WIN32
-        int fd = _fileno(wal_file_);
-        if (_chsize_s(fd, 0) != 0) return false;
-        if (_lseek(fd, 0, SEEK_SET) == -1) return false;
-        if (_commit(fd) != 0) return false;
-#else
-        int fd = fileno(wal_file_);
-        if (ftruncate(fd, 0) != 0) return false;
-        if (lseek(fd, 0, SEEK_SET) < 0) return false;
-        if (fsync(fd) != 0) return false;
-#endif
-        rewind(wal_file_);
-        current_wal_size_ = 0;
     }
 
     return true;
@@ -595,7 +547,7 @@ void WalManager::begin_batch() {
     batch_depth_++;
 }
 
-bool WalManager::end_batch(FILE* archive_file, uint64_t max_wal_size) {
+bool WalManager::end_batch() {
     std::unique_lock<std::mutex> lock(mutex_);
     
     if (batch_depth_ <= 0) {
@@ -618,6 +570,6 @@ bool WalManager::end_batch(FILE* archive_file, uint64_t max_wal_size) {
     
     // Call internal version without lock to avoid deadlock
     begin_transaction_impl();
-    return commit_transaction_explicit_impl(mode, archive_file, max_wal_size);
+    return commit_transaction_impl(mode);
 }
 } // namespace compio

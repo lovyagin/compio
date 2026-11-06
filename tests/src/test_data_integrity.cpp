@@ -35,6 +35,7 @@ protected:
             compio_close_archive(archive);
         }
         remove(archive_name);
+        remove((std::string(archive_name) + ".wal").c_str());
     }
 };
 
