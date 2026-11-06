@@ -73,19 +73,21 @@ typedef enum {
  * @brief Compression algorithm types
  */
 typedef enum {
-    /**
-     * @brief Custom compression (use it, when you're using your custom compress/decompress
-     * algorithm; note, that if you want to use archive, created with custom compression, in
-     * different program, you'll need to provide the exact same compressor, and set compression_type
-     * to custom)
-     *
-     */
-    COMPIO_COMPRESS_CUSTOM = 0,
     COMPIO_COMPRESS_DUMMY = 1, /**< No compression (dummy) */
     COMPIO_COMPRESS_ZLIB = 2,  /**< ZLIB compression */
     COMPIO_COMPRESS_LZ4 = 3,   /**< LZ4 compression */
     COMPIO_COMPRESS_ZSTD = 4,  /**< Zstandard compression */
-    COMPIO_COMPRESS_BROTLI = 5 /**< Brotli compression */
+    COMPIO_COMPRESS_BROTLI = 5, /**< Brotli compression */
+    /**
+     * @brief First identifier for user-supplied compressors
+     *
+     * The archive header records the identifier, and opening an archive with a compressor of
+     * another identifier fails with EINVAL. Give each external algorithm, and each incompatible
+     * version of one, its own value from COMPIO_COMPRESS_CUSTOM up to INT32_MAX, e.g.
+     * (compio_compression_type)(COMPIO_COMPRESS_CUSTOM + 1). Values below it are reserved for
+     * built-in compressors; 0 is invalid.
+     */
+    COMPIO_COMPRESS_CUSTOM = 0x10000
 } compio_compression_type;
 
 /**
@@ -205,8 +207,10 @@ void compio_build_brotli_compressor_with_level(compio_compressor *result, int le
  *
  * @param result Pointer to compressor structure to initialize
  * @param type Compression type to use
+ * @return COMPIO_SUCCESS, or COMPIO_ERROR with errno = ENOTSUP when type is not a built-in
+ *         compressor (custom compressors must be supplied by the caller)
  */
-void compio_build_compressor_by_type(compio_compressor *result, compio_compression_type type);
+int compio_build_compressor_by_type(compio_compressor *result, compio_compression_type type);
 
 /**
  * @brief Memory allocation strategies for managing free blocks in archive

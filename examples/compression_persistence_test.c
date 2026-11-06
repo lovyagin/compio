@@ -70,7 +70,10 @@ int main() {
 
         compio_config reopen_config;
         compio_build_default_config(&reopen_config);
-        compio_build_compressor_by_type(&reopen_config.compressor, stored_type);
+        if (compio_build_compressor_by_type(&reopen_config.compressor, stored_type) != COMPIO_SUCCESS) {
+            printf("  ERROR: Archive uses a compressor that is not built in\n");
+            continue;
+        }
 
         archive = compio_open_archive(archive_path, "r+", &reopen_config);
         if (!archive) {

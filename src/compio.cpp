@@ -153,7 +153,20 @@ bool compio_archive::is_readonly() const {
     return mode_b & mode_bit::r;
 }
 
+static bool valid_compression_type(compio_compression_type t) {
+    return (t >= COMPIO_COMPRESS_DUMMY && t <= COMPIO_COMPRESS_BROTLI) || t >= COMPIO_COMPRESS_CUSTOM;
+}
+
 static bool validate_config(const compio_config *c, bool allow_zeros = false) {
+    if (!valid_compression_type(c->compressor.compression_type)) {
+        WARNING_PRINT("warning: compression_type=%d is neither built-in nor >= COMPIO_COMPRESS_CUSTOM\n",
+                      (int)c->compressor.compression_type);
+        return false;
+    }
+    if (!c->compressor.compress || !c->compressor.decompress || !c->compressor.get_bufsize) {
+        WARNING_PRINT("warning: compressor has null function pointers\n");
+        return false;
+    }
     if (c->block_size <= 0 && !allow_zeros) {
         WARNING_PRINT("warning: block_size=%d <= 0\n", c->block_size);
         return false;
@@ -368,13 +381,11 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         const auto& hdr = *readonly(archive->header, header);
         
         // 1. Compression Type
-        if (hdr.compression_type != c->compressor.compression_type) {
-             // For compression, we can't just "adopt" it because we need the function pointers
-             // in c->compressor to match. If the user passed a compressor that doesn't match
-             // the file's type, it's a hard error unless we implement a way to auto-switch compressors.
-             // For now, we keep the existing strict check.
+        // The compressor cannot be adopted from the file: only the caller has its code.
+        if (hdr.compression_type != static_cast<uint32_t>(c->compressor.compression_type)) {
             errno = EINVAL;
-            WARNING_PRINT("warning: compression type mismatch while opening archive\n");
+            WARNING_PRINT("warning: compression type mismatch while opening archive (file=%u, config=%d)\n",
+                          hdr.compression_type, (int)c->compressor.compression_type);
             goto no_allocator;
         }
 
@@ -2564,6 +2575,14 @@ int compio_repair(const char *path, const char *output_dir) {
             WARNING_PRINT("info: header valid, degree=%u, compression=%u\n", h.b_tree_degree, h.compression_type);
         }
 
+        compio_compressor compressor;
+        if (compio_build_compressor_by_type(&compressor, (compio_compression_type)h.compression_type) !=
+            COMPIO_SUCCESS) {
+            WARNING_PRINT("error: archive uses compressor %u, which is not built in; cannot decode blocks\n",
+                          h.compression_type);
+            return COMPIO_ERROR;
+        }
+
         std::map<uint64_t, std::string> hash_to_name;
         if (valid_header) {
             for (const auto &file : h.ftable.files) hash_to_name[file.file_id] = file.name;
@@ -2660,9 +2679,6 @@ int compio_repair(const char *path, const char *output_dir) {
         if (reattributed > 0) {
             WARNING_PRINT("info: re-attributed %d orphan block(s) via self-describing back-refs\n", reattributed);
         }
-
-        compio_compressor compressor;
-        compio_build_compressor_by_type(&compressor, (compio_compression_type)h.compression_type);
 
         int recovered_count = 0;
         std::set<uint64_t> claimed_addrs;

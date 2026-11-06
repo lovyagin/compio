@@ -5,8 +5,8 @@
 The library supports multiple compression algorithms:
 
 - **NONE (Dummy)** - No compression, data stored as-is
-- **ZLIB** - Standard compression (default)
-- **LZ4** - Very fast compression/decompression
+- **ZLIB** - Standard compression
+- **LZ4** - Very fast compression/decompression (default)
 - **Zstandard (zstd)** - Modern efficient compression
 - **Brotli** - High compression ratio
 
@@ -22,10 +22,10 @@ compio_config config;
 compio_build_default_config(&config);
 
 // Select compression algorithm
-compio_build_lz4_compressor(&config.compressor);      // LZ4
+compio_build_lz4_compressor(&config.compressor);      // LZ4 (default)
 // compio_build_zstd_compressor(&config.compressor);  // Zstandard
 // compio_build_brotli_compressor(&config.compressor); // Brotli
-// compio_build_zlib_compressor(&config.compressor);  // ZLIB (default)
+// compio_build_zlib_compressor(&config.compressor);  // ZLIB
 // compio_build_dummy_compressor(&config.compressor); // No compression
 
 // Create archive with selected compressor
@@ -50,17 +50,43 @@ compio_build_zstd_compressor_with_level(&config.compressor, 3);
 compio_build_brotli_compressor_with_level(&config.compressor, 11);
 ```
 
-### Automatic Compression Detection
+### Reopening an Archive
 
-The compression algorithm is automatically saved in the archive header. When reopening an archive, the correct compressor is automatically selected:
+The archive header records the compressor identifier (`compression_type`). Opening an archive
+with a compressor of another identifier fails with `EINVAL`, so blocks are never decoded by the
+wrong algorithm. For built-in compressors the matching one can be built from the header:
 
 ```c
-// Open existing archive - compressor auto-detected from header
+compio_compression_type type;
+compio_get_compression_type("archive.cmp", &type);
+
 compio_config config;
-compio_build_default_config(&config);  // Any config works
+compio_build_default_config(&config);
+if (compio_build_compressor_by_type(&config.compressor, type) != COMPIO_SUCCESS) {
+    // ENOTSUP: the archive uses a custom compressor, supply it yourself
+}
 compio_archive* archive = compio_open_archive("archive.cmp", "r+", &config);
-// Archive will use the same compressor it was created with
 ```
+
+`block_size` and `b_tree_degree` are recorded in the header too. Set them to 0 to take the
+values from the archive; any other value must match, otherwise opening fails with `EINVAL`.
+
+### Custom Compressors
+
+A custom compressor fills `compress`, `decompress` and `get_bufsize` and takes its own
+identifier from `COMPIO_COMPRESS_CUSTOM` up to `INT32_MAX`. Give each algorithm, and each
+incompatible version of one, a distinct identifier: the identifier is the only thing that tells
+two external codecs apart, because block checksums cover the compressed bytes.
+
+```c
+config.compressor.compress = my_compress;
+config.compressor.decompress = my_decompress;
+config.compressor.get_bufsize = my_bufsize;
+config.compressor.compression_type = (compio_compression_type)(COMPIO_COMPRESS_CUSTOM + 1);
+```
+
+`compio_repair` decodes blocks only with built-in compressors and refuses archives that use a
+custom one.
 
 ### Basic Operations
 
