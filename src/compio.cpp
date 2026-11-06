@@ -54,7 +54,7 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     if (!fp || !t) {
         return -1;
     }
-    FILE *file = fopen(fp, "r");
+    FILE *file = fopen(fp, "rb");
     if (file == nullptr) {
         return -1;
     }
