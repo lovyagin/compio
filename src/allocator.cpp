@@ -396,8 +396,15 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
         errno = EOVERFLOW;
         return false;
     }
-    staged.spare_slot_offset_ = published_offset;
-    staged.spare_slot_size_ = published_size;
+    // Once the new header is published, the old slot becomes the spare. A slot
+    // past the container end (left by compaction) is not reserved: appended
+    // blocks reuse that space, so it must not be written to later.
+    const uint64_t container_end = std::max(logical_end, pos + slot_size);
+    const bool keep_spare = published_size != 0 && published_offset >= reserved_end &&
+                            published_offset < container_end &&
+                            published_size <= container_end - published_offset;
+    staged.spare_slot_offset_ = keep_spare ? published_offset : 0;
+    staged.spare_slot_size_ = keep_spare ? published_size : 0;
 
     free_blocks_manager snapshot(staged);
     for (const auto &[offset, size] : deferred_) {
