@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <shared_mutex>
+#include <string>
 #include <mutex>
 #include <vector>
 
@@ -48,10 +49,6 @@ struct compio_archive {
     // Set by a compaction: the physical file is cut down to header->file_size
     // once the next header is durable.
     bool truncate_after_publish = false;
-    // Checksum of the files table as last written to disk; lets a flush skip
-    // rewriting a table that has not changed.
-    uint32_t files_table_checksum = 0;
-    bool files_table_checksum_valid = false;
 
     compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;
@@ -59,7 +56,7 @@ struct compio_archive {
 
 struct compio_file {
     compio_archive *archive;
-    char name[COMPIO_FNAME_MAX_SIZE];
+    std::string name;
     uint64_t cursor;
     uint64_t size;
     uint64_t hash;

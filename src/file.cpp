@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstring>
 #include <inttypes.h>
+#include <unordered_set>
 #include <vector>
 
 #include "compio/debug_print.hpp"
@@ -16,67 +17,84 @@ using namespace compio;
 #define lendian_fread_member(memb, file) lendian_fread(&(memb), sizeof(memb), 1, (file))
 #define lendian_fwrite_member(memb, file) lendian_fwrite(&(memb), sizeof(memb), 1, (file))
 
-static size_t portable_strnlen(const char *s, size_t maxlen) {
-    const char *end = (const char *)memchr(s, '\0', maxlen);
-    return end ? (size_t)(end - s) : maxlen;
-}
-
 static const uint8_t index_node_signature = 67;
 
-bool files_table::read_from(FILE *file, uint64_t addr, uint32_t capacity, uint64_t n_files_in) {
-    if (fseek64(file, addr, SEEK_SET) != 0) {
-        WARNING_PRINT("warning: fseek failed in files_table::read_from\n");
-        return false;
+static void put_le(std::vector<uint8_t> &out, uint64_t value, size_t bytes) {
+    for (size_t i = 0; i < bytes; ++i) out.push_back(static_cast<uint8_t>(value >> (8 * i)));
+}
+
+static uint64_t get_le(const uint8_t *in, size_t bytes) {
+    uint64_t value = 0;
+    for (size_t i = 0; i < bytes; ++i) value |= static_cast<uint64_t>(in[i]) << (8 * i);
+    return value;
+}
+
+uint64_t files_table::serialized_size() const {
+    uint64_t size = 0;
+    for (const auto &f : files) size += record_header_size + f.name.size();
+    return size;
+}
+
+std::vector<uint8_t> files_table::serialize() const {
+    std::vector<uint8_t> out;
+    out.reserve(static_cast<size_t>(serialized_size()));
+    for (const auto &f : files) {
+        put_le(out, f.name.size(), sizeof(uint16_t));
+        put_le(out, f.size, sizeof(uint64_t));
+        put_le(out, f.file_id, sizeof(uint64_t));
+        out.insert(out.end(), f.name.begin(), f.name.end());
     }
+    return out;
+}
 
-    this->max_files = capacity;
-    this->n_files = n_files_in;
-    this->files.resize(capacity);
+bool files_table::parse(const uint8_t *data, uint64_t size, uint64_t count) {
+    std::vector<file> parsed;
+    parsed.reserve(static_cast<size_t>(std::min<uint64_t>(count, size / (record_header_size + 1))));
+    std::unordered_set<uint64_t> ids;
+    uint64_t pos = 0;
+    while (pos < size) {
+        if (size - pos < record_header_size) return false;
+        const uint64_t name_len = get_le(data + pos, sizeof(uint16_t));
+        file f;
+        f.size = get_le(data + pos + 2, sizeof(uint64_t));
+        f.file_id = get_le(data + pos + 10, sizeof(uint64_t));
+        pos += record_header_size;
+        if (name_len == 0 || name_len >= COMPIO_FNAME_MAX_SIZE || size - pos < name_len) return false;
+        f.name.assign(reinterpret_cast<const char *>(data + pos), static_cast<size_t>(name_len));
+        pos += name_len;
+        // Names come from C strings; an embedded NUL could never be opened.
+        if (f.name.find('\0') != std::string::npos) return false;
+        if (!ids.insert(f.file_id).second) return false;
+        parsed.push_back(std::move(f));
+    }
+    if (parsed.size() != count) return false;
 
-    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t) + sizeof(uint64_t);
-    static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
+    files = std::move(parsed);
+    rebuild_index();
+    return index_map_.size() == files.size(); // duplicate names
+}
 
-    bool is_be = is_big_endian();
-
-    // Optimization: Bulk read if Little Endian
-    if (!is_be) {
-        if (fread(this->files.data(), ENTRY_SIZE, capacity, file) != capacity) {
-            WARNING_PRINT("warning: short read in files table (bulk)\n");
+bool files_table::read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t count,
+                            uint32_t checksum) {
+    std::vector<uint8_t> data(static_cast<size_t>(size));
+    if (size > 0) {
+        if (fseek64(file, addr, SEEK_SET) != 0) {
+            WARNING_PRINT("warning: fseek failed in files_table::read_from\n");
             return false;
         }
-        rebuild_index();
-        return true;
-    }
-
-    const size_t BATCH_SIZE = 4096;
-    std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
-
-    size_t remaining = capacity; // We read capacity slots
-    size_t current_idx = 0;
-
-    while (remaining > 0) {
-        size_t count = std::min(remaining, BATCH_SIZE);
-        size_t bytes_to_read = count * ENTRY_SIZE;
-
-        size_t read_count = lendian_fread(buffer.data(), 1, bytes_to_read, file);
-        if (read_count != bytes_to_read) {
+        if (fread(data.data(), 1, data.size(), file) != data.size()) {
             WARNING_PRINT("warning: short read in files table\n");
             return false;
         }
-
-        for (size_t i = 0; i < count; ++i) {
-            files_table::file& f = this->files[current_idx + i];
-            size_t offset = i * ENTRY_SIZE;
-            std::memcpy(f.name, &buffer[offset], COMPIO_FNAME_MAX_SIZE);
-            std::memcpy(&f.size, &buffer[offset + COMPIO_FNAME_MAX_SIZE], sizeof(uint64_t));
-            std::memcpy(&f.file_id, &buffer[offset + COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t)], sizeof(uint64_t));
-            if (is_be) swap_uint64(&f.size);
-            if (is_be) swap_uint64(&f.file_id);
-        }
-        current_idx += count;
-        remaining -= count;
     }
-    rebuild_index();
+    if (crc32c(data.data(), data.size()) != checksum) {
+        WARNING_PRINT("warning: files table checksum mismatch\n");
+        return false;
+    }
+    if (!parse(data.data(), size, count)) {
+        WARNING_PRINT("warning: malformed files table\n");
+        return false;
+    }
     return true;
 }
 
@@ -85,63 +103,22 @@ bool files_table::write_to(FILE *file, uint64_t addr) const {
         WARNING_PRINT("warning: fseek failed in files_table::write_to\n");
         return false;
     }
-
-    const size_t ENTRY_SIZE = COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t) + sizeof(uint64_t);
-    static_assert(sizeof(files_table::file) == ENTRY_SIZE, "struct file must be packed");
-
-    bool is_be = is_big_endian();
-
-    // Optimization: Bulk write if Little Endian
-    if (!is_be) {
-        assert(this->files.size() >= this->max_files);
-        size_t entries_to_write = this->max_files;
-        if (fwrite(this->files.data(), ENTRY_SIZE, entries_to_write, file) != entries_to_write) {
-            WARNING_PRINT("warning: short write in files table (bulk)\n");
-            if (!errno) errno = EIO;
-            return false;
-        }
-        return true;
-    }
-
-    const size_t BATCH_SIZE = 4096;
-    std::vector<uint8_t> buffer(BATCH_SIZE * ENTRY_SIZE);
-
-    size_t remaining = this->max_files; // write capacity slots
-    size_t current_idx = 0;
-
-    while (remaining > 0) {
-        size_t count = std::min(remaining, BATCH_SIZE);
-        
-        for (size_t i = 0; i < count; ++i) {
-            const files_table::file& f = this->files[current_idx + i];
-            size_t offset = i * ENTRY_SIZE;
-            std::memcpy(&buffer[offset], f.name, COMPIO_FNAME_MAX_SIZE);
-            uint64_t s = f.size;
-            uint64_t id = f.file_id;
-            if (is_be) swap_uint64(&s);
-            if (is_be) swap_uint64(&id);
-            std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE], &s, sizeof(uint64_t));
-            std::memcpy(&buffer[offset + COMPIO_FNAME_MAX_SIZE + sizeof(uint64_t)], &id, sizeof(uint64_t));
-        }
-
-        size_t bytes_to_write = count * ENTRY_SIZE;
-        if (lendian_fwrite(buffer.data(), 1, bytes_to_write, file) != bytes_to_write) {
-            WARNING_PRINT("warning: short write in files table\n");
-            if (!errno) errno = EIO;
-            return false;
-        }
-        current_idx += count;
-        remaining -= count;
+    const std::vector<uint8_t> data = serialize();
+    if (fwrite(data.data(), 1, data.size(), file) != data.size()) {
+        WARNING_PRINT("warning: short write in files table\n");
+        if (!errno) errno = EIO;
+        return false;
     }
     return true;
 }
 
+header::header() : header(COMPIO_MAX_FILES) {}
 
-header::header()
+header::header(uint32_t expected_files)
     : magic_number(COMPIO_MAGIC_NUMBER),
       index_root(0),
       file_size(0),
-      ftable(COMPIO_MAX_FILES),
+      ftable(expected_files),
       allocator_state_offset(0),
       allocator_state_size(0),
       compression_type(COMPIO_COMPRESS_ZLIB),
@@ -149,38 +126,14 @@ header::header()
       b_tree_degree(0),
       sequence_id(0),
       files_table_addr(0),
-      files_table_capacity(COMPIO_MAX_FILES) {
+      files_table_size(0),
+      files_table_checksum(crc32c(nullptr, 0)),
+      files_table_encoding(0) {
     memset(checksum, 0, sizeof(checksum));
     file_size = disk_size();
 }
 
-header::header(uint32_t max_files)
-    : magic_number(COMPIO_MAGIC_NUMBER),
-      index_root(0),
-      file_size(0),
-      ftable(max_files),
-      allocator_state_offset(0),
-      allocator_state_size(0),
-      compression_type(COMPIO_COMPRESS_ZLIB),
-      block_size(0),
-      b_tree_degree(0),
-      sequence_id(0),
-      files_table_addr(0),
-      files_table_capacity(max_files) {
-    memset(checksum, 0, sizeof(checksum));
-    file_size = disk_size();
-}
-
-uint64_t header::disk_size() const {
-    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
-        return 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 4 + 8;
-    }
-    // v4 and older
-    return 4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 4 + 8 +
-           static_cast<uint64_t>(ftable.max_files) * (COMPIO_FNAME_MAX_SIZE + 8);
-}
-
-void header::compute_checksum(uint8_t *out_hash) const {
+void header::compute_checksum(uint8_t *out_hash, uint64_t n_files) const {
     SHA256 ctx;
     ctx.update(reinterpret_cast<const uint8_t*>(&magic_number), sizeof(magic_number));
     ctx.update(reinterpret_cast<const uint8_t*>(&sequence_id), sizeof(sequence_id));
@@ -191,25 +144,12 @@ void header::compute_checksum(uint8_t *out_hash) const {
     ctx.update(reinterpret_cast<const uint8_t*>(&compression_type), sizeof(compression_type));
     ctx.update(reinterpret_cast<const uint8_t*>(&block_size), sizeof(block_size));
     ctx.update(reinterpret_cast<const uint8_t*>(&b_tree_degree), sizeof(b_tree_degree));
-
-    if (magic_number == COMPIO_MAGIC_NUMBER) { // v5
-        ctx.update(reinterpret_cast<const uint8_t*>(&files_table_addr), sizeof(files_table_addr));
-        ctx.update(reinterpret_cast<const uint8_t*>(&files_table_capacity), sizeof(files_table_capacity));
-        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
-        
-        // For v5, do not include the external files table contents in the header checksum.
-        // The table is stored and updated independently; hashing it here would break
-        // the double-buffered header crash-safety guarantees.
-    } else { // v4
-        ctx.update(reinterpret_cast<const uint8_t*>(&files_table_capacity), sizeof(files_table_capacity));
-        ctx.update(reinterpret_cast<const uint8_t*>(&ftable.n_files), sizeof(ftable.n_files));
-        
-        for (uint32_t i = 0; i < files_table_capacity; ++i) {
-            ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].name), sizeof(ftable.files[i].name));
-            ctx.update(reinterpret_cast<const uint8_t*>(&ftable.files[i].size), sizeof(ftable.files[i].size));
-        }
-    }
-    
+    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_addr), sizeof(files_table_addr));
+    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_size), sizeof(files_table_size));
+    ctx.update(reinterpret_cast<const uint8_t*>(&n_files), sizeof(n_files));
+    // The table itself is covered by its CRC, which the header hash covers in turn.
+    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_checksum), sizeof(files_table_checksum));
+    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_encoding), sizeof(files_table_encoding));
     ctx.finalize(out_hash);
 }
 
@@ -219,95 +159,54 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
         DEBUG_PRINT("warning: fseek failed\n");
         return false;
     }
-        
-    lendian_fread_member(magic_number, file);
-    bool is_v5 = (magic_number == COMPIO_MAGIC_NUMBER);
-    bool is_v4 = (magic_number == 27110661);
 
-    if (!is_v5 && !is_v4) {
-        WARNING_PRINT("warning: header magic_number does not match "
-                      "(expected %d or %d, got %d). "
-                      "The archive may have been created with an incompatible format version.\n",
-                      COMPIO_MAGIC_NUMBER, 27110661, magic_number);
+    if (lendian_fread_member(magic_number, file) != 1) return false;
+    if (magic_number != COMPIO_MAGIC_NUMBER) {
+        WARNING_PRINT("warning: unsupported archive format (magic %d, expected %d for format v6)\n",
+                      magic_number, COMPIO_MAGIC_NUMBER);
         return false;
     }
-    
-    lendian_fread(checksum, 1, sizeof(checksum), file);
-    lendian_fread_member(sequence_id, file);
-    
-    lendian_fread_member(index_root, file);
-    lendian_fread_member(file_size, file);
-    lendian_fread_member(allocator_state_offset, file);
-    lendian_fread_member(allocator_state_size, file);
-    lendian_fread_member(compression_type, file);
-    lendian_fread_member(block_size, file);
-    lendian_fread_member(b_tree_degree, file);
 
-    if (is_v5) {
-        lendian_fread_member(files_table_addr, file);
-        lendian_fread_member(files_table_capacity, file);
-        lendian_fread_member(ftable.n_files, file);
-        
-        if (files_table_capacity == 0 || files_table_capacity > COMPIO_MAX_FILES_LIMIT) {
-             WARNING_PRINT("warning: header files_table_capacity=%u is out of valid range\n", files_table_capacity);
-             return false;
-        }
+    uint64_t n_files = 0;
+    const bool complete =
+        lendian_fread(checksum, 1, sizeof(checksum), file) == sizeof(checksum) &&
+        lendian_fread_member(sequence_id, file) == 1 &&
+        lendian_fread_member(index_root, file) == 1 &&
+        lendian_fread_member(file_size, file) == 1 &&
+        lendian_fread_member(allocator_state_offset, file) == 1 &&
+        lendian_fread_member(allocator_state_size, file) == 1 &&
+        lendian_fread_member(compression_type, file) == 1 &&
+        lendian_fread_member(block_size, file) == 1 &&
+        lendian_fread_member(b_tree_degree, file) == 1 &&
+        lendian_fread_member(files_table_addr, file) == 1 &&
+        lendian_fread_member(files_table_size, file) == 1 &&
+        lendian_fread_member(n_files, file) == 1 &&
+        lendian_fread_member(files_table_checksum, file) == 1 &&
+        lendian_fread_member(files_table_encoding, file) == 1;
+    if (!complete) return false;
 
-        if (ftable.n_files > files_table_capacity) {
-             WARNING_PRINT("warning: header n_files=%" PRIu64 " > capacity=%u\n", ftable.n_files, files_table_capacity);
-             return false;
-        }
-        
-        // Read table from external address.
-        // If addr is 0 (uninitialized) and there are files, this is invalid.
-        // If addr is 0 and n_files==0, treat it as an empty external table and skip reading.
-        if (files_table_addr == 0) {
-            if (ftable.n_files > 0) {
-                WARNING_PRINT("warning: files_table_addr is 0 but table is not empty\n");
-                return false;
-            }
-            // Empty table: no bytes to read from disk, but capacity is still meaningful.
-            ftable.max_files = files_table_capacity;
-        } else {
-            ftable.max_files = files_table_capacity;
-            if (!ftable.read_from(file, files_table_addr, files_table_capacity, ftable.n_files)) {
-                return false;
-            }
-        }
-
-    } else { // v4
-        uint32_t max_files_v4;
-        lendian_fread(&max_files_v4, 1, 4, file);
-        if (is_big_endian()) swap_uint32(&max_files_v4);
-        
-        lendian_fread_member(ftable.n_files, file);
-        
-        files_table_capacity = max_files_v4;
-        ftable.max_files = max_files_v4;
-        
-        if (max_files_v4 == 0 || max_files_v4 > COMPIO_MAX_FILES_LIMIT) {
-            WARNING_PRINT("warning: header max_files=%u is out of valid range\n", max_files_v4);
-            return false;
-        }
-        
-        // Read inline
-        long pos = ftell(file);
-        if (pos < 0) return false;
-        if (!ftable.read_from(file, static_cast<uint64_t>(pos), max_files_v4, ftable.n_files)) {
-             return false;
-        }
-        files_table_addr = 0; // Inline
-    }
-
-    // Verify checksum
     uint8_t calc_checksum[32];
-    compute_checksum(calc_checksum);
+    compute_checksum(calc_checksum, n_files);
     if (memcmp(checksum, calc_checksum, 32) != 0) {
         WARNING_PRINT("warning: header checksum mismatch\n");
         return false;
     }
-    
-    return true;
+    if (n_files > COMPIO_MAX_FILES_LIMIT) {
+        WARNING_PRINT("warning: header declares %" PRIu64 " files\n", n_files);
+        return false;
+    }
+
+    if (files_table_encoding != 0) {
+        WARNING_PRINT("warning: unsupported files table encoding %u\n", files_table_encoding);
+        return false;
+    }
+    if ((files_table_addr == 0) != (files_table_size == 0) ||
+        files_table_size < n_files * (files_table::record_header_size + 1) ||
+        files_table_size > n_files * (files_table::record_header_size + COMPIO_FNAME_MAX_SIZE - 1)) {
+        WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", n_files);
+        return false;
+    }
+    return ftable.read_from(file, files_table_addr, files_table_size, n_files, files_table_checksum);
 }
 
 bool header::read_from(FILE *file, uint64_t addr) {
@@ -320,14 +219,10 @@ bool header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
 }
 
 bool header::write_checked(FILE *file, uint64_t addr) const {
-    // Reject legacy writes before touching either header slot.
-    if (magic_number != COMPIO_MAGIC_NUMBER) {
-        errno = EINVAL;
-        return false;
-    }
     if (ferror(file) || fseek64(file, addr, SEEK_SET) != 0) return false;
 
-    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum));
+    const uint64_t n_files = ftable.files.size();
+    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum), n_files);
     return lendian_fwrite_member(magic_number, file) == 1 &&
            lendian_fwrite(checksum, 1, sizeof(checksum), file) == sizeof(checksum) &&
            lendian_fwrite_member(sequence_id, file) == 1 &&
@@ -339,8 +234,10 @@ bool header::write_checked(FILE *file, uint64_t addr) const {
            lendian_fwrite_member(block_size, file) == 1 &&
            lendian_fwrite_member(b_tree_degree, file) == 1 &&
            lendian_fwrite_member(files_table_addr, file) == 1 &&
-           lendian_fwrite_member(files_table_capacity, file) == 1 &&
-           lendian_fwrite_member(ftable.n_files, file) == 1 && !ferror(file);
+           lendian_fwrite_member(files_table_size, file) == 1 &&
+           lendian_fwrite_member(n_files, file) == 1 &&
+           lendian_fwrite_member(files_table_checksum, file) == 1 &&
+           lendian_fwrite_member(files_table_encoding, file) == 1 && !ferror(file);
 }
 
 bool index_node::read_from(FILE *file, uint64_t addr) {
@@ -764,214 +661,78 @@ storage_block::storage_block(uint64_t size)
         checksum_type = COMPIO_CHECKSUM_FNV1A;
     }
 
-files_table::files_table() : n_files(0), max_files(COMPIO_MAX_FILES), next_file_id(1), files(COMPIO_MAX_FILES) {
-}
-
-files_table::files_table(uint32_t max_files)
-    : n_files(0), max_files(max_files), next_file_id(1), files(max_files) {
+files_table::files_table(uint32_t expected_files) {
+    files.reserve(expected_files);
 }
 
 files_table::files_table(const files_table& other)
-    : n_files(other.n_files), max_files(other.max_files), next_file_id(other.next_file_id), files(other.files) {
-    // Index map is transient, but we must rebuild it so the new copy is usable for lookups
+    : next_file_id(other.next_file_id), files(other.files) {
     rebuild_index();
 }
 
 files_table& files_table::operator=(const files_table& other) {
     if (this != &other) {
-        n_files = other.n_files;
-        max_files = other.max_files;
         next_file_id = other.next_file_id;
         files = other.files;
-        // Rebuild index in the target
         rebuild_index();
-    }
-    return *this;
-}
-
-files_table::files_table(files_table&& other) noexcept
-    : n_files(other.n_files), max_files(other.max_files), next_file_id(other.next_file_id),
-      files(std::move(other.files)), index_map_(std::move(other.index_map_)) {
-    other.n_files = 0;
-    other.max_files = 0;
-    other.next_file_id = 0;
-}
-
-files_table& files_table::operator=(files_table&& other) noexcept {
-    if (this != &other) {
-        n_files = other.n_files;
-        max_files = other.max_files;
-        next_file_id = other.next_file_id;
-        files = std::move(other.files);
-        index_map_ = std::move(other.index_map_);
-        
-        other.n_files = 0;
-        other.max_files = 0;
-        other.next_file_id = 0;
     }
     return *this;
 }
 
 void files_table::rebuild_index() {
     index_map_.clear();
-    index_map_.reserve(n_files);
+    index_map_.reserve(files.size());
     uint64_t max_id = 0;
-    for (uint32_t i = 0; i < n_files; ++i) {
-        // Insert if not exists to preserve "first match" semantics for legacy archives
-        size_t len = portable_strnlen(files[i].name, COMPIO_FNAME_MAX_SIZE);
-        if (len >= COMPIO_FNAME_MAX_SIZE) {
-            len = COMPIO_FNAME_MAX_SIZE - 1;
-        }
-        std::string_view key(files[i].name, len);
-        if (!index_map_.find(key)) {
-            index_map_.emplace(key, i);
-        }
-        if (files[i].file_id > max_id) {
-            max_id = files[i].file_id;
-        }
+    for (uint32_t i = 0; i < files.size(); ++i) {
+        const std::string_view key(files[i].name);
+        if (!index_map_.find(key)) index_map_.emplace(key, i);
+        max_id = std::max(max_id, files[i].file_id);
     }
-    // Ensure next_file_id is beyond any existing file_id
-    if (next_file_id <= max_id) {
-        next_file_id = max_id + 1;
-    }
+    // Ids are never reused, so a reopened table continues after the largest one.
+    if (next_file_id <= max_id) next_file_id = max_id + 1;
 }
 
 const files_table::file *files_table::find(const char *name) const {
-    if (n_files == 0) return nullptr;
     if (!name) return nullptr;
-    
-    // Construct lookup key with truncation logic
-    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
-    std::string_view key;
-    if (len >= COMPIO_FNAME_MAX_SIZE) {
-        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
-    } else {
-        key = std::string_view(name, len);
-    }
-    
-    auto ptr = index_map_.find(key);
-    if (ptr) {
-        return &files[*ptr];
-    }
-    
-    return nullptr;
+    const uint32_t *index = index_map_.find(std::string_view(name));
+    return index ? &files[*index] : nullptr;
 }
 
 files_table::file *files_table::find(const char *name) {
-    // Cast constness away to reuse implementation
-    return const_cast<files_table::file*>(
-        static_cast<const files_table*>(this)->find(name)
-    );
+    return const_cast<files_table::file *>(static_cast<const files_table *>(this)->find(name));
 }
 
-files_table::file *files_table::add(const char *name, bool allow_resize) {
-    if (n_files >= max_files) {
-        if (!allow_resize) return NULL;
-        
-        // A capacity above COMPIO_MAX_FILES_LIMIT is rejected when the header is
-        // read back, so growing past it would produce an archive that cannot be
-        // reopened.
-        if (max_files >= COMPIO_MAX_FILES_LIMIT) return NULL;
-        uint64_t new_max = (max_files == 0) ? 16 : static_cast<uint64_t>(max_files) * 2;
-        if (new_max > COMPIO_MAX_FILES_LIMIT) new_max = COMPIO_MAX_FILES_LIMIT;
+files_table::file *files_table::add(const char *name) {
+    if (!name) return nullptr;
+    if (file *existing = find(name)) return existing;
+    if (files.size() >= COMPIO_MAX_FILES_LIMIT) return nullptr;
 
-        // Resize vector. This invalidates all pointers and string_views in index_map_.
-        files.resize(new_max);
-        max_files = static_cast<uint32_t>(new_max);
-        
-        // Rebuild the index map from scratch with new pointers
+    const bool reallocates = files.size() == files.capacity();
+    files.push_back({name, 0, next_file_id++});
+    if (reallocates) {
         rebuild_index();
-    }
-    
-    if (!name) return NULL;
-    
-    // Create bounded string_view
-    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
-    std::string_view key;
-    if (len >= COMPIO_FNAME_MAX_SIZE) {
-        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
     } else {
-        key = std::string_view(name, len);
+        index_map_.emplace(std::string_view(files.back().name),
+                           static_cast<uint32_t>(files.size() - 1));
     }
-    
-    // Check if it already exists using string_view lookup
-    // If so, return existing entry to prevent duplicates.
-    auto ptr = index_map_.find(key);
-    if (ptr) {
-        return &files[*ptr];
-    }
-        
-    strncpy(files[n_files].name, name, COMPIO_FNAME_MAX_SIZE - 1);
-    files[n_files].name[COMPIO_FNAME_MAX_SIZE - 1] = '\0';
-    files[n_files].size = 0;
-    files[n_files].file_id = next_file_id++;
-    
-    // Update index
-    std::string_view stored_key(files[n_files].name, key.length());
-    index_map_.emplace(stored_key, n_files);
-    
-    return &files[n_files++];
+    return &files.back();
 }
 
 int files_table::remove(const char *name) {
     if (!name) return -1;
-    
-    // Construct lookup key
-    size_t len = portable_strnlen(name, COMPIO_FNAME_MAX_SIZE);
-    std::string_view key;
-    if (len >= COMPIO_FNAME_MAX_SIZE) {
-        key = std::string_view(name, COMPIO_FNAME_MAX_SIZE - 1);
-    } else {
-        key = std::string_view(name, len);
-    }
-    
-    auto ptr = index_map_.find(key);
-    if (!ptr) {
-        return -1;
-    }
-    
-    uint32_t i = *ptr;
-    
-    // 1. Remove the entry for the file being deleted.
-    index_map_.erase(key);
+    const uint32_t *found = index_map_.find(std::string_view(name));
+    if (!found) return -1;
 
-    if (i != n_files - 1) {
-        uint32_t last_idx = n_files - 1;
-        const char* last_name_ptr = files[last_idx].name;
-        
-        size_t last_len = portable_strnlen(last_name_ptr, COMPIO_FNAME_MAX_SIZE);
-        std::string_view last_key(last_name_ptr, last_len < COMPIO_FNAME_MAX_SIZE ? last_len : COMPIO_FNAME_MAX_SIZE - 1);
-        
-        auto last_ptr = index_map_.find(last_key);
-        
-        bool update_index = false;
-        if (last_ptr) {
-             if (*last_ptr == last_idx) {
-                 index_map_.erase(last_key);
-                 update_index = true;
-             }
-        } else {
-             update_index = true;
-        }
-
-        files[i] = files[last_idx];
-        
-        if (update_index) {
-            std::string_view new_key(files[i].name, last_key.length());
-            index_map_.insert_or_assign(new_key, i);
-        }
-    } else {
-        // Removing the last element. Just decrement count.
-        // index_map_ entry already erased.
+    const uint32_t i = *found;
+    const uint32_t last = static_cast<uint32_t>(files.size() - 1);
+    index_map_.erase(std::string_view(files[i].name));
+    if (i != last) {
+        // Fill the hole with the last entry; its key must point at its new place.
+        index_map_.erase(std::string_view(files[last].name));
+        files[i] = std::move(files[last]);
+        index_map_.emplace(std::string_view(files[i].name), i);
     }
-    
-    // Decrease count
-    --n_files;
-    
-    // Zero out the slot that is now unused to avoid leaking deleted data
-    // and ensure deterministic content for checksums (though existing archives may have garbage).
-    memset(&files[n_files], 0, sizeof(files_table::file));
-    
+    files.pop_back();
     return 0;
 }
 

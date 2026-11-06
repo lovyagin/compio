@@ -1007,21 +1007,14 @@ bool block_allocator::perform_defragmentation() {
                                          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
     uint64_t write_pos = reserved_end;
 
-    // v5 specific: The files table is stored as a reserved block in the archive.
-    // We must treat it as an obstacle during defragmentation to avoid overwriting it.
-    uint64_t ft_addr = 0;
-    uint64_t ft_size = 0;
-    {
-        const auto &hdr = readonly(archive_->header, header);
-        if (hdr->magic_number == COMPIO_MAGIC_NUMBER) {
-             ft_addr = hdr->files_table_addr;
-             // Must match the on-disk entry size used by files_table::write_to and
-             // sync_files_table: name + size(u64) + file_id(u64). Undercounting here
-             // makes the truncation guard below slice the tail off a files table that
-             // sits after the data, corrupting both header copies on reopen.
-             ft_size = (uint64_t)hdr->files_table_capacity *
-                       (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
-        }
+    // The files table is an obstacle while blocks are being moved.
+    uint64_t ft_addr = hdr.files_table_addr;
+    const uint64_t ft_size = hdr.files_table_size;
+    // The table is moved by rewriting it from memory, which must match the copy
+    // the header describes; a flush always precedes compaction.
+    if (ft_size != 0 && hdr.ftable.serialized_size() != ft_size) {
+        WARNING_PRINT("warning: perform_defragmentation: files table not flushed\n");
+        return false;
     }
 
     // The durable header references the published allocator state until the
@@ -1106,7 +1099,7 @@ bool block_allocator::perform_defragmentation() {
         while (true) {
             bool collision = false;
             
-            // 1. Check files table (v5)
+            // 1. Check files table
             if (ft_addr != 0) {
                  // Check intersection [write_pos, write_pos + block_size) AND [ft_addr, ft_addr + ft_size)
                  if (write_pos < ft_addr + ft_size && write_pos + block_size > ft_addr) {
@@ -1291,7 +1284,7 @@ bool block_allocator::perform_defragmentation() {
         }
     }
     
-    // v5: The files table may be located after data/nodes.
+    // The files table may be located after data/nodes.
     if (ft_addr != 0 && ft_addr + ft_size > truncate_pos) {
         truncate_pos = ft_addr + ft_size;
     }
@@ -1321,7 +1314,7 @@ bool block_allocator::perform_defragmentation() {
         occupied.push_back({na, btree_node_size});
     }
     
-    // v5: Mark files_table as occupied so allocator doesn't hand it out as free space.
+    // Mark the files table as occupied so the allocator does not hand it out as free space.
     if (ft_addr != 0) {
         occupied.push_back({ft_addr, ft_size});
     }

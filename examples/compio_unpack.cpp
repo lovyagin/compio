@@ -33,11 +33,10 @@ int main(int argc, char **argv) {
     constexpr size_t buffer_size = 64 * 1024;
     auto buffer = std::make_unique<uint8_t[]>(buffer_size);
 
-    for (size_t i = 0; i < ftable->n_files; ++i) {
-        const auto &f = ftable->files[i];
-        compio_file *file = compio_open_file(f.name, archive);
+    for (const auto &f : ftable->files) {
+        compio_file *file = compio_open_file(f.name.c_str(), archive);
         if (!file) {
-            fprintf(stderr, "skip '%s': cannot open\n", f.name);
+            fprintf(stderr, "skip '%s': cannot open\n", f.name.c_str());
             continue;
         }
 
@@ -52,7 +51,7 @@ int main(int argc, char **argv) {
                 remaining -= n;
             }
             fclose(out_file);
-            printf("extracted %s (%llu bytes)\n", f.name,
+            printf("extracted %s (%llu bytes)\n", f.name.c_str(),
                    static_cast<unsigned long long>(f.size));
         }
         compio_close_file(file);

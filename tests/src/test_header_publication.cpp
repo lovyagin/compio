@@ -481,14 +481,14 @@ TEST_P(HeaderPublicationTest, EarlierEvictionFailureBlocksCheckpointUntilRetry) 
 
 TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
     const auto old_addr = readonly(archive->header, compio::header)->files_table_addr;
-    const auto old_checksum = archive->files_table_checksum;
+    const auto old_checksum = readonly(archive->header, compio::header)->files_table_checksum;
     prepare_table_failure();
     compio_flush(archive);
     expect_old_slot();
     expect_wal_retained();
     if (fault.kind != failure::sync) {
         EXPECT_EQ(readonly(archive->header, compio::header)->files_table_addr, old_addr);
-        EXPECT_EQ(archive->files_table_checksum, old_checksum);
+        EXPECT_EQ(readonly(archive->header, compio::header)->files_table_checksum, old_checksum);
     }
     fault = {};
     clearerr(archive->file);
@@ -496,8 +496,8 @@ TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
     EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
     compio::files_table recovered;
     const auto &h = readonly(archive->header, compio::header);
-    ASSERT_TRUE(recovered.read_from(archive->file, h->files_table_addr,
-                                    h->files_table_capacity, h->ftable.n_files));
+    ASSERT_TRUE(recovered.read_from(archive->file, h->files_table_addr, h->files_table_size,
+                                    h->ftable.files.size(), h->files_table_checksum));
     EXPECT_NE(recovered.find("empty"), nullptr);
 }
 

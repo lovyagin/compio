@@ -881,10 +881,9 @@ TEST_F(PerformDefragmentationTest, RepeatedDefragCycles_DataIntact) {
 // Implicitly checked by ASAN — this exercises a complex internal state.
 // ---------------------------------------------------------------------------
 // FilesTableNoLeakOnRepeatedFlush
-// sync_files_table() uses copy-on-write across two alternating blocks for the
-// external (v5) files table (mirrors the double-buffered header). It must
-// reclaim the previous table block on each flush instead of leaking a fresh
-// one, so repeated no-op flushes must never leak a whole files-table block.
+// sync_files_table() rewrites the files table copy-on-write. It must reclaim
+// the previous table block instead of leaking a fresh one, so repeated no-op
+// flushes must never leak a whole files-table block.
 // Regression test for the under-allocation bug where the block was sized
 // without the per-entry file_id field, breaking reuse (a full block leaked
 // every flush) and overrunning the allocation on write.
@@ -920,10 +919,10 @@ TEST(DefragmentationPhysicalTest, FilesTableNoLeakOnRepeatedFlush) {
     for (int i = 0; i < kFlushes; i++) compio_flush(archive);
     uint64_t size2 = std::filesystem::file_size(fn);
 
-    // One full files-table block per slot. If reuse is broken, the file grows
-    // by at least one such block per flush; with reuse it stays nearly flat.
-    const uint64_t table_block =
-        (uint64_t)COMPIO_MAX_FILES * (COMPIO_FNAME_MAX_SIZE + 2 * sizeof(uint64_t));
+    // If reuse is broken, the file grows by at least one table per flush; with
+    // reuse it stays nearly flat.
+    const uint64_t table_block = readonly(archive->header, compio::header)->files_table_size;
+    ASSERT_GT(table_block, 0u);
     EXPECT_LT(size2 - size1, table_block)
         << "file grew by " << (int64_t)(size2 - size1) << " bytes across "
         << kFlushes << " no-op flushes; a files-table block (" << table_block
