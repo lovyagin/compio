@@ -33,6 +33,7 @@ namespace fs = std::filesystem;
 void compio_build_default_config(compio_config *result) {
     result->b_tree_degree = 16;
     compio_build_lz4_compressor(&result->compressor);
+    result->allow_compressor_change = false;
     result->fill_holes_with_zeros = false;
     result->block_size = 1 << 14;        // 16KB - balanced for performance and fragmentation
     result->block_size__minimum = 1 << 9;   // 512B min (compatible with test overrides)
@@ -53,7 +54,7 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     if (!fp || !t) {
         return -1;
     }
-    FILE *file = fopen(fp, "r");
+    FILE *file = fopen(fp, "rb");
     if (file == nullptr) {
         return -1;
     }
@@ -406,7 +407,13 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         
         // 1. Compression Type
         // The compressor cannot be adopted from the file: only the caller has its code.
-        if (hdr.compression_type != static_cast<uint32_t>(c->compressor.compression_type)) {
+        // Each block records its codec, so the caller may name a new one for new blocks.
+        const bool compressor_changed = hdr.compression_type != static_cast<uint32_t>(c->compressor.compression_type);
+        if (compressor_changed && c->allow_compressor_change) {
+            if (!archive->is_readonly()) {
+                archive->header->compression_type = static_cast<uint32_t>(c->compressor.compression_type);
+            }
+        } else if (compressor_changed) {
             errno = EINVAL;
             WARNING_PRINT("warning: compression type mismatch while opening archive (file=%u, config=%d)\n",
                           hdr.compression_type, (int)c->compressor.compression_type);
