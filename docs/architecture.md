@@ -54,7 +54,11 @@ Free regions are kept in memory in two ordered indexes, by offset and by size, a
 saved in the archive on flush and close. Releasing a region and allocating with best fit
 or worst fit take logarithmic time in the number of free regions; first fit and next fit
 walk the regions in address order. Adjacent free regions are merged as soon as they appear.
-Fragmentation is the share of the archive taken by free regions; when it exceeds
+Fragmentation is the share of the archive taken by free regions. It is checked at every
+header publication (`compio_flush`, `compio_end_batch`, a checkpoint at `wal_max_size_bytes`)
+and on close. Space freed since the previous publication is still referenced by the durable
+header and is reused by the following writes, so a publication counts only space that stayed
+free over a whole interval; close counts all free space. When the share exceeds
 `fragmentation_threshold`, the archive is compacted. Compaction never writes into space
 that the last published header still references: starting from the highest address, each
 data block, B-tree node (copied along its path from the root), the files table and the

@@ -6,6 +6,7 @@
 #include <shared_mutex>
 #include <string>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 #include "compio/infile_object.hpp"
@@ -20,6 +21,8 @@ namespace compio {
 struct btree;
 
 } // namespace compio
+
+struct compio_file;
 
 struct compio_archive {
     std::shared_mutex mutex;
@@ -41,7 +44,8 @@ struct compio_archive {
     std::unique_ptr<compio::WalManager> wal;
     std::string path;
     uint8_t mode_b;
-    uint32_t open_files_count;
+    // A compaction drops the index caches of these files: they hold block and node addresses.
+    std::unordered_set<compio_file *> open_files;
     std::vector<compio_file *> auto_batching_files; /**< Files that hold a batch opened automatically */
     // Makes the in-memory header durable (data is synced first).
     std::function<bool()> publish_header;

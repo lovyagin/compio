@@ -246,12 +246,11 @@ TEST_F(AdvancedConcurrencyTest, ReadWhileWrite) {
 }
 
 // Test 4: Defragmentation Safety
-// Verifies that defragmentation is rejected if any file is open (even if idle).
-// This ensures that we never move blocks while a reader might be holding a reference to them.
+// A file held open (idle) by another thread stays readable after a compaction
+// moved its blocks: the compaction drops the file's cached index entries.
 TEST_F(AdvancedConcurrencyTest, DefragSafetyCheck) {
     create_archive();
 
-    // Create a file to read
     const std::string fname = "test_file";
     {
         compio_file* f = compio_open_file(fname.c_str(), archive);
@@ -261,24 +260,28 @@ TEST_F(AdvancedConcurrencyTest, DefragSafetyCheck) {
 
     std::atomic<bool> file_opened{false};
     std::atomic<bool> setup_complete{false};
-    std::atomic<bool> can_close{false};
+    std::atomic<bool> defragmented{false};
+    std::string read_back;
 
     std::thread reader([&]() {
         compio_file* f = compio_open_file(fname.c_str(), archive);
         if (f) {
+            char buf[4] = {};
+            compio_read(buf, sizeof(buf), f);
             file_opened = true;
             setup_complete = true;
-            // Hold file open until main thread signals
-            while (!can_close) {
+            while (!defragmented) {
                 std::this_thread::yield();
             }
+            compio_seek(f, 0, COMPIO_SEEK_SET);
+            char after[4] = {};
+            read_back.assign(after, compio_read(after, sizeof(after), f));
             compio_close_file(f);
         } else {
             setup_complete = true;
         }
     });
 
-    // Wait for reader to open file (bounded wait to avoid hanging indefinitely)
     auto wait_start = std::chrono::steady_clock::now();
     const auto wait_timeout = std::chrono::seconds(5);
     while (!setup_complete &&
@@ -286,17 +289,9 @@ TEST_F(AdvancedConcurrencyTest, DefragSafetyCheck) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ASSERT_TRUE(file_opened) << "Reader thread failed to open file";
-    
-    // Attempt defrag while reader has file open
-    // Should fail immediately because open_files_count > 0
-    int res = compio_defragment(archive);
-    EXPECT_EQ(res, COMPIO_ERROR) << "Defragmentation should fail when files are open";
 
-    // Signal reader to close file
-    can_close = true;
+    EXPECT_EQ(compio_defragment(archive), COMPIO_SUCCESS);
+    defragmented = true;
     reader.join();
-    
-    // After close, it should succeed
-    res = compio_defragment(archive);
-    EXPECT_EQ(res, COMPIO_SUCCESS) << "Defragmentation should succeed when no files are open";
+    EXPECT_EQ(read_back, "data");
 }
