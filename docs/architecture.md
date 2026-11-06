@@ -81,6 +81,23 @@ Two caches, both sized in entries:
 A modified block is compressed and written when it leaves the cache or on `compio_flush`.
 A flush writes what is modified and keeps both caches warm.
 
+### 6. Crash Safety
+
+Nothing the durable header references is overwritten before the next header is
+durable: data blocks, index nodes, the files table and the allocator state are
+written to fresh space, and space freed since the last publication is reused only
+after the next one. A crash therefore returns the state of the last published
+header (`compio_flush`, `compio_end_batch`, close, or an automatic checkpoint).
+
+With the write-ahead log enabled, every operation outside a batch also writes
+back its dirty blocks and index nodes, logs them, and then logs one record with
+the resulting index root, container end and files table before its commit marker.
+Automatic batches commit the same way when they end. On open, recovery replays
+the committed records, adopts the last such record, rebuilds the free list from
+what the index references and publishes the result, so every completed operation
+survives a crash. An explicit batch is atomic: it is lost as a whole unless its
+end completed.
+
 ## Data Flow
 
 ### Write Operation

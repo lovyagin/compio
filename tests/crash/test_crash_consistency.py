@@ -291,6 +291,17 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn("consistent              15", result.stdout)
 
+    def test_killed_writer_keeps_every_completed_operation_with_wal(self):
+        for flush_every in (0, 10):
+            with self.subTest(flush_every=flush_every):
+                result = subprocess.run(
+                    [str(EXECUTABLE), f"--dir={self.directory}", "--trials=15", "--redo=1",
+                     f"--flush-every={flush_every}", "--degree=2", "--block=512"],
+                    capture_output=True, text=True, timeout=110,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("consistent              15", result.stdout)
+
     def test_invalid_options_fail_before_creating_artifacts(self):
         for arguments in (
             ("--ops=-1",),
@@ -303,6 +314,8 @@ class CrashConsistencyHarnessTest(unittest.TestCase):
             ("--degree=1",),
             ("--sync=unknown",),
             ("--wal=2",),
+            ("--redo=1", "--wal=0"),
+            ("--redo=1", "--sync=off"),
             ("--stop-aftr=2",),
             ("--keep=0", "--keep=1"),
             ("--scenario=unknown",),

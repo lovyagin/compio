@@ -18,7 +18,7 @@ namespace compio {
 enum class WalRecordType : uint8_t {
     BLOCK = 1,              ///< Data block write
     INDEX_NODE = 2,         ///< B-tree index node modification
-    ALLOCATOR = 4,          ///< Allocator state change
+    META = 5,               ///< Archive state an operation leaves behind (index root, container end, files table)
     COMMIT = 255            ///< Transaction commit marker
 };
 
@@ -30,7 +30,7 @@ enum class WalRecordType : uint8_t {
  * about the record type, location, size, and integrity check.
  */
 struct WalRecordHeader {
-    WalRecordType type;     ///< Type of record (BLOCK, INDEX_NODE, ALLOCATOR, COMMIT)
+    WalRecordType type;     ///< Type of record (BLOCK, INDEX_NODE, META, COMMIT)
     uint64_t addr;          ///< Address/offset in the main archive file where data will be written
     uint64_t size;          ///< Size of the record payload in bytes
     uint32_t checksum;      ///< FNV-1a (32-bit) of the payload for integrity verification
@@ -139,7 +139,7 @@ public:
      * Logs a single modification record. The record is written to the WAL file
      * but NOT immediately synced (sync deferred until commit_transaction).
      *
-     * @param[in] type Record type (BLOCK, INDEX_NODE, ALLOCATOR)
+     * @param[in] type Record type (BLOCK, INDEX_NODE, META)
      * @param[in] addr Archive file offset where this data will be written
      * @param[in] data Payload data to be logged. Must not be nullptr if size > 0.
      * @param[in] size Payload size in bytes
@@ -308,6 +308,9 @@ public:
      * Should be called once at archive open time if WAL exists.
      *
      * @param[in] archive_file Opened archive file to replay WAL into
+     * @param[out] meta Payload of the last committed META record, if any. The
+     *             WAL is then kept: the caller applies the payload and
+     *             truncates it once the result is published.
      * @return true if recovery successful or WAL empty, false on fatal error
      *
      * @note Uncommitted transactions are discarded
@@ -316,7 +319,7 @@ public:
      *
      * @see has_pending_recovery()
      */
-    bool recover(FILE* archive_file);
+    bool recover(FILE* archive_file, std::vector<uint8_t>* meta = nullptr);
 
     /**
      * @brief Checks if WAL has pending recovery work

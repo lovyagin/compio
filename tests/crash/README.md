@@ -33,6 +33,16 @@ but scheduling changes the interruption point. Boundary mode repeats the sequenc
 and operation count; it does not interrupt inside a library operation or flush.
 SIGKILL preserves the OS page cache. Neither mode simulates power loss.
 
+## Completed operations with the WAL
+
+With `--wal=1` and a sync mode other than `off`, `--redo=1` requires every
+operation that returned before the kill to survive, not only the flushed ones.
+It turns automatic batching off, because operations of one batch commit together.
+
+```sh
+build_check/tests/crash_consistency --redo=1 --flush-every=0 --trials=50
+```
+
 ## Unflushed file removal
 
 The `checkpoint-remove` scenario checks that an unflushed deletion preserves the

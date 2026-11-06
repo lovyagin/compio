@@ -97,6 +97,7 @@ block::block(context_t &context, const tree_key &key, uint64_t size, bool unused
       _is_modified(true),
       _is_removed(false),
       _is_valid(true) {
+    context.mark_dirty(this);
     UNUSED(unused);
 }
 
@@ -170,13 +171,14 @@ bool block::write_back() {
     _c_size = b.size;
     _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
     _is_modified = false;
+    context.clear_dirty(this);
     return true;
 }
 
 const uint8_t *block::data() const { return _data.get(); }
 
 uint8_t *block::data() {
-    _is_modified = true;
+    set_modified();
     return _data.get();
 }
 
@@ -184,7 +186,7 @@ bool block::is_valid() const { return _is_valid; }
 
 void block::shrink(uint64_t new_size) {
     assert(new_size < _size);
-    _is_modified = true;
+    set_modified();
     _size = new_size;
     // Range operations need the new logical size before write-back.
     context.index->update(_key, {_addr, new_size});
@@ -197,12 +199,15 @@ void block::grow(uint64_t new_size) {
     std::copy_n(_data.get(), _size, new_data.get());
     _data = std::move(new_data);
 
-    _is_modified = true;
+    set_modified();
     _size = new_size;
     context.index->update(_key, {_addr, new_size});
 }
 
-void block::remove() { _is_removed = true; }
+void block::remove() {
+    _is_removed = true;
+    context.clear_dirty(this);
+}
 
 void block::shift_key(int64_t addition) {
     assert(addition != 0);
@@ -216,7 +221,7 @@ void block::shift_key(int64_t addition) {
 
 void block::set_key(const tree_key &new_key) {
     if (_key != new_key) {
-        _is_modified = true;
+        set_modified();
         _key = new_key;
     }
 }
@@ -235,9 +240,9 @@ storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocato
                                            const compio_compressor *compressor, int max_size,
                                            std::mutex *io_mutex, compio::WalManager *wal,
                                            compio_checksum_type checksum_type)
-    : cache(max_size, shard_by_hash{},
-            [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }),
-      context{file, allocator, index, compressor, io_mutex, wal, checksum_type} {}
+    : context{file, allocator, index, compressor, io_mutex, wal, checksum_type},
+      cache(max_size, shard_by_hash{},
+            [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
@@ -319,8 +324,8 @@ std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_ke
 // first, by address. New blocks
 // follow in logical order, so that a file written in one go is laid out front
 // to back and reads sequentially on disk.
-static void sort_for_write_back(std::vector<std::shared_ptr<block>> &blocks) {
-    std::sort(blocks.begin(), blocks.end(), [](const std::shared_ptr<block> &a, const std::shared_ptr<block> &b) {
+static void sort_for_write_back(std::vector<block *> &blocks) {
+    std::sort(blocks.begin(), blocks.end(), [](const block *a, const block *b) {
         bool a_exists = a->addr() != 0;
         bool b_exists = b->addr() != 0;
         if (a_exists != b_exists) {
@@ -358,9 +363,13 @@ bool storage_block_reader::clear_cache() {
 
 bool storage_block_reader::flush_cache() {
     int error = write_error.exchange(0);
-    auto blocks = cache.values();
+    std::vector<block *> blocks;
+    {
+        std::lock_guard<std::mutex> lock(context.dirty_mutex);
+        blocks.assign(context.dirty.begin(), context.dirty.end());
+    }
     sort_for_write_back(blocks);
-    for (auto &b : blocks) {
+    for (block *b : blocks) {
         if (!b->write_back() && !error) error = errno ? errno : EIO;
     }
     flush_failed.store(error != 0);

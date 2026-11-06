@@ -325,6 +325,15 @@ public:
     bool load_state(compio_archive *archive);
 
     /**
+     * @brief Rebuild the free list from what the index references
+     *
+     * Used after a WAL replay, when the saved state no longer matches the
+     * recovered index. Everything outside the header, the index nodes, the
+     * data blocks and the files table becomes free.
+     */
+    bool rebuild_from_index();
+
+    /**
      * @brief Update pointer to file size reference (used when header is relocated/reloaded)
      * @param file_size New pointer to file size
      */
@@ -370,6 +379,8 @@ private:
     /** Give back a free region that ends at the container end; false if there is none */
     bool trim_tail();
     uint64_t allocate_below(uint64_t size, uint64_t limit);
+    /** Size of the block stored at @p addr, read from its header; false if it does not fit below @p seekable_end */
+    bool block_footprint(uint64_t addr, uint64_t seekable_end, uint64_t &size);
 
     friend class TestAllocatorAccess;
 };

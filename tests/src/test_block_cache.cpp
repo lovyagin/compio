@@ -368,9 +368,8 @@ TEST(BlockCacheTest, FlushKeepsCacheWarm) {
     ASSERT_NE(ar, nullptr);
     compio_file *f = compio_open_file("data", ar);
     ASSERT_NE(f, nullptr);
-    ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
-
     compress_calls = 0;
+    ASSERT_EQ(compio_write(data.data(), TOTAL, f), TOTAL);
     compio_flush(ar);
     EXPECT_GE(compress_calls, 300u);
 

@@ -378,7 +378,7 @@ bool WalManager::has_pending_recovery() const {
     return false;
 }
 
-bool WalManager::recover(FILE* archive_file) {
+bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
     std::unique_lock<std::mutex> lock(mutex_);
     // Close current handle if open, to read from start
     if (wal_file_) {
@@ -459,6 +459,9 @@ bool WalManager::recover(FILE* archive_file) {
     // Buffer of pending records for the current transaction. These are only
     // applied to the archive when a COMMIT record is encountered.
     std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pending_records;
+    std::vector<uint8_t> pending_meta;
+    bool has_pending_meta = false;
+    bool has_meta = false;
 
     while (true) {
         int64_t pos = ftell64(wal_in);
@@ -519,10 +522,20 @@ bool WalManager::recover(FILE* archive_file) {
             }
             // Successfully applied this transaction; clear buffer for next one.
             pending_records.clear();
+            if (has_pending_meta && meta) {
+                *meta = std::move(pending_meta);
+                has_meta = true;
+            }
+            has_pending_meta = false;
             continue;
         }
         
         // Non-COMMIT records are buffered until we see a COMMIT.
+        if (type_u8 == static_cast<uint8_t>(WalRecordType::META)) {
+            pending_meta = std::move(buffer);
+            has_pending_meta = true;
+            continue;
+        }
         pending_records.emplace_back(addr, std::move(buffer));
     }
     
@@ -546,6 +559,13 @@ bool WalManager::recover(FILE* archive_file) {
     int fd = fileno(archive_file);
     if (fsync(fd) != 0) return false;
 #endif
+
+    // A META record is applied by the caller, which truncates the WAL once the
+    // state it describes is published.
+    if (has_meta) {
+        lock.unlock();
+        return open();
+    }
 
     // Now clear WAL (durable truncation)
     FILE* wal_trunc = fopen(wal_path_.c_str(), "wb");

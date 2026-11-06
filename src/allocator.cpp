@@ -444,52 +444,21 @@ bool free_blocks_manager::save_to_file(compio_archive *archive) {
     buffer.resize(slot_size, 0);
     const uint32_t size = static_cast<uint32_t>(slot_size);
 
-    bool in_batch = archive->wal && archive->wal->get_batch_depth() > 0;
-    
-    if (!in_batch && archive->wal) {
-        archive->wal->begin_transaction();
-    }
-    
-    if (archive->wal) {
-        if (!archive->wal->log_write(WalRecordType::ALLOCATOR, pos, buffer.data(), size)) {
-            WARNING_PRINT("warning: WAL log_write failed in allocator.save_state\n");
-            if (!in_batch) {
-                archive->wal->rollback_transaction();
-            }
-            return false;
-        }
-    }
-
     if (fseek64(archive->file, static_cast<int64_t>(pos), SEEK_SET) != 0) {
         WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
-        if (!in_batch && archive->wal) {
-            archive->wal->rollback_transaction();
-        }
         return false;
     }
 
-    // Write to archive file (buffered) - after WAL commit (Write-Ahead)
+    // Not logged: the slot is unreferenced until the header published after
+    // this write, which fsyncs it first; recovery rebuilds the state instead.
     DEBUG_PRINT("[W][allocator]addr=%" PRIu64 ";size=%" PRIu32 "\n", pos, size);
     size_t written = fwrite(buffer.data(), 1, size, archive->file);
     if (written != size) {
         WARNING_PRINT(
             "warning: fwrite failed to write all bytes in allocator.save_state (%zu < %u)\n", written, size);
-        if (!in_batch && archive->wal) {
-            archive->wal->rollback_transaction();
-        }
         return false;
     }
-    if (fflush(archive->file) != 0) {
-        if (!in_batch && archive->wal) archive->wal->rollback_transaction();
-        return false;
-    }
-
-    if (!in_batch && archive->wal) {
-        if (!archive->wal->commit_transaction()) {
-            WARNING_PRINT("warning: WAL commit failed in allocator.save_state\n");
-            return false;
-        }
-    }
+    if (fflush(archive->file) != 0) return false;
 
     staged.saved_deferred_ = deferred_;
     staged.saved_state_offset_ = pos;
@@ -980,6 +949,84 @@ bool block_allocator::trim_tail() {
     return true;
 }
 
+bool block_allocator::block_footprint(uint64_t addr, uint64_t seekable_end, uint64_t &size) {
+    // The signature determines the metadata footprint of the block.
+    uint8_t sig = 0;
+    uint64_t compressed_size = 0;
+    if (fseek64(archive_->file, static_cast<int64_t>(addr), SEEK_SET) != 0 ||
+        fread(&sig, 1, 1, archive_->file) != 1 ||
+        fseek64(archive_->file, static_cast<int64_t>(addr + 2), SEEK_SET) != 0 ||
+        lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
+        compressed_size == 0) {
+        WARNING_PRINT("warning: failed to read block header at %" PRIu64 "\n", addr);
+        errno = EIO;
+        return false;
+    }
+    const uint64_t meta_size = storage_block::meta_size_for(sig);
+    if (meta_size == 0 || compressed_size > seekable_end - addr ||
+        meta_size > seekable_end - addr - compressed_size) {
+        WARNING_PRINT("warning: bad block at %" PRIu64 "\n", addr);
+        errno = EIO;
+        return false;
+    }
+    size = meta_size + compressed_size;
+    return true;
+}
+
+bool block_allocator::rebuild_from_index() {
+    const auto &hdr = *readonly(archive_->header, header);
+    const uint64_t container_end = hdr.file_size;
+    const uint64_t seekable_end = std::min(container_end,
+                                           static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+
+    tree_key key_max{};
+    key_max.hash = UINT64_MAX;
+    key_max.pos = UINT64_MAX;
+    auto blocks = archive_->index->get_range(tree_key{}, key_max);
+    uint64_t node_size = 0;
+    auto nodes = archive_->index->collect_node_addresses(node_size);
+    if (!blocks || !nodes) {
+        errno = EIO;
+        return false;
+    }
+
+    // What the durable header still references stays reserved until the next
+    // header replaces it.
+    std::vector<std::pair<uint64_t, uint64_t>> used;
+    used.reserve(blocks->size() + nodes->size() + 3);
+    used.emplace_back(0, hdr.reserved_size());
+    used.emplace_back(hdr.files_table_addr, hdr.files_table_size);
+    used.emplace_back(archive_->published_allocator_state_offset, archive_->published_allocator_state_size);
+    for (uint64_t node : *nodes) used.emplace_back(node, node_size);
+    for (const auto &entry : *blocks) {
+        uint64_t size = 0;
+        if (!block_footprint(entry.second.addr, seekable_end, size)) return false;
+        used.emplace_back(entry.second.addr, size);
+    }
+    std::sort(used.begin(), used.end());
+
+    free_blocks_manager rebuilt(&archive_->header->file_size);
+    uint64_t cursor = 0;
+    for (const auto &[addr, size] : used) {
+        if (size == 0) continue;
+        if (addr > cursor && !rebuilt.add_free_block(cursor, addr - cursor)) {
+            errno = EIO;
+            return false;
+        }
+        cursor = std::max(cursor, addr + size);
+    }
+    if (cursor > container_end) {
+        archive_->header->file_size = cursor;
+    } else if (cursor < container_end && !rebuilt.add_free_block(cursor, container_end - cursor)) {
+        errno = EIO;
+        return false;
+    }
+
+    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+    blocks_manager_ = std::move(rebuilt);
+    return true;
+}
+
 bool block_allocator::compaction_round(bool &moved, bool validate_only) {
     const auto &hdr = *readonly(archive_->header, header);
     const uint64_t container_end = hdr.file_size;
@@ -1056,26 +1103,8 @@ bool block_allocator::compaction_round(bool &moved, bool validate_only) {
             return false;
         }
 
-        // The signature determines the metadata footprint of the block.
-        uint8_t sig = 0;
-        uint64_t compressed_size = 0;
-        if (fseek64(archive_->file, static_cast<int64_t>(src), SEEK_SET) != 0 ||
-            fread(&sig, 1, 1, archive_->file) != 1 ||
-            fseek64(archive_->file, static_cast<int64_t>(src + 2), SEEK_SET) != 0 ||
-            lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
-            compressed_size == 0) {
-            WARNING_PRINT("warning: perform_defragmentation: failed to read block header at %" PRIu64 "\n", src);
-            errno = EIO;
-            return false;
-        }
-        const uint64_t meta_size = storage_block::meta_size_for(sig);
-        if (meta_size == 0 || compressed_size > seekable_end - src ||
-            meta_size > seekable_end - src - compressed_size) {
-            WARNING_PRINT("warning: perform_defragmentation: bad block at %" PRIu64 "\n", src);
-            errno = EIO;
-            return false;
-        }
-        const uint64_t block_size = meta_size + compressed_size;
+        uint64_t block_size = 0;
+        if (!block_footprint(src, seekable_end, block_size)) return false;
         if (overlaps_node(src, block_size) || overlaps_metadata(src, block_size)) {
             WARNING_PRINT("warning: perform_defragmentation: block overlaps metadata at %" PRIu64 "\n", src);
             errno = EIO;

@@ -17,11 +17,13 @@
 #include "sharded_lru_2q_cache.hpp"
 
 #include <mutex>
+#include <unordered_set>
 #include <atomic>
 
 namespace compio {
 
 class WalManager;
+class block;
 
 struct context_t {
     FILE *file;
@@ -36,6 +38,19 @@ struct context_t {
     std::map<tree_key, uint64_t> temporary_index;
     std::atomic<int> temp_index_refcount = 0;
     std::mutex temp_index_mutex;
+    // Blocks holding changes that are not written yet, so that a write-back
+    // visits only those instead of the whole cache.
+    std::mutex dirty_mutex;
+    std::unordered_set<block *> dirty;
+
+    void mark_dirty(block *b) {
+        std::lock_guard<std::mutex> lock(dirty_mutex);
+        dirty.insert(b);
+    }
+    void clear_dirty(block *b) {
+        std::lock_guard<std::mutex> lock(dirty_mutex);
+        dirty.erase(b);
+    }
 
     context_t(const context_t&) = delete;
     context_t& operator=(const context_t&) = delete;
@@ -74,6 +89,11 @@ class block {
     bool _is_modified;
     bool _is_removed;
     bool _is_valid;
+
+    void set_modified() {
+        _is_modified = true;
+        context.mark_dirty(this);
+    }
     /** @brief On-disk metadata size of the block as read (v1=22, v2=38), so
      * deallocation frees the exact on-disk footprint. */
     uint64_t _disk_meta_size = STORAGE_BLOCK_METASIZE_V2;
@@ -108,7 +128,10 @@ public:
     block(context_t &context, const tree_key &key, uint64_t size, bool unused);
 
     // Write-back must be checked by the reader before destruction.
-    ~block() = default;
+    ~block() { context.clear_dirty(this); }
+
+    block(const block &) = delete;
+    block &operator=(const block &) = delete;
 
     /**
      * @brief Write the block to the archive if it has unsaved modifications
@@ -264,9 +287,10 @@ class storage_block_reader {
     struct shard_by_hash {
         size_t operator()(const tree_key &k) const { return static_cast<size_t>(k.hash); }
     };
+    // Declared before the cache: blocks unregister from it when destroyed.
+    context_t context;
     cache::sharded_lru_2q_cache<tree_key, std::shared_ptr<block>, tree_key_comparator, shard_by_hash>
         cache;
-    context_t context;
     std::atomic<int> write_error{0};
     std::atomic<bool> flush_failed{false};
 
