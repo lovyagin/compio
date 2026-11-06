@@ -27,6 +27,8 @@
 #include "compio/btree.hpp"
 #include "compio/compressor_set.hpp"
 
+#include <thread>
+
 using namespace compio;
 namespace fs = std::filesystem;
 
@@ -40,6 +42,7 @@ void compio_build_default_config(compio_config *result) {
     result->block_size__maximum = 1 << 18;  // 256KB max
     result->cache_size__nodes = 1024;
     result->cache_size__blocks = 8192;
+    result->compression_threads = 0;
     result->allocation_strategy = COMPIO_ALLOC_BEST_FIT;
     result->fragmentation_threshold = 30;
     result->max_files = COMPIO_MAX_FILES;
@@ -176,6 +179,12 @@ bool compio_archive::is_readonly() const {
     return mode_b & mode_bit::r;
 }
 
+static unsigned compression_threads(const compio_config &config) {
+    if (config.compression_threads > 0) return static_cast<unsigned>(config.compression_threads);
+    const unsigned hardware = std::thread::hardware_concurrency();
+    return hardware == 0 ? 1 : hardware;
+}
+
 static bool valid_compression_type(compio_compression_type t) {
     return (t >= COMPIO_COMPRESS_DUMMY && t <= COMPIO_COMPRESS_BROTLI) || t >= COMPIO_COMPRESS_CUSTOM;
 }
@@ -196,6 +205,10 @@ static bool validate_config(const compio_config *c, bool allow_zeros = false) {
     }
     if (c->block_size__minimum < 0) {
         WARNING_PRINT("warning: block_size__minimum=%d < 0\n", c->block_size__minimum);
+        return false;
+    }
+    if (c->compression_threads < 0) {
+        WARNING_PRINT("warning: compression_threads=%d < 0\n", c->compression_threads);
         return false;
     }
     if (!allow_zeros) {
@@ -487,7 +500,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     archive->block_reader = new compio::storage_block_reader(
         file, archive->allocator, archive->index,
         &archive->compressors, archive->config.cache_size__blocks, &archive->io_mutex, archive->wal.get(),
-        archive->config.checksum_type);
+        archive->config.checksum_type, compression_threads(archive->config));
     if (!archive->block_reader) {
         WARNING_PRINT("warning: failed to allocate memory for storage_block_reader\n");
         goto no_block_reader;
@@ -1768,6 +1781,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+    file->archive->block_reader->write_back_if_crowded();
     checkpoint_if_wal_full(file->archive);
 
     // Invalidate range cache after successful write operations
@@ -2256,6 +2270,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+    file->archive->block_reader->write_back_if_crowded();
     checkpoint_if_wal_full(file->archive);
 
     return size;
@@ -2508,6 +2523,7 @@ after_merge:
 
     // Auto-batching logic - end batch if threshold reached
     end_auto_batch_if_needed(file);
+    file->archive->block_reader->write_back_if_crowded();
     checkpoint_if_wal_full(file->archive);
 
     return size;

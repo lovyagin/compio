@@ -103,6 +103,18 @@ cd build/benchmarks
 ./free_space_scaling 4096000
 ```
 
+### 7. **Parallel Compression** (`parallel_compression`)
+Write throughput of one file against `compression_threads`, for each built-in
+compressor, with and without the write-ahead log. Text-like data is written in
+1 MiB calls; the time includes closing the archive. Best of three runs. Output is CSV.
+
+**Run:**
+```bash
+cd build/benchmarks
+./parallel_compression            # 256 MiB
+./parallel_compression 1024 /path/on/target/disk.compio
+```
+
 ## Quick Start
 
 ### Build all benchmarks:

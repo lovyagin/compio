@@ -116,10 +116,15 @@ bool block::write_back() {
         errno = EIO;
         return false;
     }
-    if (!_is_modified || _is_removed) return true;
+    if (!needs_write_back()) return true;
+    storage_block packed;
+    pack(packed);
+    return store(packed);
+}
 
+void block::pack(storage_block &b) const {
     const compio_compressor *compressor = context.compressors->active();
-    storage_block b(compressor->get_bufsize(compressor, _size));
+    b = storage_block(compressor->get_bufsize(compressor, _size));
     b.original_size = _size;
     b.checksum_type = context.checksum_type;
     b.src_key = _key;
@@ -135,13 +140,15 @@ bool block::write_back() {
         std::memcpy(b.data.get(), _data.get(), _size);
         b.size = _size;
     } else {
-#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
-        bm_n_compressed_bytes += _size;
-#endif
         b.codec = static_cast<uint32_t>(compressor->compression_type);
         b.data_checksum = storage_block::compute_data_checksum(b.checksum_type, _data.get(), _size);
     }
+}
 
+bool block::store(storage_block &b) {
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+    if (b.codec != storage_block::codec_stored) bm_n_compressed_bytes += _size;
+#endif
     const uint64_t disk_size = STORAGE_BLOCK_METASIZE + b.size;
     const uint64_t new_addr = context.allocator->allocate(disk_size);
     if (new_addr == UINT64_MAX) {
@@ -249,10 +256,12 @@ uint64_t block::c_size() const { return _c_size; }
 storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
                                            compressor_set *compressors, int max_size,
                                            std::mutex *io_mutex, compio::WalManager *wal,
-                                           compio_checksum_type checksum_type)
+                                           compio_checksum_type checksum_type, unsigned compression_threads)
     : context{file, allocator, index, compressors, io_mutex, wal, checksum_type},
       cache(max_size, shard_by_hash{},
-            [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }) {}
+            [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }),
+      packers(compression_threads),
+      max_blocks(max_size > 0 ? static_cast<size_t>(max_size) : 0) {}
 
 std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
     DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
@@ -379,8 +388,36 @@ bool storage_block_reader::flush_cache() {
         blocks.assign(context.dirty.begin(), context.dirty.end());
     }
     sort_for_write_back(blocks);
-    for (block *b : blocks) {
-        if (!b->write_back() && !error) error = errno ? errno : EIO;
+
+    // Blocks are compressed in parallel, then placed and indexed in order. An
+    // external compressor is called from one thread: it need not be reentrant.
+    const bool parallel = packers.threads() > 1 &&
+                          context.compressors->active()->compression_type < COMPIO_COMPRESS_CUSTOM;
+    const size_t group = parallel ? 8 * static_cast<size_t>(packers.threads()) : 1;
+    std::vector<storage_block> packed;
+    for (size_t first = 0; first < blocks.size(); first += group) {
+        const size_t count = std::min(group, blocks.size() - first);
+        if (count == 1 || !parallel) {
+            block *b = blocks[first];
+            if (!b->write_back() && !error) error = errno ? errno : EIO;
+            continue;
+        }
+        packed.clear();
+        packed.resize(count);
+        packers.run(count, [&](size_t i) {
+            if (blocks[first + i]->needs_write_back()) blocks[first + i]->pack(packed[i]);
+        });
+        for (size_t i = 0; i < count; ++i) {
+            block *b = blocks[first + i];
+            bool ok;
+            if (!b->is_valid()) {
+                errno = EIO;
+                ok = false;
+            } else {
+                ok = !b->needs_write_back() || b->store(packed[i]);
+            }
+            if (!ok && !error) error = errno ? errno : EIO;
+        }
     }
     flush_failed.store(error != 0);
     if (error) {
@@ -388,6 +425,15 @@ bool storage_block_reader::flush_cache() {
         return false;
     }
     return true;
+}
+
+bool storage_block_reader::write_back_if_crowded() {
+    if (packers.threads() < 2 || max_blocks < 2 || has_write_error()) return true;
+    {
+        std::lock_guard<std::mutex> lock(context.dirty_mutex);
+        if (context.dirty.size() < max_blocks / 2) return true;
+    }
+    return flush_cache();
 }
 
 void storage_block_reader::set_maintenance_mode(bool enabled) {

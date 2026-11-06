@@ -253,6 +253,11 @@ typedef struct {
 
     int cache_size__nodes;  /**< Maximum B-tree nodes kept in memory */
     int cache_size__blocks; /**< Maximum storage blocks kept in memory */
+    int compression_threads; /**< Threads that compress the blocks of one write-back (default: 0 = one
+                                  per hardware thread; 1 = compress on the calling thread only). The
+                                  blocks are placed and indexed in order by the calling thread. An
+                                  external compressor (COMPIO_COMPRESS_CUSTOM and above) is always
+                                  called from one thread. */
 
     compio_allocation_strategy allocation_strategy; /**< Free block selection strategy (default: best fit) */
     bool fill_holes_with_zeros;      /**< Give the storage under freed regions back to the filesystem

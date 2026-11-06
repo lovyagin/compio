@@ -51,3 +51,6 @@ target_link_libraries(index_benchmark_custom PRIVATE compio)
 add_executable(io_overhead custom/io_overhead.cpp)
 target_link_libraries(io_overhead PRIVATE compio)
 
+
+add_executable(parallel_compression custom/parallel_compression.cpp)
+target_link_libraries(parallel_compression PRIVATE compio)
