@@ -89,6 +89,11 @@ struct node_reader {
     bool flush_cache();
 
     /**
+     * @brief Whether an eviction failed since the last flush
+     */
+    bool has_write_error() const;
+
+    /**
      * @brief Get cache hit probability
      * 
      * @return double Cache hit probability
@@ -269,6 +274,11 @@ struct btree {
      * @brief Write modified cached nodes to file, keeping the cache warm
      */
     bool flush_cache();
+
+    /**
+     * @brief Whether a node eviction failed since the last flush
+     */
+    bool has_write_error() const;
 
     /**
      * @brief Collect file addresses of all B-tree nodes
