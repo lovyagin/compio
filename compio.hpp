@@ -126,6 +126,22 @@ public:
     }
 
     /**
+     * @brief Insert data at the current position, shifting the rest of the file forward
+     */
+    uint64_t insert(const void* data, uint64_t size) {
+        if (!file_) throw Exception("File is not open");
+        return compio_insert(data, size, file_);
+    }
+
+    /**
+     * @brief Remove size bytes at the current position, shifting the rest of the file backward
+     */
+    uint64_t erase(uint64_t size) {
+        if (!file_) throw Exception("File is not open");
+        return compio_erase(size, file_);
+    }
+
+    /**
      * @brief Write typed data (binary)
      */
     template<typename T>
@@ -185,6 +201,14 @@ public:
     uint64_t tell() const {
         if (!file_) throw Exception("File is not open");
         return compio_tell(file_);
+    }
+
+    /**
+     * @brief Get current size of file
+     */
+    uint64_t get_size() const {
+        if (!file_) throw Exception("File is not open");
+        return compio_get_size(file_);
     }
 
     /**
@@ -285,6 +309,16 @@ public:
     void flush() {
         if (!archive_) throw Exception("Archive is not open");
         compio_flush(archive_);
+    }
+
+    /**
+     * @brief Compact the archive; all files of the archive must be closed
+     */
+    void defragment() {
+        if (!archive_) throw Exception("Archive is not open");
+        if (compio_defragment(archive_) != 0) {
+            throw Exception("Defragmentation failed");
+        }
     }
 
     /**
