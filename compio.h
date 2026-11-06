@@ -32,7 +32,7 @@
  * @par Transactions & Atomicity:
  * All write operations (compio_write, compio_insert, compio_erase) are backed
  * by a Write-Ahead Log (WAL) for crash resilience. A series of operations can
- * be grouped in a transaction (if using C++ API) for atomic visibility.
+ * be grouped into one WAL transaction with compio_begin_batch()/compio_end_batch().
  *
  * @par Crash Recovery:
  * If the program crashes, a .wal file may exist alongside the archive.
@@ -222,8 +222,8 @@ typedef enum {
  * @brief WAL synchronization mode
  */
 typedef enum {
-    COMPIO_WAL_SYNC_ALWAYS = 0,    /**< fsync after every transaction (default, strict durability) */
-    COMPIO_WAL_SYNC_NORMAL = 1,    /**< write to OS buffer, fsync only on checkpoint/close/flush */
+    COMPIO_WAL_SYNC_ALWAYS = 0,    /**< fsync after every transaction (strict durability) */
+    COMPIO_WAL_SYNC_NORMAL = 1,    /**< write to OS buffer, fsync only on checkpoint/close/flush (default) */
     COMPIO_WAL_SYNC_OFF = 2        /**< do not fsync WAL on commit; checkpoint/close/flush may still fsync (dangerous, for testing/temp files) */
 } compio_wal_sync_mode;
 
@@ -254,9 +254,8 @@ typedef struct {
                                           is overwritten with zeros instead. */
     uint8_t fragmentation_threshold; /**< Compact the archive when free regions take more than this
                                         percentage of the container (default: 30; 100 disables
-                                        automatic compaction). Checked after a file is removed,
-                                        on every 64th release of a removed block or index node,
-                                        and when the archive is closed. */
+                                        automatic compaction). Checked when the archive is closed;
+                                        compio_defragment() compacts regardless of it. */
     int max_files; /**< Initial capacity for the files table (default: COMPIO_MAX_FILES).
                         The table grows dynamically, so this is not a hard limit.
                         For archives using the v5 dynamic files table, this capacity may grow
