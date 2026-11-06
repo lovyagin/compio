@@ -22,6 +22,9 @@
 //   --init-kb=N       initial file size, KiB (default 1024; forced to 0 for append)
 //   --sync=NAME       always | normal | off (default normal)
 //   --wal=0|1         enable_wal (default 1)
+//   --redo=0|1        require every completed operation to survive, not only flushed
+//                     ones (needs --wal=1 and a sync mode other than off; disables
+//                     automatic batching, whose operations commit together)
 //   --block=N         target block size (default 4096; min = N/4, max = 2N)
 //   --degree=N        B-tree degree (default: library default)
 //   --max-delay-ms=N  upper bound of the random delay before the kill (default 60)
@@ -362,7 +365,7 @@ int run(int argc, char **argv) {
     const std::vector<std::string> keys{
         "dir", "trials", "ops", "mix", "flush-every", "init-kb", "sync", "wal", "block",
         "degree", "max-delay-ms", "seed", "trial-start", "stop-after", "control", "keep",
-        "scenario", "fill-holes"};
+        "scenario", "fill-holes", "redo"};
     std::vector<std::string> seen;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
@@ -435,6 +438,9 @@ int run(int argc, char **argv) {
     cfg.b_tree_degree = number(argc, argv, "degree", cfg.b_tree_degree, int_max / 96);
     if (cfg.b_tree_degree < 2) throw std::invalid_argument("degree must be at least 2");
     cfg.enable_wal = number(argc, argv, "wal", checkpoint_remove ? 0 : 1, 1) != 0;
+    const bool redo = number(argc, argv, "redo", 0, 1) != 0;
+    if (redo && (!cfg.enable_wal || sync == "off")) throw std::invalid_argument("redo requires --wal=1 and a sync mode other than off");
+    if (redo) cfg.auto_batch_size = 0;
     cfg.fill_holes_with_zeros = number(argc, argv, "fill-holes", cfg.fill_holes_with_zeros, 1) != 0;
     if (checkpoint_remove) {
         if (cfg.enable_wal) throw std::invalid_argument(scenario + " requires --wal=0");
@@ -691,7 +697,8 @@ int run(int argc, char **argv) {
             if (matched_prefix < 0) {
                 o = outcome::corrupt;
             } else {
-                o = matched_prefix >= completed.flushed ? outcome::consistent : outcome::lost_flushed;
+                o = matched_prefix >= (redo ? completed.completed : completed.flushed) ? outcome::consistent
+                                                                                   : outcome::lost_flushed;
             }
         }
         counts[o]++;

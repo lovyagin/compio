@@ -78,6 +78,27 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
 static bool fsync_archive(FILE *file);
 static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_impl(compio_archive *archive);
+static bool log_operation_state(compio_archive *archive);
+
+// Adopt the state of the last committed operation found in the journal.
+static bool apply_wal_meta(smart_infile_object<compio::header> &header_obj, const std::vector<uint8_t> &meta) {
+    constexpr size_t fixed_size = 3 * sizeof(uint64_t);
+    if (meta.size() < fixed_size) return false;
+    uint64_t fields[3];
+    for (size_t i = 0; i < 3; ++i) {
+        fields[i] = 0;
+        for (unsigned shift = 0; shift < 64; shift += 8) {
+            fields[i] |= static_cast<uint64_t>(meta[i * 8 + shift / 8]) << shift;
+        }
+    }
+    compio::files_table table;
+    if (!table.parse(meta.data() + fixed_size, meta.size() - fixed_size, fields[2])) return false;
+
+    header_obj->index_root = fields[0];
+    header_obj->file_size = std::max(header_obj->file_size, fields[1]);
+    header_obj->ftable = std::move(table);
+    return true;
+}
 
 static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
     if (is_file_empty(file)) {
@@ -267,6 +288,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     // Initialize WAL Manager. When journaling is disabled the archive carries no
     // WalManager at all: writers receive a null wal pointer and skip logging.
     std::unique_ptr<compio::WalManager> wal;
+    std::vector<uint8_t> wal_meta;
     if (!c || c->enable_wal) {
         wal = std::make_unique<compio::WalManager>(fp);
         if (c) {
@@ -286,7 +308,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
                      errno = EROFS; // Read-only file system (or similar)
                      return NULL;
                 } else {
-                    if (!wal->recover(file)) {
+                    if (!wal->recover(file, &wal_meta)) {
                         WARNING_PRINT("warning: WAL recovery failed\n");
                         // Continue anyway? Or fail?
                         // Fail seems safer.
@@ -418,6 +440,15 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         }
     }
 
+    // A replayed journal carries the state its last committed operation left: adopt it
+    // before the index reads its root.
+    if (!wal_meta.empty() && !apply_wal_meta(archive->header, wal_meta)) {
+        WARNING_PRINT("warning: WAL state record is malformed\n");
+        errno = EIO;
+        archive->header.unmodify();
+        goto no_allocator;
+    }
+
     // initialize allocator before btree, because btree uses allocator for creating root node
     archive->allocator = new compio::block_allocator(archive, archive->wal.get());
     if (!archive->allocator) {
@@ -449,7 +480,18 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         goto no_block_reader;
     }
 
-    if (!is_new_file && !archive->allocator->load_state(archive)) {
+    if (!wal_meta.empty()) {
+        // The saved allocator state describes the last published header, not the
+        // replayed one, so the free list is derived from the index instead.
+        archive->header->allocator_state_offset = 0;
+        archive->header->allocator_state_size = 0;
+        if (!archive->allocator->rebuild_from_index() || !flush_impl(archive)) {
+            WARNING_PRINT("warning: failed to publish the state recovered from the WAL\n");
+            if (errno == 0) errno = EIO;
+            archive->header.unmodify();
+            goto no_recovery;
+        }
+    } else if (!is_new_file && !archive->allocator->load_state(archive)) {
         // The allocator state (free-block list) is an optimization that points
         // at a region an interrupted flush may have left beyond the durable end
         // of the file. The data blocks, B-Tree index and files table are all
@@ -468,6 +510,9 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     return archive;
 
+no_recovery:
+    delete archive->block_reader;
+    archive->block_reader = nullptr;
 no_block_reader:
     delete archive->index;
 no_index:
@@ -752,7 +797,8 @@ static void start_auto_batch_if_needed(compio_file *file, uint64_t current_offse
 // cost a full flush and two fsyncs every auto_batch_size operations.
 static bool end_auto_batch(compio_file *file) {
     compio::WalManager *wal = file->archive->wal.get();
-    const bool committed = !wal || wal->end_batch();
+    const bool outermost = wal && wal->get_batch_depth() == 1;
+    const bool committed = !wal || ((!outermost || log_operation_state(file->archive)) && wal->end_batch());
     file->is_auto_batching = false;
     file->auto_batch_count = 0;
     auto &batching = file->archive->auto_batching_files;
@@ -1238,11 +1284,12 @@ struct TemporaryIndexGuard {
 
 // RAII guard for WAL transactions when not in batch mode
 struct WalTransactionGuard {
+    compio_archive *archive;
     compio::WalManager* wal;
     bool active;
 
-    explicit WalTransactionGuard(compio::WalManager* w)
-        : wal(w), active(false) {
+    WalTransactionGuard(compio_archive *a, compio::WalManager* w)
+        : archive(a), wal(w), active(false) {
         if (wal && wal->get_batch_depth() == 0) {
             wal->begin_transaction();
             active = true;
@@ -1251,8 +1298,10 @@ struct WalTransactionGuard {
 
     bool commit() {
         if (!active || !wal) return true;
-        // Only a successful header publication makes the archive a safe WAL checkpoint.
-        bool result = wal->commit_transaction();
+        // A replay must reproduce the operation, so its state is logged first.
+        const bool logged = log_operation_state(archive);
+        bool result = logged && wal->commit_transaction();
+        if (!logged) wal->rollback_transaction();
         active = false;
         return result;
     }
@@ -1313,7 +1362,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
                      (archive->mode_b & mode_bit::plus);
     
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    WalTransactionGuard wal_tx_guard(wal_ptr);
+    WalTransactionGuard wal_tx_guard(archive, wal_ptr);
 
     // actual range in file, where we need to write (write-range)
     const uint64_t write_start = file->cursor;
@@ -1913,7 +1962,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
                      (archive->mode_b & mode_bit::plus);
     
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    WalTransactionGuard wal_tx_guard(wal_ptr);
+    WalTransactionGuard wal_tx_guard(archive, wal_ptr);
 
     const tree_key cursor_key = {file->hash, file->cursor};
     const auto cursor_range = archive->index->get_range(cursor_key, cursor_key + 1);
@@ -2142,7 +2191,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
                      (archive->mode_b & mode_bit::plus);
     
     compio::WalManager* wal_ptr = (archive->wal && can_write) ? archive->wal.get() : nullptr;
-    WalTransactionGuard wal_tx_guard(wal_ptr);
+    WalTransactionGuard wal_tx_guard(archive, wal_ptr);
 
     if (file->cursor > file->size) {
         return 0;
@@ -2361,6 +2410,27 @@ after_merge:
     checkpoint_if_wal_full(file->archive);
 
     return size;
+}
+
+// Journal the dirty blocks and nodes of the finished operation, then the state
+// that references them. Nothing durable is overwritten between publications, so
+// recovery can replay these images and adopt the state without the allocator.
+static bool log_operation_state(compio_archive *archive) {
+    compio::WalManager *wal = archive->wal.get();
+    if (!wal) return true;
+    if (archive->block_reader && !archive->block_reader->flush_cache()) return false;
+    if (archive->index && !archive->index->flush_cache()) return false;
+
+    const auto &current = *readonly(archive->header, header);
+    const std::vector<uint8_t> table = current.ftable.serialize();
+    std::vector<uint8_t> meta;
+    meta.reserve(24 + table.size());
+    for (const uint64_t value : {current.index_root, current.file_size,
+                                 static_cast<uint64_t>(current.ftable.files.size())}) {
+        for (unsigned shift = 0; shift < 64; shift += 8) meta.push_back(static_cast<uint8_t>(value >> shift));
+    }
+    meta.insert(meta.end(), table.begin(), table.end());
+    return wal->log_write(compio::WalRecordType::META, 0, meta.data(), meta.size());
 }
 
 static bool sync_files_table(compio_archive *archive) {
