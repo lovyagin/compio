@@ -287,9 +287,10 @@ class storage_block_reader {
     struct shard_by_hash {
         size_t operator()(const tree_key &k) const { return static_cast<size_t>(k.hash); }
     };
+    // Declared before the cache: blocks unregister from it when destroyed.
+    context_t context;
     cache::sharded_lru_2q_cache<tree_key, std::shared_ptr<block>, tree_key_comparator, shard_by_hash>
         cache;
-    context_t context;
     std::atomic<int> write_error{0};
     std::atomic<bool> flush_failed{false};
 
