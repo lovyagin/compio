@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cerrno>
 #include <cinttypes>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <set>
@@ -139,7 +140,7 @@ btree::btree(uint64_t degree, bool is_readonly, smart_infile_object<header> arch
 }
 
 bool btree::needs_copy(uint64_t addr) {
-    return copy_on_write && !is_readonly && !is_fresh(addr);
+    return !is_readonly && !is_fresh(addr);
 }
 
 bool btree::is_fresh(uint64_t addr) {
@@ -161,6 +162,66 @@ shared_node btree::copy_node(const shared_node &node) {
     *copy = *RO(node);
     free_node(node);
     return copy;
+}
+
+bool btree::relocate_nodes(const std::unordered_map<uint64_t, uint64_t> &moves) {
+    std::unique_lock<std::shared_mutex> lock(mutex);
+    if (is_readonly) return false;
+
+    // Nodes whose subtree holds a node to move.
+    std::unordered_set<uint64_t> path;
+    bool ok = true;
+    std::function<bool(uint64_t)> mark = [&](uint64_t addr) {
+        auto node = read_node(addr);
+        if (!node) {
+            ok = false;
+            return false;
+        }
+        bool any = moves.count(addr) != 0;
+        if (!RO(node)->is_leaf) {
+            for (uint64_t i = 0; i <= RO(node)->num_keys; ++i) {
+                any = mark(RO(node)->children[i]) || any;
+            }
+        }
+        if (any) path.insert(addr);
+        return any;
+    };
+    const uint64_t root_addr = readonly(archive_header, header)->index_root;
+    mark(root_addr);
+    if (!ok) return false;
+    if (!path.count(root_addr)) return true;
+
+    auto place = [&](const shared_node &node) {
+        auto target = moves.find(node.addr());
+        if (target != moves.end()) {
+            auto moved = reader.create_node(target->second);
+            mark_fresh(target->second);
+            *moved = *RO(node);
+            free_node(node);
+            return moved;
+        }
+        return needs_copy(node.addr()) ? copy_node(node) : node;
+    };
+
+    std::function<bool(shared_node &)> rewrite = [&](shared_node &node) {
+        if (RO(node)->is_leaf) return true;
+        for (uint64_t i = 0; i <= RO(node)->num_keys; ++i) {
+            const uint64_t child_addr = RO(node)->children[i];
+            if (!path.count(child_addr)) continue;
+            auto child = read_node(child_addr);
+            if (!child) return false;
+            child = place(child);
+            node->children[i] = child.addr();
+            if (!rewrite(child)) return false;
+        }
+        return true;
+    };
+
+    auto root = read_node(root_addr);
+    if (!root) return false;
+    root = place(root);
+    archive_header->index_root = root.addr();
+    return rewrite(root);
 }
 
 shared_node btree::write_root() {
@@ -402,19 +463,10 @@ bool btree::_update(shared_node &node, const tree_key &key, const tree_val &new_
 
 bool btree::update(const tree_key &key, const tree_val &new_value) {
     std::unique_lock<std::shared_mutex> lock(mutex);
-    return _update_locked(key, new_value);
+    return _update_impl(key, new_value);
 }
 
 bool btree::_update_impl(const tree_key &key, const tree_val &new_value) {
-    // Compaction runs under the allocator lock and manages node placement itself.
-    const bool saved = copy_on_write;
-    copy_on_write = false;
-    const bool result = _update_locked(key, new_value);
-    copy_on_write = saved;
-    return result;
-}
-
-bool btree::_update_locked(const tree_key &key, const tree_val &new_value) {
     DEBUG_PRINT("[BTREE]: update(key={...,%" PRIu64 "},new_value={%" PRIu64 ",%" PRIu64 "})\n", key.pos, new_value.addr,
                 new_value.size);
     auto root = write_root();
@@ -576,8 +628,7 @@ std::optional<std::vector<uint64_t>> btree::collect_node_addresses(uint64_t &nod
     return _collect_node_addresses(node_size);
 }
 
-std::optional<std::vector<uint64_t>> btree::_collect_node_addresses(
-    uint64_t &node_size, std::unordered_map<uint64_t, node_link> *links) {
+std::optional<std::vector<uint64_t>> btree::_collect_node_addresses(uint64_t &node_size) {
     node_size = INDEX_NODE_SIZE(degree);
     std::vector<uint64_t> addrs;
 
@@ -587,11 +638,10 @@ std::optional<std::vector<uint64_t>> btree::_collect_node_addresses(
     const uint64_t file_size = readonly(archive_header, header)->file_size;
     const uint64_t reserved_size = readonly(archive_header, header)->reserved_size();
     std::set<uint64_t> visited;
-    std::vector<std::pair<uint64_t, node_link>> queue;
-    queue.push_back({root_addr, {0, 0}});
+    std::vector<uint64_t> queue{root_addr};
 
     while (!queue.empty()) {
-        const auto [addr, link] = queue.back();
+        const uint64_t addr = queue.back();
         queue.pop_back();
         if (addr < reserved_size || addr >= file_size || node_size > file_size - addr ||
             !visited.insert(addr).second) {
@@ -599,13 +649,12 @@ std::optional<std::vector<uint64_t>> btree::_collect_node_addresses(
             return std::nullopt;
         }
         addrs.push_back(addr);
-        if (links) links->emplace(addr, link);
 
         auto node = reader.read_node(addr);
         if (!node) return std::nullopt;
         if (!RO(node)->is_leaf) {
             for (uint32_t i = 0; i <= RO(node)->num_keys; i++) {
-                queue.push_back({RO(node)->children[i], {addr, i}});
+                queue.push_back(RO(node)->children[i]);
             }
         }
     }
@@ -789,39 +838,6 @@ std::optional<std::pair<tree_key, tree_val>> btree::find_min_in_node(shared_node
         node = next;
     }
     return std::pair{RO(node)->keys[0], RO(node)->values[0]};
-}
-
-bool btree::_relocate_node(uint64_t from, uint64_t to, const node_link &link, std::vector<uint64_t> &children) {
-    auto node = reader.read_node(from);
-    if (!node) return false;
-
-    if (link.parent == 0) {
-        if (readonly(archive_header, header)->index_root != from) {
-            errno = EIO;
-            return false;
-        }
-    } else {
-        auto parent = reader.read_node(link.parent);
-        if (!parent) return false;
-        if (RO(parent)->is_leaf || link.index > RO(parent)->num_keys ||
-            RO(parent)->children[link.index] != from) {
-            errno = EIO;
-            return false;
-        }
-        parent->children[link.index] = to;
-    }
-
-    auto moved = reader.create_node(to);
-    *moved = *RO(node);
-    children = RO(node)->is_leaf ? std::vector<uint64_t>{} : RO(node)->children;
-
-    // The old range is reused by the caller, so the stale copy must never be written.
-    auto stale = node;
-    stale.remove();
-    reader.remove_node(node);
-
-    if (link.parent == 0) archive_header->index_root = to;
-    return true;
 }
 
 uint64_t btree::allocate_node() { return allocator->allocate(INDEX_NODE_SIZE(degree)); }

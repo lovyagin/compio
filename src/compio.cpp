@@ -77,6 +77,7 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
 
 static bool fsync_archive(FILE *file);
 static bool flush_header_double_buffered(compio_archive *archive);
+static bool flush_impl(compio_archive *archive);
 
 static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
     if (is_file_empty(file)) {
@@ -346,6 +347,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         if (!fsync_archive(archive->file)) return false;
         return flush_header_double_buffered(archive);
     };
+    archive->checkpoint = [archive]() { return flush_impl(archive); };
 
     // is_new_file already computed above
 
