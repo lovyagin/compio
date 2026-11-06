@@ -10,7 +10,9 @@
 #ifndef BTREE_H
 #define BTREE_H
 
+#include <atomic>
 #include <cstddef>
+#include <unordered_set>
 #include <unordered_map>
 #include <list>
 #include <memory>
@@ -293,6 +295,15 @@ struct btree {
     std::optional<std::vector<uint64_t>> collect_node_addresses(uint64_t &node_size);
 
     /**
+     * @brief Tell the tree that a header referencing its current nodes is durable
+     *
+     * From now on every node is again referenced by durable state, so the next
+     * modification of each node goes to a fresh copy. Lock-free: the set of
+     * fresh nodes is reset lazily by the next writer.
+     */
+    void end_epoch() { epoch.fetch_add(1, std::memory_order_release); }
+
+    /**
      * @brief Get a lock object for the B-Tree mutex
      * 
      * @return std::unique_lock<std::shared_mutex> Lock object
@@ -326,6 +337,17 @@ private:
     block_allocator *allocator;
     /** @brief Node reader for cached file access */
     node_reader reader;
+    /**
+     * @brief Nodes allocated since the last header publication
+     *
+     * Nothing durable references them, so they may be modified in place. Every
+     * other node is copied to a fresh address before its first modification.
+     */
+    std::unordered_set<uint64_t> fresh;
+    uint64_t fresh_epoch = 0;
+    std::atomic<uint64_t> epoch{0};
+    /** @brief False while compaction rearranges nodes itself */
+    bool copy_on_write = true;
 
     /**
      * @brief Insert into a node that is guaranteed not to be full
@@ -512,6 +534,7 @@ private:
     bool _relocate_node(uint64_t from, uint64_t to, const node_link &link, std::vector<uint64_t> &children);
     std::optional<std::vector<std::pair<tree_key, tree_val>>> _get_range_impl(const tree_key &key_min, const tree_key &key_max);
     bool _update_impl(const tree_key &key, const tree_val &new_value);
+    bool _update_locked(const tree_key &key, const tree_val &new_value);
 
     /**
      * @brief Allocate space for a new node in the archive
@@ -572,6 +595,14 @@ private:
      * @return shared_node Smart pointer to the root node
      */
     shared_node read_root();
+
+    /** @brief Root for modification: copied to a fresh address unless already fresh */
+    shared_node write_root();
+    bool needs_copy(uint64_t addr);
+    bool is_fresh(uint64_t addr);
+    void mark_fresh(uint64_t addr);
+    /** @brief Copy a durable node to a fresh address; the caller repoints its parent */
+    shared_node copy_node(const shared_node &node);
 };
 
 } // namespace compio

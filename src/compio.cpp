@@ -1017,6 +1017,7 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         archive->published_allocator_state_offset = new_h_data->allocator_state_offset;
         archive->published_allocator_state_size = new_h_data->allocator_state_size;
         archive->published_file_size = new_h_data->file_size;
+        if (archive->index) archive->index->end_epoch();
         
         // Mark old header object as unmodified so it doesn't write on destruction
         archive->header.unmodify();
