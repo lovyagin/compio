@@ -33,6 +33,17 @@ supplied compressor must equal the stored one, otherwise opening fails with `EIN
 cannot adopt the compressor from the header, because only the caller has the code of a custom
 one; `compio_build_compressor_by_type` builds the matching built-in compressor.
 
+#### Compressor per block
+The header field names the compressor of *new* blocks. Every block records the codec that packed
+it (`0` = stored as is, otherwise a `compression_type`), so one archive can hold blocks of several
+algorithms. `compio_set_compressor` switches the algorithm for new blocks while the archive is
+open, and `compio_recompress` rewrites the blocks of other codecs with the current one; a block
+stored uncompressed stays as it is. Blocks of a built-in codec are decoded without any setup. A
+block of an external codec needs `compio_register_compressor` after the archive is opened (a
+block whose codec is unknown fails to read with `ENOTSUP`). A compressed block also carries a
+checksum of its uncompressed bytes, so a compressor that decodes to something else than it
+encoded is detected on read even if the stored bytes are intact.
+
 ### 3. Storage System
 
 #### Block-based Storage
@@ -40,7 +51,7 @@ Files are split into blocks of variable size: `block_size` (default 16 KiB) is t
 target used when incoming data is cut into blocks, and inserts and erases keep
 every block between `block_size__minimum` and `block_size__maximum`. Each block is:
 - Compressed independently
-- Stored with metadata (stored size, original size, compression flag, owner back-reference, checksum)
+- Stored with metadata (codec, stored size, original size, owner back-reference, checksums)
 - Indexed in B-Tree by (file id, position)
 
 #### Block Allocator
@@ -121,12 +132,12 @@ end completed.
 
 ## File Format
 
-Format v6. Two header slots of 120 bytes each start the file; the slot with
+Format v7. Two header slots of 120 bytes each start the file; the slot with
 the larger valid `sequence_id` is current. All integers are little endian.
 
 ```
 [Header slot] x 2
-  - magic_number (4 bytes, 27110663 = format v6)
+  - magic_number (4 bytes, 27110664 = format v7)
   - checksum (32 bytes, SHA-256 of the fields below)
   - sequence_id (8 bytes)
   - index_root (8 bytes)
@@ -152,9 +163,17 @@ the larger valid `sequence_id` is current. All integers are little endian.
   - Free block list
   - Fragmentation data
 
-[B-Tree Nodes]
-  - Index structure
+[B-Tree Node]
+  - signature (1 byte, 68), is_leaf (1 byte, 0 or 1), num_keys (4 bytes)
+  - keys, values, then children and key additions (inner nodes only)
+  - checksum (4 bytes, CRC32C of all bytes before it)
 
-[Storage Blocks]
-  - Compressed data blocks
+[Storage Block]
+  - signature (1 byte, 175 = FNV-1a checksums, 176 = CRC32C checksums)
+  - codec (4 bytes, 0 = stored as is, otherwise a compression_type)
+  - size (8 bytes, stored), original_size (8 bytes)
+  - owning key (16 bytes: file id and position), lets the index be rebuilt from blocks
+  - checksum (4 bytes, over the owning key and the stored bytes)
+  - data_checksum (4 bytes, over the uncompressed bytes; 0 for a stored block)
+  - stored bytes
 ```
