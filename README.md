@@ -1,6 +1,6 @@
 <div align="center">
 
-[![PASSING](https://img.shields.io/github/actions/workflow/status/lovyagin/compio/ci.yml?branch=main&style=for-the-badge&color=B3E5B3)](https://github.com/lovyagin/compio/actions) &nbsp;&nbsp;&nbsp; [![DOCS](https://img.shields.io/badge/DOCS-B19CD9?style=for-the-badge)](https://lovyagin.github.io/compio/) &nbsp;&nbsp;&nbsp; [![GPLV3](https://img.shields.io/badge/GPLV3-FFB3BA?style=for-the-badge)](LICENSE)
+[![LICENSE](https://img.shields.io/badge/LICENSE-GPLV3-f38ba8?style=for-the-badge&logo=gnu&logoColor=1e1e2e&labelColor=45475a)](LICENSE)
 
 </div>
 
