@@ -215,7 +215,7 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
 
     if (lendian_fread_member(magic_number, file) != 1) return false;
     if (magic_number != COMPIO_MAGIC_NUMBER) {
-        WARNING_PRINT("warning: unsupported archive format (magic %d, expected %d for format v6)\n",
+        WARNING_PRINT("warning: unsupported archive format (magic %d, expected %d for format v7)\n",
                       magic_number, COMPIO_MAGIC_NUMBER);
         return false;
     }

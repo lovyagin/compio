@@ -95,7 +95,7 @@ private:
 };
 
 /**
- * @brief Archive file header (format v6, fixed size)
+ * @brief Archive file header (format v7, fixed size)
  */
 struct header : public infile_object {
     int32_t magic_number; /**< Constant bytes, file signature and format version */
