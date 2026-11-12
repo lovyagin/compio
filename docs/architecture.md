@@ -9,7 +9,8 @@ The compio library provides compressed archive functionality with multiple compr
 ### 1. Archive Header
 
 The archive header stores metadata including:
-- Magic number (file signature)
+- Magic number (file signature, the same for every format version)
+- Feature flags (see [Compatibility](#compatibility))
 - B-Tree root address
 - Address, size and checksum of the files table (name, size and id of every file)
 - Allocator state (offset and size)
@@ -149,13 +150,16 @@ transaction (`EBUSY`).
 
 ## File Format
 
-Format v7. Two header slots of 120 bytes each start the file; the slot with
-the larger valid `sequence_id` is current. All integers are little endian.
+Two header slots start the file, at offsets 0 and 4096, so that each owns a whole sector and a
+power failure while one is rewritten cannot damage the other. A slot uses its first 256 bytes;
+the one with the larger valid `sequence_id` is current. All integers are little endian. The slot
+layout is fixed for good: what a later version adds goes into the reserved bytes under a feature
+flag. The data area starts at 8192.
 
 ```
 [Header slot] x 2
-  - magic_number (4 bytes, 27110664 = format v7)
-  - checksum (32 bytes, SHA-256 of the fields below)
+  - magic_number (4 bytes, 0x4F504D43, "CMPO")
+  - checksum (32 bytes, SHA-256 of the signature and of every byte of the slot after this field)
   - sequence_id (8 bytes)
   - index_root (8 bytes)
   - file_size (8 bytes)
@@ -169,6 +173,8 @@ the larger valid `sequence_id` is current. All integers are little endian.
   - files_count (8 bytes)
   - files_table_checksum (4 bytes, CRC32C of the stored bytes)
   - files_table_encoding (4 bytes, 0 = plain, otherwise the built-in compression type that packed it)
+  - compat_flags, ro_compat_flags, incompat_flags (8 bytes each)
+  - reserved (112 bytes, zero until a feature defines it)
 
 [Files Table] stored as is, or as its plain size (8 bytes) followed by the plain table packed
 with the archive's compressor, when that is built-in and makes it shorter. A custom compressor
@@ -197,3 +203,35 @@ Plain form: one record per file
   - data_checksum (4 bytes, over the uncompressed bytes; 0 for a stored block)
   - stored bytes
 ```
+
+## Compatibility
+
+The signature never changes. What a version may add is announced by feature flags in the
+header, three 64-bit words that differ in what an older version has to do with a bit it does
+not know:
+
+| Word | Meaning of an unknown bit | Older version |
+|------|---------------------------|---------------|
+| `compat_flags` | optional data, ignorable | opens the archive normally and keeps the bit when it rewrites the header |
+| `ro_compat_flags` | writing without understanding it could damage the data | opens read-only; read-write opening fails with `EROFS` |
+| `incompat_flags` | the layout cannot be read without it | refuses to open: `compio_open_archive` returns `NULL`, `errno = ENOTSUP` |
+
+The check runs before the journal is replayed, so an archive that a version does not fully
+understand is never modified by it. `compio_get_features` returns the three words of an open
+archive; the `COMPIO_*_SUPPORTED` masks in `compio.h` list the bits a build understands.
+
+The checksum covers the reserved bytes, and a rewrite carries them over unchanged, so a field
+defined there later survives an older version's read-write open.
+
+The format of this release is the base format: every feature it has is always present and has
+no flag, so all three words are zero and the masks are empty. A feature added later:
+
+1. takes the next free bit of the word that matches its failure mode;
+2. is set only in archives that use it, so an archive that does not stays readable by older versions;
+3. in the version that adds it, an archive without the bit keeps working and only the functions
+   that need the feature fail (`errno = ENOTSUP`);
+4. is switched on for an existing archive by an explicit migration, which converts the data and
+   sets the bit in one published header; it is never done silently by an open.
+
+An incompatible change to the header slot itself is not possible by design; it would need a
+new signature, that is a different format.

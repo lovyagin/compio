@@ -1,23 +1,26 @@
 <div align="center">
 
-[![PASSING](https://img.shields.io/github/actions/workflow/status/lovyagin/compio/ci.yml?branch=develop&style=for-the-badge&color=B3E5B3)](https://github.com/lovyagin/compio/actions) &nbsp;&nbsp;&nbsp; [![DOCS](https://img.shields.io/badge/DOCS-B19CD9?style=for-the-badge)](https://lovyagin.github.io/compio/) &nbsp;&nbsp;&nbsp; [![GPLV3](https://img.shields.io/badge/GPLV3-FFB3BA?style=for-the-badge)](https://github.com/lovyagin/compio/blob/develop/LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/lovyagin/compio/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=45475a)](https://github.com/lovyagin/compio/actions) [![DOCS](https://img.shields.io/badge/DOCS-DOXYGEN-b4befe?style=for-the-badge&labelColor=45475a)](https://lovyagin.github.io/compio/) [![LICENSE](https://img.shields.io/badge/LICENSE-GPLV3-f38ba8?style=for-the-badge&logo=gnu&logoColor=1e1e2e&labelColor=45475a)](LICENSE)
 
 </div>
 
 # Compio
 
-Compio is a lightweight library designed for transparent data compression, enabling efficient and seamless integration into your projects.
+Compio is a library that stores many named files in a single archive with transparent block
+compression. Data is split into blocks that are compressed independently and indexed by a B-tree,
+so reads, writes, inserts and erases touch only the blocks they need.
 
----
+- **Random access** to compressed data, including insert and erase in the middle of a file
+- **Per-block compression**: ZLIB, LZ4, Zstandard, Brotli or a custom codec, applied in parallel
+- **Crash safety**: write-ahead log, atomic header publication, checksums on every block and index node
+- **Transactions** that group several writes into one atomic step
+- **Space management**: different allocation strategies, automatic compaction and defragmentation
+- **Thread-safe**, with C and C++ APIs; builds on Linux, macOS and Windows
 
 ## Building
 
-Requirements: Git, CMake 3.15 or newer and a C++17 compiler (GCC, Clang or MSVC).
-The compression libraries, GoogleTest and Google Benchmark are built by the bundled
-[vcpkg](https://github.com/microsoft/vcpkg) (the `vcpkg` submodule; the list is in
-`vcpkg.json`). On Linux and macOS vcpkg itself needs `curl`, `zip`, `unzip` and `tar`.
-
-The same commands work on Linux, macOS and Windows:
+Requires Git, CMake 3.15+ and a C++17 compiler. Dependencies are built by the bundled
+[vcpkg](https://github.com/microsoft/vcpkg) submodule (on Linux and macOS it needs `curl`, `zip`, `unzip`, `tar`).
 
 ```bash
 git clone --recurse-submodules https://github.com/lovyagin/compio
@@ -27,56 +30,43 @@ cmake --build build --config Release --parallel
 ctest --test-dir build --build-config Release
 ```
 
-The first configure builds the dependencies into `build/vcpkg_installed`, which
-takes a few minutes; later ones reuse them. In an IDE, open the project as a
-CMake project, no extra options are needed.
-
-To use another source of dependencies (system packages, Conan with the provided
-`conanfile.txt`), pass your own `-DCMAKE_TOOLCHAIN_FILE=...` or
-`-DCMAKE_PREFIX_PATH=...`: the bundled vcpkg is only the default.
+To use your own dependencies pass `-DCMAKE_TOOLCHAIN_FILE=...` or `-DCMAKE_PREFIX_PATH=...`.
 
 ## Usage
 
-Compio provides two interfaces:
-
-### C API
 ```c
 #include <compio.h>
 
-compio_archive* archive = compio_open_archive("data.compio", "w+", &config);
-compio_file* file = compio_open_file("myfile.bin", archive);
-compio_write(data, size, file);
+compio_config config;
+compio_build_default_config(&config);
+
+compio_archive *archive = compio_open_archive("data.compio", "w+", &config);
+compio_file *file = compio_open_file("notes.txt", archive);
+
+compio_write("hello, compio", 13, file);
+
+char buffer[13];
+compio_seek(file, 0, COMPIO_SEEK_SET);
+compio_read(buffer, sizeof buffer, file);
+
 compio_close_file(file);
 compio_close_archive(archive);
 ```
 
-### C++ API (Modern)
 ```cpp
 #include <compio.hpp>
 
 compio::Archive archive("data.compio", "w+");
-auto file = archive.open_file("myfile.bin");
-file << data;  // Stream-style I/O
-// Automatic cleanup via RAII
+auto file = archive.open_file("notes.txt");
+
+int value = 42;
+file << value;                  // write
+file.seek(0, COMPIO_SEEK_SET);
+file >> value;                  // read
 ```
 
-**C++ Features**: RAII, stream operators (`<<`/`>>`), exceptions, type safety, zero overhead.
-
-See [`docs/cpp_wrapper.md`](docs/cpp_wrapper.md) for full API reference and [`examples/`](examples/) for code examples.
-
-### Command-line tools
-
-Two standalone executables (built into `build/util/`) extract data from an archive:
-
-- **`compio_unpack`** — extract all files from a healthy archive.
-- **`compio_repair`** — salvage intact data from a corrupted archive.
-
-Both support `-h` / `--help`. See [`util/README.md`](util/README.md) for full documentation.
-
-## Notes
-
-- For additional support or to report issues, visit the Compio GitHub repository.
+See [`docs/`](docs/) and [`examples/`](examples/) for more.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See the LICENSE file for details.
+This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.

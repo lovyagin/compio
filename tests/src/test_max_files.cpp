@@ -24,9 +24,7 @@ TEST_F(MaxFilesTest, HeaderSizeDoesNotDependOnMaxFiles) {
 
     compio_archive *ar = compio_open_archive(fn, "w+", &cfg);
     ASSERT_NE(ar, nullptr);
-    // magic, checksum, sequence, root, file size, allocator state, compression,
-    // block size, degree, table address, size, count, checksum, encoding
-    EXPECT_EQ(ar->header->disk_size(), 4u + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 8 + 4 + 4);
+    EXPECT_EQ(ar->header->disk_size(), 4096u);
     EXPECT_GE(ar->header->ftable.files.capacity(), 128u);
     compio_close_archive(ar);
 }
