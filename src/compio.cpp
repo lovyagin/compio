@@ -85,22 +85,53 @@ static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold = nullptr);
 static bool log_operation_state(compio_archive *archive);
 
-// Adopt the state of the last committed operation found in the journal.
-static bool apply_wal_meta(smart_infile_object<compio::header> &header_obj, const std::vector<uint8_t> &meta) {
-    constexpr size_t fixed_size = 3 * sizeof(uint64_t);
-    if (meta.size() < fixed_size) return false;
-    uint64_t fields[3];
-    for (size_t i = 0; i < 3; ++i) {
-        fields[i] = 0;
-        for (unsigned shift = 0; shift < 64; shift += 8) {
-            fields[i] |= static_cast<uint64_t>(meta[i * 8 + shift / 8]) << shift;
-        }
-    }
-    compio::files_table table;
-    if (!table.parse(meta.data() + fixed_size, meta.size() - fixed_size, fields[2])) return false;
+static uint64_t read_le(const uint8_t *p, unsigned bytes) {
+    uint64_t value = 0;
+    for (unsigned i = 0; i < bytes; ++i) value |= static_cast<uint64_t>(p[i]) << (8 * i);
+    return value;
+}
 
-    header_obj->index_root = fields[0];
-    header_obj->file_size = std::max(header_obj->file_size, fields[1]);
+static void put_le(std::vector<uint8_t> &out, uint64_t value, unsigned bytes) {
+    for (unsigned i = 0; i < bytes; ++i) out.push_back(static_cast<uint8_t>(value >> (8 * i)));
+}
+
+// Adopt the state of the last committed operation found in the journal. The record
+// holds only the files table entries changed since the header was published, so it
+// is applied on top of the table that header references.
+static bool apply_wal_meta(smart_infile_object<compio::header> &header_obj, const std::vector<uint8_t> &meta) {
+    constexpr size_t fixed_size = 4 * sizeof(uint64_t) + sizeof(uint32_t);
+    if (meta.size() < fixed_size) return false;
+    const uint64_t index_root = read_le(meta.data(), 8);
+    const uint64_t file_size = read_le(meta.data() + 8, 8);
+    const uint64_t file_count = read_le(meta.data() + 16, 8);
+    const uint64_t next_file_id = read_le(meta.data() + 24, 8);
+    const uint32_t changes = static_cast<uint32_t>(read_le(meta.data() + 32, 4));
+
+    compio::files_table table = header_obj->ftable;
+    size_t pos = fixed_size;
+    for (uint32_t i = 0; i < changes; ++i) {
+        if (meta.size() - pos < 1 + sizeof(uint16_t)) return false;
+        const bool present = meta[pos++] != 0;
+        const size_t name_len = static_cast<size_t>(read_le(meta.data() + pos, 2));
+        pos += 2;
+        const size_t body = present ? 2 * sizeof(uint64_t) : 0;
+        if (meta.size() - pos < body + name_len) return false;
+        const std::string name(reinterpret_cast<const char *>(meta.data() + pos + body), name_len);
+        if (present) {
+            compio::files_table::file *entry = table.add(name.c_str());
+            if (!entry) return false;
+            entry->size = read_le(meta.data() + pos, 8);
+            entry->file_id = read_le(meta.data() + pos + 8, 8);
+        } else {
+            table.remove(name.c_str());
+        }
+        pos += body + name_len;
+    }
+    if (pos != meta.size() || table.files.size() != file_count) return false;
+    table.next_file_id = std::max(table.next_file_id, next_file_id);
+
+    header_obj->index_root = index_root;
+    header_obj->file_size = std::max(header_obj->file_size, file_size);
     header_obj->ftable = std::move(table);
     return true;
 }
@@ -579,6 +610,7 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
                 errno = ENFILE;
                 return NULL;
             }
+            archive->table_dirty.insert(name);
         } else {
             errno = EROFS;
             return NULL;
@@ -705,6 +737,7 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     }
     
     // Remove file from file table
+    archive->table_dirty.insert(name);
     return archive->header->ftable.remove(name);
 }
 
@@ -1084,6 +1117,7 @@ static bool reload_published_state(compio_archive *archive) {
     archive->header.unmodify();
     archive->current_header_slot = slot;
     archive->stored_table_crc = files_table_crc(*readonly(archive->header, header));
+    archive->table_dirty.clear();
     // Space the abandoned changes appended past the container end is cut off.
     archive->truncate_after_publish = true;
 
@@ -1326,6 +1360,7 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         archive->published_allocator_state_offset = new_h_data->allocator_state_offset;
         archive->published_allocator_state_size = new_h_data->allocator_state_size;
         archive->published_file_size = new_h_data->file_size;
+        archive->table_dirty.clear();
         if (archive->index) archive->index->end_epoch();
         
         // Mark old header object as unmodified so it doesn't write on destruction
@@ -1622,6 +1657,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
         errno = ENOENT;
         return 0;
     }
+    archive->table_dirty.insert(file->name);
 
     // Start transaction
     bool can_write = (archive->mode_b & mode_bit::w) || 
@@ -2223,6 +2259,7 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
         errno = ENOENT;
         return 0;
     }
+    archive->table_dirty.insert(file->name);
 
     // Start transaction
     bool can_write = (archive->mode_b & mode_bit::w) || 
@@ -2478,6 +2515,7 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
         errno = ENOENT;
         return 0;
     }
+    archive->table_dirty.insert(file->name);
 
     const uint64_t erase_start = file->cursor;
     const uint64_t erase_end = erase_start + size;
@@ -2692,14 +2730,23 @@ static bool log_operation_state(compio_archive *archive) {
     if (archive->index && !archive->index->flush_cache()) return false;
 
     const auto &current = *readonly(archive->header, header);
-    const std::vector<uint8_t> table = current.ftable.serialize();
     std::vector<uint8_t> meta;
-    meta.reserve(24 + table.size());
     for (const uint64_t value : {current.index_root, current.file_size,
-                                 static_cast<uint64_t>(current.ftable.files.size())}) {
-        for (unsigned shift = 0; shift < 64; shift += 8) meta.push_back(static_cast<uint8_t>(value >> shift));
+                                 static_cast<uint64_t>(current.ftable.files.size()),
+                                 current.ftable.next_file_id}) {
+        put_le(meta, value, 8);
     }
-    meta.insert(meta.end(), table.begin(), table.end());
+    put_le(meta, archive->table_dirty.size(), 4);
+    for (const std::string &name : archive->table_dirty) {
+        const compio::files_table::file *entry = current.ftable.find(name.c_str());
+        meta.push_back(entry ? 1 : 0);
+        put_le(meta, name.size(), 2);
+        if (entry) {
+            put_le(meta, entry->size, 8);
+            put_le(meta, entry->file_id, 8);
+        }
+        meta.insert(meta.end(), name.begin(), name.end());
+    }
     return wal->log_write(compio::WalRecordType::META, 0, meta.data(), meta.size());
 }
 

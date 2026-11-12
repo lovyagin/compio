@@ -62,6 +62,9 @@ struct compio_archive {
     // CRC32C of the serialized files table the header references, so that a
     // flush packs the table only when it changed.
     uint32_t stored_table_crc = 0;
+    // Files whose table entry changed since the header was published: the only
+    // entries a journal state record has to carry.
+    std::unordered_set<std::string> table_dirty;
     // Between compio_begin_transaction and its commit or abort: no header is published.
     bool in_transaction = false;
 
