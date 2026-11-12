@@ -239,6 +239,42 @@ TEST_F(FeatureFlagsTest, ChecksumCoversTheReservedBytes) {
     EXPECT_EQ(compio_open_archive(fn, "r", &cfg), nullptr);
 }
 
+// A power failure while a header slot is rewritten can leave the whole physical sector
+// that holds it garbled (the disk rewrites a sector as a unit). The other slot must be
+// out of that sector, or both headers die together.
+TEST_F(FeatureFlagsTest, GarbledSectorOfTheNewestSlotLeavesTheOtherSlotUsable) {
+    create(fn);
+    {
+        compio_config cfg = config();
+        compio_archive *ar = compio_open_archive(fn, "r+", &cfg);
+        ASSERT_NE(ar, nullptr);
+        compio_file *f = compio_open_file("more", ar);
+        ASSERT_NE(f, nullptr);
+        ASSERT_EQ(compio_write("x", 1, f), 1u);
+        compio_close_file(f);
+        ASSERT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+    }
+
+    FILE *file = fopen(fn, "rb+");
+    ASSERT_NE(file, nullptr);
+    header slots[2];
+    ASSERT_TRUE(slots[0].load_and_validate(file, 0));
+    ASSERT_TRUE(slots[1].load_and_validate(file, header::disk_size_bytes));
+    const uint64_t newest = slots[0].sequence_id > slots[1].sequence_id ? 0 : header::disk_size_bytes;
+
+    constexpr uint64_t sector = 4096;
+    const std::vector<char> garbage(sector, '\x5a');
+    ASSERT_EQ(fseek(file, static_cast<long>(newest / sector * sector), SEEK_SET), 0);
+    ASSERT_EQ(fwrite(garbage.data(), 1, garbage.size(), file), garbage.size());
+    fclose(file);
+
+    compio_config cfg = config();
+    compio_archive *ar = compio_open_archive(fn, "r", &cfg);
+    ASSERT_NE(ar, nullptr) << "both header slots were lost with one sector";
+    EXPECT_EQ(read_data(ar), "feature flags");
+    compio_close_archive(ar);
+}
+
 TEST_F(FeatureFlagsTest, OldSignatureIsRejected) {
     create(fn);
     FILE *file = fopen(fn, "rb+");
