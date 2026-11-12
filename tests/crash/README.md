@@ -141,6 +141,8 @@ build_check/tests/mixed_kill 1000 0 1 1500
 `tiny_nodes=1` uses 512-byte blocks and B-tree degree 2, which splits the index often.
 A failing trial prints its number and the reason; the exit code is 1. The `mixed_kill_short`
 CTest runs 15 trials. SIGKILL keeps the OS page cache, so this does not simulate power loss.
+Set `TMPDIR` to a directory on a real disk for long runs: on tmpfs `fsync` returns at once, the
+writer spends almost no time between the steps of a flush, and ordering bugs there stay hidden.
 
 ## Artifacts and replay
 

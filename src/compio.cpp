@@ -2869,6 +2869,12 @@ static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold
     // before the commit risks a crash that leaves a durable header referencing
     // writes the WAL later rolls back (header valid but pointing past EOF).
     if (wal_active && wal_ptr->get_batch_depth() == 0) {
+        // The state record goes into the same transaction as the images it describes:
+        // replaying images alone would pair them with a stale root and file size.
+        if (durable && !log_operation_state(archive)) {
+            WARNING_PRINT("warning: failed to journal the flushed state\n");
+            durable = false;
+        }
         if (!wal_ptr->commit_transaction()) {
             WARNING_PRINT("warning: WAL commit failed in compio_flush\n");
             durable = false;
