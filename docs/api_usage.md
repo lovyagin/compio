@@ -71,6 +71,23 @@ compio_archive* archive = compio_open_archive("archive.cmp", "r+", &config);
 `block_size` and `b_tree_degree` are recorded in the header too. Set them to 0 to take the
 values from the archive; any other value must match, otherwise opening fails with `EINVAL`.
 
+### Archives Written by Another Version
+
+An archive records the optional features it uses in its header. When a newer version wrote one
+that this version does not understand, opening fails instead of guessing:
+
+```c
+compio_archive* archive = compio_open_archive("archive.cmp", "r+", &config);
+if (!archive && errno == ENOTSUP) {
+    // uses a feature this version cannot read at all
+} else if (!archive && errno == EROFS) {
+    // uses a feature this version can read but must not write: reopen with "r"
+}
+```
+
+`compio_get_features` returns the flag words of an open archive. See
+[Compatibility](architecture.md#compatibility) for what the flags promise.
+
 ### Custom Compressors
 
 A custom compressor fills `compress`, `decompress` and `get_bufsize` and takes its own

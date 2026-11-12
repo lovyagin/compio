@@ -59,7 +59,25 @@
 extern "C" {
 #endif
 
-#define COMPIO_MAGIC_NUMBER 27110664 /**< Format v7: checksummed index nodes, codec per block */
+#define COMPIO_MAGIC_NUMBER 0x4F504D43 /**< Archive signature ("CMPO" on disk); the same for every format version */
+
+/**
+ * @name Feature flags
+ * The archive header carries three 64-bit flag words. A version that adds an optional
+ * on-disk feature defines a bit and sets it in archives that use the feature; a version
+ * that does not know the bit reacts as follows:
+ * - COMPAT: ignores it, the archive stays fully usable.
+ * - RO_COMPAT: opens the archive read-only; opening for writing fails with errno = EROFS.
+ * - INCOMPAT: refuses to open it; compio_open_archive fails with errno = ENOTSUP.
+ *
+ * The *_SUPPORTED masks are the bits this version understands. Every feature of the
+ * current format is part of the base format and has no bit, so the masks are empty.
+ * @{
+ */
+#define COMPIO_COMPAT_SUPPORTED 0ULL
+#define COMPIO_RO_COMPAT_SUPPORTED 0ULL
+#define COMPIO_INCOMPAT_SUPPORTED 0ULL
+/** @} */
 
 /**
  * @brief Checksum algorithm types
@@ -637,6 +655,17 @@ int compio_close_file(compio_file *file);
  * @see compio_open_archive()
  */
 int compio_close_archive(compio_archive *archive);
+
+/**
+ * @brief Feature flags recorded in the archive header
+ *
+ * @param archive Opened archive
+ * @param compat Receives the COMPAT flag word (may be NULL)
+ * @param ro_compat Receives the RO_COMPAT flag word (may be NULL)
+ * @param incompat Receives the INCOMPAT flag word (may be NULL)
+ * @return COMPIO_SUCCESS, or COMPIO_ERROR with errno = EINVAL for a NULL archive
+ */
+int compio_get_features(compio_archive *archive, uint64_t *compat, uint64_t *ro_compat, uint64_t *incompat);
 
 /**
  * @brief Statistics about allocator fragmentation

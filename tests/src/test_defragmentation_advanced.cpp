@@ -913,8 +913,10 @@ TEST_F(ThresholdCompactionTest, SmallArchiveStaysTightAcrossSessions) {
         compio_close_file(f);
         compio_close_archive(ar);
 
-        // Headers, one index node, the table, the data and two state slots.
-        EXPECT_LT(physical_size(), table_size + expected.size() + 4096) << "session " << session;
+        // The two header sectors, then the live data (one index node, the table, the data and
+        // two state slots) with at most as much again lost to holes.
+        const uint64_t live = table_size + expected.size() + 4096;
+        EXPECT_LT(physical_size(), compio::header::disk_size_bytes * 2 + 2 * live) << "session " << session;
     }
 
     compio_archive *ar = compio_open_archive(fn, "r", &cfg);

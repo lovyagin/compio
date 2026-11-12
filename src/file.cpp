@@ -181,29 +181,42 @@ header::header(uint32_t expected_files)
       files_table_addr(0),
       files_table_size(0),
       files_table_checksum(crc32c(nullptr, 0)),
-      files_table_encoding(0) {
+      files_table_encoding(0),
+      compat_flags(0),
+      ro_compat_flags(0),
+      incompat_flags(0) {
+    memset(reserved, 0, sizeof(reserved));
     memset(checksum, 0, sizeof(checksum));
     file_size = disk_size();
 }
 
-void header::compute_checksum(uint8_t *out_hash, uint64_t n_files) const {
+namespace {
+
+// Byte offsets inside a header slot. They are part of the format and never move.
+constexpr size_t slot_checksum_at = 4;
+constexpr size_t slot_body_at = slot_checksum_at + 32;
+constexpr size_t slot_reserved_at = 144;
+static_assert(slot_reserved_at + sizeof(header::reserved) == header::slot_bytes,
+              "header slot layout does not add up");
+
+void set_le(uint8_t *p, uint64_t value, unsigned bytes) {
+    for (unsigned i = 0; i < bytes; ++i) p[i] = static_cast<uint8_t>(value >> (8 * i));
+}
+
+// The signature and everything after the checksum field.
+void hash_slot(const uint8_t *slot, uint8_t *out_hash) {
     SHA256 ctx;
-    ctx.update(reinterpret_cast<const uint8_t*>(&magic_number), sizeof(magic_number));
-    ctx.update(reinterpret_cast<const uint8_t*>(&sequence_id), sizeof(sequence_id));
-    ctx.update(reinterpret_cast<const uint8_t*>(&index_root), sizeof(index_root));
-    ctx.update(reinterpret_cast<const uint8_t*>(&file_size), sizeof(file_size));
-    ctx.update(reinterpret_cast<const uint8_t*>(&allocator_state_offset), sizeof(allocator_state_offset));
-    ctx.update(reinterpret_cast<const uint8_t*>(&allocator_state_size), sizeof(allocator_state_size));
-    ctx.update(reinterpret_cast<const uint8_t*>(&compression_type), sizeof(compression_type));
-    ctx.update(reinterpret_cast<const uint8_t*>(&block_size), sizeof(block_size));
-    ctx.update(reinterpret_cast<const uint8_t*>(&b_tree_degree), sizeof(b_tree_degree));
-    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_addr), sizeof(files_table_addr));
-    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_size), sizeof(files_table_size));
-    ctx.update(reinterpret_cast<const uint8_t*>(&n_files), sizeof(n_files));
-    // The table itself is covered by its CRC, which the header hash covers in turn.
-    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_checksum), sizeof(files_table_checksum));
-    ctx.update(reinterpret_cast<const uint8_t*>(&files_table_encoding), sizeof(files_table_encoding));
+    ctx.update(slot, slot_checksum_at);
+    ctx.update(slot + slot_body_at, header::slot_bytes - slot_body_at);
     ctx.finalize(out_hash);
+}
+
+}  // namespace
+
+int header::unsupported_features(bool writable) const {
+    if (incompat_flags & ~static_cast<uint64_t>(COMPIO_INCOMPAT_SUPPORTED)) return ENOTSUP;
+    if (writable && (ro_compat_flags & ~static_cast<uint64_t>(COMPIO_RO_COMPAT_SUPPORTED))) return EROFS;
+    return 0;
 }
 
 bool header::load_and_validate(FILE *file, uint64_t addr, bool quiet) {
@@ -213,37 +226,43 @@ bool header::load_and_validate(FILE *file, uint64_t addr, bool quiet) {
         return false;
     }
 
-    if (lendian_fread_member(magic_number, file) != 1) return false;
+    uint8_t slot[slot_bytes];
+    if (fread(slot, 1, sizeof(slot), file) != sizeof(slot)) return false;
+
+    magic_number = static_cast<int32_t>(get_le(slot, 4));
     if (magic_number != COMPIO_MAGIC_NUMBER) {
-        if (!quiet) WARNING_PRINT("warning: unsupported archive format (magic %d, expected %d for format v7)\n",
+        if (!quiet) WARNING_PRINT("warning: not a compio archive or an unsupported old format (signature %d, expected %d)\n",
                       magic_number, COMPIO_MAGIC_NUMBER);
         return false;
     }
 
-    uint64_t n_files = 0;
-    const bool complete =
-        lendian_fread(checksum, 1, sizeof(checksum), file) == sizeof(checksum) &&
-        lendian_fread_member(sequence_id, file) == 1 &&
-        lendian_fread_member(index_root, file) == 1 &&
-        lendian_fread_member(file_size, file) == 1 &&
-        lendian_fread_member(allocator_state_offset, file) == 1 &&
-        lendian_fread_member(allocator_state_size, file) == 1 &&
-        lendian_fread_member(compression_type, file) == 1 &&
-        lendian_fread_member(block_size, file) == 1 &&
-        lendian_fread_member(b_tree_degree, file) == 1 &&
-        lendian_fread_member(files_table_addr, file) == 1 &&
-        lendian_fread_member(files_table_size, file) == 1 &&
-        lendian_fread_member(n_files, file) == 1 &&
-        lendian_fread_member(files_table_checksum, file) == 1 &&
-        lendian_fread_member(files_table_encoding, file) == 1;
-    if (!complete) return false;
-
     uint8_t calc_checksum[32];
-    compute_checksum(calc_checksum, n_files);
-    if (memcmp(checksum, calc_checksum, 32) != 0) {
+    hash_slot(slot, calc_checksum);
+    if (memcmp(slot + slot_checksum_at, calc_checksum, 32) != 0) {
         if (!quiet) WARNING_PRINT("warning: header checksum mismatch\n");
         return false;
     }
+    memcpy(checksum, calc_checksum, sizeof(checksum));
+
+    const uint8_t *p = slot + slot_body_at;
+    sequence_id = get_le(p, 8);
+    index_root = get_le(p + 8, 8);
+    file_size = get_le(p + 16, 8);
+    allocator_state_offset = get_le(p + 24, 8);
+    allocator_state_size = get_le(p + 32, 8);
+    compression_type = static_cast<uint32_t>(get_le(p + 40, 4));
+    block_size = static_cast<uint32_t>(get_le(p + 44, 4));
+    b_tree_degree = static_cast<uint32_t>(get_le(p + 48, 4));
+    files_table_addr = get_le(p + 52, 8);
+    files_table_size = get_le(p + 60, 8);
+    const uint64_t n_files = get_le(p + 68, 8);
+    files_table_checksum = static_cast<uint32_t>(get_le(p + 76, 4));
+    files_table_encoding = static_cast<uint32_t>(get_le(p + 80, 4));
+    compat_flags = get_le(p + 84, 8);
+    ro_compat_flags = get_le(p + 92, 8);
+    incompat_flags = get_le(p + 100, 8);
+    memcpy(reserved, slot + slot_reserved_at, sizeof(reserved));
+
     if (n_files > COMPIO_MAX_FILES_LIMIT) {
         if (!quiet) WARNING_PRINT("warning: header declares %" PRIu64 " files\n", n_files);
         return false;
@@ -275,23 +294,30 @@ bool header::write_to(FILE *file, uint64_t addr, compio::WalManager*) const {
 bool header::write_checked(FILE *file, uint64_t addr) const {
     if (ferror(file) || fseek64(file, addr, SEEK_SET) != 0) return false;
 
-    const uint64_t n_files = ftable.files.size();
-    const_cast<header*>(this)->compute_checksum(const_cast<uint8_t*>(checksum), n_files);
-    return lendian_fwrite_member(magic_number, file) == 1 &&
-           lendian_fwrite(checksum, 1, sizeof(checksum), file) == sizeof(checksum) &&
-           lendian_fwrite_member(sequence_id, file) == 1 &&
-           lendian_fwrite_member(index_root, file) == 1 &&
-           lendian_fwrite_member(file_size, file) == 1 &&
-           lendian_fwrite_member(allocator_state_offset, file) == 1 &&
-           lendian_fwrite_member(allocator_state_size, file) == 1 &&
-           lendian_fwrite_member(compression_type, file) == 1 &&
-           lendian_fwrite_member(block_size, file) == 1 &&
-           lendian_fwrite_member(b_tree_degree, file) == 1 &&
-           lendian_fwrite_member(files_table_addr, file) == 1 &&
-           lendian_fwrite_member(files_table_size, file) == 1 &&
-           lendian_fwrite_member(n_files, file) == 1 &&
-           lendian_fwrite_member(files_table_checksum, file) == 1 &&
-           lendian_fwrite_member(files_table_encoding, file) == 1 && !ferror(file);
+    uint8_t slot[slot_bytes] = {};
+    set_le(slot, static_cast<uint32_t>(magic_number), 4);
+    uint8_t *p = slot + slot_body_at;
+    set_le(p, sequence_id, 8);
+    set_le(p + 8, index_root, 8);
+    set_le(p + 16, file_size, 8);
+    set_le(p + 24, allocator_state_offset, 8);
+    set_le(p + 32, allocator_state_size, 8);
+    set_le(p + 40, compression_type, 4);
+    set_le(p + 44, block_size, 4);
+    set_le(p + 48, b_tree_degree, 4);
+    set_le(p + 52, files_table_addr, 8);
+    set_le(p + 60, files_table_size, 8);
+    set_le(p + 68, ftable.files.size(), 8);
+    set_le(p + 76, files_table_checksum, 4);
+    set_le(p + 80, files_table_encoding, 4);
+    set_le(p + 84, compat_flags, 8);
+    set_le(p + 92, ro_compat_flags, 8);
+    set_le(p + 100, incompat_flags, 8);
+    memcpy(slot + slot_reserved_at, reserved, sizeof(reserved));
+    hash_slot(slot, slot + slot_checksum_at);
+    memcpy(const_cast<header *>(this)->checksum, slot + slot_checksum_at, sizeof(checksum));
+
+    return fwrite(slot, 1, sizeof(slot), file) == sizeof(slot) && !ferror(file);
 }
 
 bool index_node::read_from(FILE *file, uint64_t addr) {

@@ -95,10 +95,15 @@ private:
 };
 
 /**
- * @brief Archive file header (format v7, fixed size)
+ * @brief Archive file header (fixed-size slot, two slots for double buffering)
+ *
+ * The slot layout never changes: the signature, the checksum and the three feature
+ * flag words sit at fixed offsets, and the bytes after them are reserved. The checksum
+ * covers the whole slot, so a later version may define fields in the reserved area
+ * under a feature flag while an older one still verifies and rewrites them intact.
  */
 struct header : public infile_object {
-    int32_t magic_number; /**< Constant bytes, file signature and format version */
+    int32_t magic_number; /**< File signature, the same for every format version */
     uint64_t index_root;  /**< Address of B-Tree root in file */
     uint64_t file_size;
     files_table ftable; /**< Files table, stored at files_table_addr */
@@ -112,11 +117,20 @@ struct header : public infile_object {
     uint64_t files_table_size;     /**< Size of the files table in bytes */
     uint32_t files_table_checksum; /**< CRC32C of the files table */
     uint32_t files_table_encoding; /**< 0: the table is stored as is; otherwise the built-in compression type that packed it */
-    uint8_t checksum[32];      /**< SHA-256 checksum of the header (excluding this field) */
+    uint64_t compat_flags;    /**< Features an older reader may ignore */
+    uint64_t ro_compat_flags; /**< Features an older reader must not write without understanding */
+    uint64_t incompat_flags;  /**< Features an older reader must not open the archive with */
+    uint8_t reserved[112];    /**< Zero until a feature defines it; kept as read */
+    uint8_t checksum[32];     /**< SHA-256 of the slot (excluding this field) */
 
-    /** @brief On-disk size of a header slot */
-    static constexpr uint64_t disk_size_bytes =
-        4 + 32 + 8 + 8 + 8 + 8 + 8 + 4 + 4 + 4 + 8 + 8 + 8 + 4 + 4;
+    /** @brief Bytes of a slot that carry data; the rest of the slot's footprint stays unwritten */
+    static constexpr uint64_t slot_bytes = 256;
+
+    /**
+     * @brief Footprint of a header slot. Each slot owns a whole 4 KiB sector, so rewriting one
+     *        can never damage the other when the power fails in the middle of a write.
+     */
+    static constexpr uint64_t disk_size_bytes = 4096;
 
     header();
     explicit header(uint32_t expected_files);
@@ -133,8 +147,12 @@ struct header : public infile_object {
     /** @brief Size reserved for headers (double buffering implies 2x disk_size) */
     uint64_t reserved_size() const { return disk_size() * 2; }
 
-    /** @brief Calculate SHA-256 checksum of the header fields for a table of n_files */
-    void compute_checksum(uint8_t *out_hash, uint64_t n_files) const;
+    /**
+     * @brief Why this version cannot use an archive with these flags
+     * @return 0 when it can, ENOTSUP for an unknown incompatible feature, EROFS for an
+     *         unknown read-only-compatible feature when `writable`
+     */
+    int unsupported_features(bool writable) const;
 
     /** 
      * @brief Read header and validate checksum without asserting

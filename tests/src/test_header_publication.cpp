@@ -29,7 +29,7 @@ struct io_fault {
     off_t target = 0;
     failure kind = failure::seek;
     int writes = 0;
-    int short_write_call = 2;
+    int short_write_call = 1;
     bool publishing = false;
     bool triggered = false;
     bool next_seek = false;

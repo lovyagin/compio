@@ -136,50 +136,56 @@ static bool apply_wal_meta(smart_infile_object<compio::header> &header_obj, cons
     return true;
 }
 
+// The valid header slot with the higher sequence id. Returns its index, or -1 when neither
+// slot is valid (the reasons are printed unless `quiet`).
+static int select_header_slot(FILE *file, header &out, bool quiet) {
+    header hA, hB;
+    const bool validA = hA.load_and_validate(file, 0, true);
+    const bool validB = hB.load_and_validate(file, hA.disk_size(), true);
+
+    if (validA && (!validB || hA.sequence_id >= hB.sequence_id)) {
+        out = std::move(hA);
+        return 0;
+    }
+    if (validB) {
+        out = std::move(hB);
+        return 1;
+    }
+    if (!quiet) {
+        hA.load_and_validate(file, 0);
+        hB.load_and_validate(file, hA.disk_size());
+    }
+    return -1;
+}
+
 static smart_infile_object<compio::header> load_header_double_buffered(FILE *file, std::mutex *io_mutex, int &out_slot) {
     if (is_file_empty(file)) {
          out_slot = 0;
          return smart_infile_object<header>(file, 0, new compio::header(), io_mutex);
     }
 
-    header hA;
-    bool validA = hA.load_and_validate(file, 0, true);
-    
-    // Calculate where B should be based on A (if A is valid)
-    uint64_t offsetB = hA.disk_size(); 
-    header hB;
-    bool validB = hB.load_and_validate(file, offsetB, true);
-    
-    int chosen_slot = 0;
-    header* chosen_h = nullptr;
-    
-    if (validA && validB) {
-        if (hA.sequence_id >= hB.sequence_id) {
-            chosen_slot = 0;
-            chosen_h = new compio::header(std::move(hA));
-        } else {
-            chosen_slot = 1;
-            chosen_h = new compio::header(std::move(hB));
-        }
-    } else if (validA) {
-        chosen_slot = 0;
-        chosen_h = new compio::header(std::move(hA));
-    } else if (validB) {
-        chosen_slot = 1;
-        chosen_h = new compio::header(std::move(hB));
-    } else {
-        // Load again with the reasons printed.
-        hA.load_and_validate(file, 0);
-        hB.load_and_validate(file, offsetB);
+    auto *chosen = new compio::header();
+    out_slot = select_header_slot(file, *chosen, false);
+    if (out_slot < 0) {
+        delete chosen;
         WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Unable to open archive.\n");
         throw std::runtime_error("Both archive headers are corrupted");
     }
-    
-    out_slot = chosen_slot;
-    uint64_t chosen_addr = (chosen_slot == 0) ? 0 : offsetB;
-    
+
     // Return smart object marked as 'loaded_from_disk' (clean)
-    return smart_infile_object<compio::header>(file, chosen_addr, chosen_h, io_mutex, true);
+    return smart_infile_object<compio::header>(file, out_slot == 0 ? 0 : chosen->disk_size(), chosen, io_mutex, true);
+}
+
+// Refuse an archive that uses features this version does not know. Sets errno.
+static bool features_usable(const header &h, bool writable) {
+    const int err = h.unsupported_features(writable);
+    if (err == 0) return true;
+    WARNING_PRINT("warning: archive uses features this version does not support "
+                  "(compat=%" PRIx64 " ro_compat=%" PRIx64 " incompat=%" PRIx64 ")%s\n",
+                  h.compat_flags, h.ro_compat_flags, h.incompat_flags,
+                  err == EROFS ? "; it can be opened read-only" : "");
+    errno = err;
+    return false;
 }
 
 compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config)
@@ -361,6 +367,14 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
                      errno = EROFS; // Read-only file system (or similar)
                      return NULL;
                 } else {
+                    // Replaying the journal writes into the archive: do not do that to one
+                    // whose format this version does not fully know.
+                    header current;
+                    if (!is_file_empty(file) && select_header_slot(file, current, true) >= 0 &&
+                        !features_usable(current, true)) {
+                        fclose(file);
+                        return NULL;
+                    }
                     if (!wal->recover(file, &wal_meta)) {
                         WARNING_PRINT("warning: WAL recovery failed\n");
                         // Continue anyway? Or fail?
@@ -433,6 +447,10 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
             WARNING_PRINT("warning: cannot create new archive with zero parameters (auto-detect requires existing file)\n");
             goto no_allocator;
         }
+    }
+
+    if (!is_new_file && !features_usable(*readonly(archive->header, header), !archive->is_readonly())) {
+        goto no_allocator;
     }
 
     if (!is_new_file) {
@@ -584,6 +602,19 @@ no_allocator:
 no_archive:
     fclose(file);
     return NULL;
+}
+
+int compio_get_features(compio_archive *archive, uint64_t *compat, uint64_t *ro_compat, uint64_t *incompat) {
+    if (!archive) {
+        errno = EINVAL;
+        return COMPIO_ERROR;
+    }
+    std::shared_lock<std::shared_mutex> lock(archive->mutex);
+    const auto &h = *readonly(archive->header, header);
+    if (compat) *compat = h.compat_flags;
+    if (ro_compat) *ro_compat = h.ro_compat_flags;
+    if (incompat) *incompat = h.incompat_flags;
+    return COMPIO_SUCCESS;
 }
 
 compio_file *compio_open_file(const char *name, compio_archive *archive) {
