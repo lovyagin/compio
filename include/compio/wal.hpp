@@ -18,7 +18,7 @@ namespace compio {
 enum class WalRecordType : uint8_t {
     BLOCK = 1,              ///< Data block write
     INDEX_NODE = 2,         ///< B-tree index node modification
-    META = 5,               ///< Archive state an operation leaves behind (index root, container end, files table)
+    META = 5,               ///< Archive state an operation leaves behind (index root, container end, changed files table entries)
     COMMIT = 255            ///< Transaction commit marker
 };
 

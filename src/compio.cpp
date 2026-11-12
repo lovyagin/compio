@@ -646,6 +646,41 @@ compio_file *compio_open_file(const char *name, compio_archive *archive) {
     return file;
 }
 
+// RAII guard for WAL transactions when not in batch mode
+struct WalTransactionGuard {
+    compio_archive *archive;
+    compio::WalManager* wal;
+    bool active;
+
+    WalTransactionGuard(compio_archive *a, compio::WalManager* w)
+        : archive(a), wal(w), active(false) {
+        if (wal && wal->get_batch_depth() == 0) {
+            wal->begin_transaction();
+            active = true;
+        }
+    }
+
+    bool commit() {
+        if (!active || !wal) return true;
+        // A replay must reproduce the operation, so its state is logged first.
+        const bool logged = log_operation_state(archive);
+        bool result = logged && wal->commit_transaction();
+        if (!logged) wal->rollback_transaction();
+        active = false;
+        return result;
+    }
+
+    void dismiss() noexcept {
+        active = false;
+    }
+
+    ~WalTransactionGuard() {
+        if (active && wal) {
+            wal->rollback_transaction();
+        }
+    }
+};
+
 int compio_remove_file(compio_archive *archive, const char *name) {
     if (!archive) {
         return -1;
@@ -671,6 +706,9 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     // Get all blocks belonging to this file
     const uint64_t file_size = file_table_item->size;
     const uint64_t hash = file_table_item->file_id;
+
+    const bool can_write = archive->mode_b & (mode_bit::w | mode_bit::a | mode_bit::plus);
+    WalTransactionGuard wal_tx_guard(archive, (archive->wal && can_write) ? archive->wal.get() : nullptr);
 
     if (file_size > 0) {
         tree_key key_min = {hash, 0};
@@ -738,7 +776,12 @@ int compio_remove_file(compio_archive *archive, const char *name) {
     
     // Remove file from file table
     archive->table_dirty.insert(name);
-    return archive->header->ftable.remove(name);
+    const int removed = archive->header->ftable.remove(name);
+    if (!wal_tx_guard.commit()) {
+        errno = EIO;
+        return -1;
+    }
+    return removed;
 }
 
 int compio_get_fragmentation_stats(compio_archive *archive, compio_fragmentation_stats *stats) {
@@ -1583,41 +1626,6 @@ struct TemporaryIndexGuard {
 };
 
 } // namespace
-
-// RAII guard for WAL transactions when not in batch mode
-struct WalTransactionGuard {
-    compio_archive *archive;
-    compio::WalManager* wal;
-    bool active;
-
-    WalTransactionGuard(compio_archive *a, compio::WalManager* w)
-        : archive(a), wal(w), active(false) {
-        if (wal && wal->get_batch_depth() == 0) {
-            wal->begin_transaction();
-            active = true;
-        }
-    }
-
-    bool commit() {
-        if (!active || !wal) return true;
-        // A replay must reproduce the operation, so its state is logged first.
-        const bool logged = log_operation_state(archive);
-        bool result = logged && wal->commit_transaction();
-        if (!logged) wal->rollback_transaction();
-        active = false;
-        return result;
-    }
-
-    void dismiss() noexcept {
-        active = false;
-    }
-
-    ~WalTransactionGuard() {
-        if (active && wal) {
-            wal->rollback_transaction();
-        }
-    }
-};
 
 static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_write_impl(cursor=%" PRIu64 ", size=%" PRIu64 ", file_size=%" PRIu64 ")\n", file->cursor, size, file->size);
