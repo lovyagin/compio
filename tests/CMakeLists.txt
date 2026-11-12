@@ -38,6 +38,7 @@ add_executable(compio_gtest
     src/test_max_files_scalability.cpp
     src/test_crash_protection.cpp
     src/test_crash_sigkill.cpp
+    src/test_wal_table_delta.cpp
     src/test_flush_files_table.cpp
     src/test_flush_durability.cpp
     src/test_batch_durability.cpp
