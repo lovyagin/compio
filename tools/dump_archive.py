@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print the on-disk layout of a compio v6 archive.
+"""Print the on-disk layout of a compio v7 archive.
 
 The parser is written from the format description alone and shares no code with
 the library, so decoding a real archive without contradictions is a check of
@@ -7,12 +7,16 @@ both. Usage: dump_archive.py ARCHIVE [ARCHIVE ...]
 """
 import struct
 import sys
+import zlib
 
-MAGIC_V6 = 27110663
+MAGIC_V7 = 27110664
 HEADER_SIZE = 120
 RECORD_HEADER_SIZE = 2 + 8 + 8
-NODE_SIGNATURE = 67
-BLOCK_SIGNATURES_WITH_BACKREF = (173, 174)
+NODE_SIGNATURE = 68
+NODE_CRC_SIZE = 4
+BLOCK_SIGNATURES = (175, 176)
+BLOCK_META_SIZE = 1 + 4 + 8 + 8 + 16 + 4 + 4
+COMPRESSION_ZLIB = 2
 STATE_TRAILER_SIZE = 8 + 8 + 4
 
 HEADER_FIELDS = ('magic', 'sha256', 'sequence_id', 'index_root', 'file_size', 'alloc_off',
@@ -34,14 +38,26 @@ def crc32c(data):
     return crc ^ 0xFFFFFFFF
 
 
-def read_files_table(buf, addr, size, count):
-    files, pos = [], addr
-    while pos < addr + size:
-        name_len, file_size, file_id = struct.unpack_from('<HQQ', buf, pos)
+def decode_files_table(data, encoding):
+    """Plain table bytes, or None when the encoding needs a codec the standard library lacks."""
+    if encoding == 0:
+        return data
+    (plain_size,) = struct.unpack_from('<Q', data, 0)
+    if encoding != COMPRESSION_ZLIB:
+        return None
+    plain = zlib.decompress(data[8:])
+    assert len(plain) == plain_size, 'files table decodes to a different size'
+    return plain
+
+
+def read_files_table(plain, count):
+    files, pos = [], 0
+    while pos < len(plain):
+        name_len, file_size, file_id = struct.unpack_from('<HQQ', plain, pos)
         pos += RECORD_HEADER_SIZE
-        files.append((buf[pos:pos + name_len].decode(errors='replace'), file_size, file_id))
+        files.append((plain[pos:pos + name_len].decode(errors='replace'), file_size, file_id))
         pos += name_len
-    assert pos == addr + size and len(files) == count, 'files table does not match the header'
+    assert pos == len(plain) and len(files) == count, 'files table does not match the header'
     return files
 
 
@@ -59,6 +75,9 @@ def read_node(buf, off, out, depth=0, shift=0):
         p += 8 * (n + 1)
         shifts = list(struct.unpack_from(f'<{n + 1}q', buf, p))
         p += 8 * (n + 1)
+    (stored_crc,) = struct.unpack_from('<I', buf, p)
+    assert stored_crc == crc32c(buf[off:p]), f'index node checksum mismatch at {off}'
+    p += NODE_CRC_SIZE
     out['nodes'].append((off, depth, leaf, n, p - off))
     for i in range(n + 1):
         if not leaf:
@@ -69,15 +88,11 @@ def read_node(buf, off, out, depth=0, shift=0):
 
 
 def read_block(buf, off):
-    sig, compressed, size, original = struct.unpack_from('<BBQQ', buf, off)
-    p = off + 18
-    backref = None
-    if sig in BLOCK_SIGNATURES_WITH_BACKREF:
-        backref = struct.unpack_from('<QQ', buf, p)
-        p += 16
-    p += 4  # checksum
-    return dict(sig=sig, compressed=compressed, size=size, original=original, backref=backref,
-                meta=p - off, total=p - off + size)
+    sig, codec, size, original, key_hash, key_pos, checksum, data_checksum = struct.unpack_from(
+        '<BIQQQQII', buf, off)
+    assert sig in BLOCK_SIGNATURES, f'bad block signature {sig} at {off}'
+    return dict(sig=sig, codec=codec, size=size, original=original, key=(key_hash, key_pos),
+                checksum=checksum, data_checksum=data_checksum, total=BLOCK_META_SIZE + size)
 
 
 def read_allocator_state(buf, off, size):
@@ -103,19 +118,24 @@ def dump(path):
               f'block={h["block_size"]} degree={h["b_tree_degree"]} '
               f'ft=({h["files_table_addr"]},{h["files_table_size"]}) n_files={h["n_files"]} '
               f'ft_crc={h["files_table_crc"]:#010x} ft_encoding={h["files_table_encoding"]}')
-    h = max((s for s in slots if s['magic'] == MAGIC_V6), key=lambda s: s['sequence_id'])
+    h = max((s for s in slots if s['magic'] == MAGIC_V7), key=lambda s: s['sequence_id'])
     print(f' active header: seq={h["sequence_id"]}')
 
-    node_size = 96 * h['b_tree_degree'] - 26
+    node_size = 96 * h['b_tree_degree'] - 22
     regions = [(0, 2 * HEADER_SIZE, 'header x2')]
 
     table, table_size = h['files_table_addr'], h['files_table_size']
     if table:
         data = buf[table:table + table_size]
         assert crc32c(data) == h['files_table_crc'], 'files table checksum mismatch'
-        regions.append((table, table_size, f'files table ({h["n_files"]} records)'))
-        for i, (name, size, file_id) in enumerate(read_files_table(buf, table, table_size, h['n_files'])):
-            print(f'  file[{i}] name={name!r} size={size} file_id={file_id}')
+        encoding = h['files_table_encoding']
+        regions.append((table, table_size, f'files table ({h["n_files"]} records, encoding {encoding})'))
+        plain = decode_files_table(data, encoding)
+        if plain is None:
+            print(f'  files table packed with codec {encoding}, not listed')
+        else:
+            for i, (name, size, file_id) in enumerate(read_files_table(plain, h['n_files'])):
+                print(f'  file[{i}] name={name!r} size={size} file_id={file_id}')
 
     index = read_node(buf, h['index_root'], {'nodes': [], 'entries': []})
     for off, depth, leaf, n, used in index['nodes']:
@@ -125,11 +145,12 @@ def dump(path):
     for (file_id, pos), (addr, original) in index['entries']:
         blk = read_block(buf, addr)
         assert blk['original'] == original, (blk, original)
-        assert blk['backref'] is None or blk['backref'][0] == file_id
+        assert blk['key'] == (file_id, pos), (blk, file_id, pos)
+        assert blk['codec'] != 0 or blk['size'] == blk['original'], blk
         stored += blk['total']
         regions.append((addr, blk['total'],
                         f'block file_id={file_id} pos={pos} size={original} stored={blk["size"]} '
-                        f'compressed={blk["compressed"]} sig={blk["sig"]}'))
+                        f'codec={blk["codec"]} sig={blk["sig"]}'))
 
     if h['alloc_off']:
         free, spare = read_allocator_state(buf, h['alloc_off'], h['alloc_size'])
