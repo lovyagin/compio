@@ -25,9 +25,12 @@
 //   --dir=PATH          directory for the files (default: system temp dir)
 //   --seed=N            random seed (default 1)
 
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <sys/resource.h>
-#include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -37,6 +40,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -49,6 +53,24 @@
 namespace {
 
 using clock_type = std::chrono::steady_clock;
+
+int process_id() {
+#ifdef _WIN32
+    return _getpid();
+#else
+    return static_cast<int>(::getpid());
+#endif
+}
+
+long max_rss_kb() {
+#ifdef _WIN32
+    return 0;
+#else
+    rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#endif
+}
 
 double seconds_since(clock_type::time_point start) {
     return std::chrono::duration<double>(clock_type::now() - start).count();
@@ -300,7 +322,7 @@ int main(int argc, char **argv) {
         } else if (o.backend == "stdio") {
             st = std::make_unique<stdio_store>(o.dir);
         } else if (o.backend == "compio") {
-            st = std::make_unique<compio_store>(o.dir + "/cantor_" + std::to_string(::getpid()) + ".compio",
+            st = std::make_unique<compio_store>(o.dir + "/cantor_" + std::to_string(process_id()) + ".compio",
                                                 o.compressor, o.wal);
         } else {
             throw std::runtime_error("unknown backend " + o.backend);
@@ -360,14 +382,11 @@ int main(int argc, char **argv) {
         std::printf("points,%" PRIu64 ",%" PRIu64 ",%.4f\n", last_cubes, st->size("points"), seconds_since(t));
 
         const uint64_t disk_bytes = st->finish();
-        rusage usage;
-        getrusage(RUSAGE_SELF, &usage);
         const double expected = std::log(static_cast<double>(subcubes) * o.p) / std::log(static_cast<double>(o.m));
         const double measured = std::log(static_cast<double>(last_cubes)) / (o.k * std::log(static_cast<double>(o.m)));
-        const auto seconds = [](const timeval &t) { return static_cast<double>(t.tv_sec) + t.tv_usec * 1e-6; };
         std::printf("# total_seconds=%.4f cpu_seconds=%.4f disk_bytes=%" PRIu64 " max_rss_kb=%ld\n",
-                    seconds_since(start), seconds(usage.ru_utime) + seconds(usage.ru_stime), disk_bytes,
-                    usage.ru_maxrss);
+                    seconds_since(start),
+                    static_cast<double>(std::clock()) / CLOCKS_PER_SEC, disk_bytes, max_rss_kb());
         std::printf("# dimension expected=%.4f measured=%.4f checksum=%016" PRIx64 "\n", expected, measured, checksum);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "cantor_set: %s\n", e.what());
