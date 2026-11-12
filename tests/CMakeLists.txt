@@ -82,6 +82,11 @@ if (UNIX)
         set_tests_properties(crash_consistency_harness PROPERTIES TIMEOUT 120)
     endif()
 
+    add_executable(mixed_kill crash/mixed_kill.cpp)
+    target_link_libraries(mixed_kill PRIVATE compio)
+    add_test(NAME mixed_kill_short COMMAND mixed_kill 15 1 1 200)
+    set_tests_properties(mixed_kill_short PROPERTIES TIMEOUT 120)
+
     add_executable(index_corruption crash/index_corruption.cpp)
     target_link_libraries(index_corruption PRIVATE compio)
 
