@@ -6,14 +6,7 @@
 #include <fstream>
 #include <random>
 
-// Include test utility helpers
-namespace {
-    std::string generate_tmp_fn() {
-        std::string s = "tmp_";
-        s += std::to_string(std::rand());
-        return s;
-    }
-}
+#include "test_util.hpp"
 
 class ChecksumTest : public ::testing::Test {
 protected:
@@ -21,7 +14,9 @@ protected:
     compio_archive* archive = nullptr;
 
     void SetUp() override {
-        filename = generate_tmp_fn();
+        char fn[256];
+        generate_tmp_fn(fn, sizeof(fn));
+        filename = fn;
     }
 
     void TearDown() override {
@@ -30,6 +25,7 @@ protected:
             archive = nullptr;
         }
         std::remove(filename.c_str());
+        std::remove((filename + ".wal").c_str());
     }
 };
 
