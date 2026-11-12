@@ -143,12 +143,12 @@ static smart_infile_object<compio::header> load_header_double_buffered(FILE *fil
     }
 
     header hA;
-    bool validA = hA.load_and_validate(file, 0);
+    bool validA = hA.load_and_validate(file, 0, true);
     
     // Calculate where B should be based on A (if A is valid)
     uint64_t offsetB = hA.disk_size(); 
     header hB;
-    bool validB = hB.load_and_validate(file, offsetB);
+    bool validB = hB.load_and_validate(file, offsetB, true);
     
     int chosen_slot = 0;
     header* chosen_h = nullptr;
@@ -168,6 +168,9 @@ static smart_infile_object<compio::header> load_header_double_buffered(FILE *fil
         chosen_slot = 1;
         chosen_h = new compio::header(std::move(hB));
     } else {
+        // Load again with the reasons printed.
+        hA.load_and_validate(file, 0);
+        hB.load_and_validate(file, offsetB);
         WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Unable to open archive.\n");
         throw std::runtime_error("Both archive headers are corrupted");
     }
