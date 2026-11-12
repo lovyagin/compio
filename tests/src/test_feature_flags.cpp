@@ -13,6 +13,7 @@
 #include "test_util.hpp"
 
 #ifndef _WIN32
+#include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
