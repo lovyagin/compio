@@ -69,8 +69,8 @@ Minimal extraction example: opens a healthy archive and streams every file into 
 | Algorithm | Speed | Ratio | Use Case |
 |-----------|-------|-------|----------|
 | **Dummy** | Fastest | None | Testing, uncompressed storage |
-| **LZ4** | Very Fast | Good | Real-time compression |
-| **ZLIB** | Fast | Good | General purpose (default) |
+| **LZ4** | Very Fast | Good | Real-time compression (default) |
+| **ZLIB** | Fast | Good | General purpose |
 | **Zstandard** | Fast | Excellent | Modern applications |
 | **Brotli** | Moderate | Best | Maximum compression |
 
