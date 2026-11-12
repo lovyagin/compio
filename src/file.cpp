@@ -98,20 +98,20 @@ std::vector<uint8_t> files_table::encode(const std::vector<uint8_t> &plain, uint
 }
 
 bool files_table::read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t count,
-                            uint32_t checksum, uint32_t encoding) {
+                            uint32_t checksum, uint32_t encoding, bool quiet) {
     std::vector<uint8_t> data(static_cast<size_t>(size));
     if (size > 0) {
         if (fseek64(file, addr, SEEK_SET) != 0) {
-            WARNING_PRINT("warning: fseek failed in files_table::read_from\n");
+            if (!quiet) WARNING_PRINT("warning: fseek failed in files_table::read_from\n");
             return false;
         }
         if (fread(data.data(), 1, data.size(), file) != data.size()) {
-            WARNING_PRINT("warning: short read in files table\n");
+            if (!quiet) WARNING_PRINT("warning: short read in files table\n");
             return false;
         }
     }
     if (crc32c(data.data(), data.size()) != checksum) {
-        WARNING_PRINT("warning: files table checksum mismatch\n");
+        if (!quiet) WARNING_PRINT("warning: files table checksum mismatch\n");
         return false;
     }
 
@@ -119,13 +119,13 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t c
         compio_compressor compressor;
         if (!is_known_encoding(encoding) || data.size() < sizeof(uint64_t) ||
             compio_build_compressor_by_type(&compressor, static_cast<compio_compression_type>(encoding)) != 0) {
-            WARNING_PRINT("warning: unsupported files table encoding %u\n", encoding);
+            if (!quiet) WARNING_PRINT("warning: unsupported files table encoding %u\n", encoding);
             return false;
         }
         uint64_t plain_size = 0;
         for (unsigned i = 0; i < sizeof(uint64_t); ++i) plain_size |= static_cast<uint64_t>(data[i]) << (8 * i);
         if (plain_size > count * (record_header_size + COMPIO_FNAME_MAX_SIZE - 1)) {
-            WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", count);
+            if (!quiet) WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", count);
             return false;
         }
         std::vector<uint8_t> plain(static_cast<size_t>(plain_size));
@@ -133,7 +133,7 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t c
         if (compressor.decompress(&compressor, plain.data(), &got, data.data() + sizeof(uint64_t),
                                   data.size() - sizeof(uint64_t)) != 0 ||
             got != plain_size) {
-            WARNING_PRINT("warning: files table does not decode\n");
+            if (!quiet) WARNING_PRINT("warning: files table does not decode\n");
             return false;
         }
         data = std::move(plain);
@@ -141,11 +141,11 @@ bool files_table::read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t c
 
     if (data.size() < count * (record_header_size + 1) ||
         data.size() > count * (record_header_size + COMPIO_FNAME_MAX_SIZE - 1)) {
-        WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", count);
+        if (!quiet) WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", count);
         return false;
     }
     if (!parse(data.data(), data.size(), count)) {
-        WARNING_PRINT("warning: malformed files table\n");
+        if (!quiet) WARNING_PRINT("warning: malformed files table\n");
         return false;
     }
     return true;
@@ -206,7 +206,7 @@ void header::compute_checksum(uint8_t *out_hash, uint64_t n_files) const {
     ctx.finalize(out_hash);
 }
 
-bool header::load_and_validate(FILE *file, uint64_t addr) {
+bool header::load_and_validate(FILE *file, uint64_t addr, bool quiet) {
     DEBUG_PRINT("[R][header]addr=%" PRIu64 "\n", addr);
     if (fseek64(file, addr, SEEK_SET)) {
         DEBUG_PRINT("warning: fseek failed\n");
@@ -215,7 +215,7 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
 
     if (lendian_fread_member(magic_number, file) != 1) return false;
     if (magic_number != COMPIO_MAGIC_NUMBER) {
-        WARNING_PRINT("warning: unsupported archive format (magic %d, expected %d for format v7)\n",
+        if (!quiet) WARNING_PRINT("warning: unsupported archive format (magic %d, expected %d for format v7)\n",
                       magic_number, COMPIO_MAGIC_NUMBER);
         return false;
     }
@@ -241,26 +241,26 @@ bool header::load_and_validate(FILE *file, uint64_t addr) {
     uint8_t calc_checksum[32];
     compute_checksum(calc_checksum, n_files);
     if (memcmp(checksum, calc_checksum, 32) != 0) {
-        WARNING_PRINT("warning: header checksum mismatch\n");
+        if (!quiet) WARNING_PRINT("warning: header checksum mismatch\n");
         return false;
     }
     if (n_files > COMPIO_MAX_FILES_LIMIT) {
-        WARNING_PRINT("warning: header declares %" PRIu64 " files\n", n_files);
+        if (!quiet) WARNING_PRINT("warning: header declares %" PRIu64 " files\n", n_files);
         return false;
     }
 
     if (!files_table::is_known_encoding(files_table_encoding)) {
-        WARNING_PRINT("warning: unsupported files table encoding %u\n", files_table_encoding);
+        if (!quiet) WARNING_PRINT("warning: unsupported files table encoding %u\n", files_table_encoding);
         return false;
     }
     // A packed table is shorter than the plain one, so the same upper bound holds.
     if ((files_table_addr == 0) != (files_table_size == 0) ||
         files_table_size > n_files * (files_table::record_header_size + COMPIO_FNAME_MAX_SIZE - 1)) {
-        WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", n_files);
+        if (!quiet) WARNING_PRINT("warning: files table bounds are inconsistent with %" PRIu64 " files\n", n_files);
         return false;
     }
     return ftable.read_from(file, files_table_addr, files_table_size, n_files, files_table_checksum,
-                            files_table_encoding);
+                            files_table_encoding, quiet);
 }
 
 bool header::read_from(FILE *file, uint64_t addr) {

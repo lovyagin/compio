@@ -82,7 +82,7 @@ struct files_table {
      * @brief Read, verify (CRC32C of the stored bytes), decode and parse the table
      */
     bool read_from(FILE *file, uint64_t addr, uint64_t size, uint64_t count, uint32_t checksum,
-                   uint32_t encoding);
+                   uint32_t encoding, bool quiet = false);
     bool write_to(FILE *file, uint64_t addr) const;
 
 private:
@@ -138,9 +138,11 @@ struct header : public infile_object {
 
     /** 
      * @brief Read header and validate checksum without asserting
+     * @param quiet Do not print why a header is rejected. A slot that is not the latest may
+     *        legitimately fail: the table it points to can be freed and reused already.
      * @return true if valid, false if corrupted
      */
-    bool load_and_validate(FILE *file, uint64_t addr);
+    bool load_and_validate(FILE *file, uint64_t addr, bool quiet = false);
 };
 
 /**
