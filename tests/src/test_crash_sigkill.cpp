@@ -73,7 +73,7 @@ protected:
 
 void CrashSigkillTest::run_trials(int block_size) {
     const int sync_mode = GetParam();
-    constexpr int TRIALS = 25;
+    constexpr int TRIALS = 100;
 
     std::mt19937 rng(1234567u + static_cast<uint32_t>(sync_mode));
     std::uniform_int_distribution<int> delay_us(150, 9000);
@@ -147,12 +147,9 @@ TEST_P(CrashSigkillTest, SurvivorsFormUncorruptedPrefix) {
     run_trials(64 * RECSZ);
 }
 
-// One block per record: the index grows and its nodes split during the run. A
-// split rewrites existing nodes in place before the transaction is committed
-// and before the header with the new root is published, so a kill inside that
-// window leaves the index inconsistent. Known gap; enable once index updates
-// are crash-atomic.
-TEST_P(CrashSigkillTest, DISABLED_SurvivorsFormUncorruptedPrefixAcrossIndexSplits) {
+// One block per record: the index grows and its nodes split during the run, so a kill can
+// land between a split and the header publication that makes it durable.
+TEST_P(CrashSigkillTest, SurvivorsFormUncorruptedPrefixAcrossIndexSplits) {
     run_trials(RECSZ);
 }
 
