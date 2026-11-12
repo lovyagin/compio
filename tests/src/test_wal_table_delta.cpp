@@ -95,4 +95,50 @@ TEST_F(WalTableDeltaTest, RecoveryAppliesChangedEntriesToPublishedTable) {
     compio_close_archive(ar);
 }
 
+// The removal is the last thing before the crash, so only its own journal record can
+// carry it.
+TEST_F(WalTableDeltaTest, RemovalIsJournaledOnItsOwn) {
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+
+    {
+        compio_archive *ar = compio_open_archive(fn, "w", &cfg);
+        ASSERT_NE(ar, nullptr);
+        for (const char *name : {"keep", "gone"}) {
+            compio_file *f = compio_open_file(name, ar);
+            ASSERT_NE(f, nullptr);
+            const auto data = pattern(1);
+            ASSERT_EQ(compio_write(data.data(), SIZE, f), SIZE);
+            compio_close_file(f);
+        }
+        compio_close_archive(ar);
+    }
+
+    pid_t pid = fork();
+    ASSERT_GE(pid, 0);
+    if (pid == 0) {
+        compio_archive *ar = compio_open_archive(fn, "r+", &cfg);
+        if (!ar) _exit(11);
+        if (compio_remove_file(ar, "gone") != 0) _exit(12);
+        _exit(0);
+    }
+    int status = 0;
+    ASSERT_EQ(waitpid(pid, &status, 0), pid);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(WEXITSTATUS(status), 0);
+
+    compio_archive *ar = compio_open_archive(fn, "r+", &cfg);
+    ASSERT_NE(ar, nullptr);
+    compio_file *keep = compio_open_file("keep", ar);
+    ASSERT_NE(keep, nullptr);
+    EXPECT_EQ(compio_get_size(keep), SIZE);
+    compio_close_file(keep);
+    compio_file *gone = compio_open_file("gone", ar);
+    ASSERT_NE(gone, nullptr);
+    EXPECT_EQ(compio_get_size(gone), 0u) << "removal before the crash must survive";
+    compio_close_file(gone);
+    compio_close_archive(ar);
+}
+
 #endif
