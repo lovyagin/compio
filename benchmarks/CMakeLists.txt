@@ -52,5 +52,8 @@ add_executable(io_overhead custom/io_overhead.cpp)
 target_link_libraries(io_overhead PRIVATE compio)
 
 
+add_executable(cantor_set custom/cantor_set.cpp)
+target_link_libraries(cantor_set PRIVATE compio)
+
 add_executable(parallel_compression custom/parallel_compression.cpp)
 target_link_libraries(parallel_compression PRIVATE compio)
