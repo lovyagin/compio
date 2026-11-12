@@ -27,6 +27,8 @@
 
 #ifdef _WIN32
 #include <process.h>
+#define fseeko _fseeki64
+#define ftello _ftelli64
 #else
 #include <sys/resource.h>
 #include <unistd.h>
@@ -147,7 +149,7 @@ struct stdio_store : store {
     }
     size_t read(const std::string &name, uint64_t offset, void *buf, size_t size) override {
         FILE *f = files.at(name);
-        fseeko(f, static_cast<off_t>(offset), SEEK_SET);
+        fseeko(f, static_cast<int64_t>(offset), SEEK_SET);
         return std::fread(buf, 1, size, f);
     }
     void remove(const std::string &name) override {
