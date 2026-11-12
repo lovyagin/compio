@@ -18,6 +18,23 @@ cd build/benchmarks
 ./compio_benchmarks
 ```
 
+### Cantor set generation (`cantor_set`, `cantor_compare.py`)
+Generates a random Cantor set in R^n: the cube [-1, 1]^n is split into m^n subcubes, each
+survives with probability p, the step repeats k times, and the last generation is replaced
+by one random point per cube. Every generation is a logical file read sequentially while the
+next one is appended, so the working set is the files, not memory. Backends: `stdio`, `ram`
+and `compio` (any compressor, WAL on or off). All backends consume the same random stream
+and print the same checksum.
+
+```bash
+cd build/benchmarks
+./cantor_set --backend=compio --compressor=zstd --n=3 --m=4 --p=0.1 --k=9 --keep=1
+python3 ../../benchmarks/cantor_compare.py ./cantor_set --runs 5 --dir /path/on/disk -- --k=9
+```
+
+The expected dimension is `ln(m^n p) / ln(m)`; the run prints it next to the measured one.
+Wall time depends on the disk, so compare the `cpu_seconds` line as well.
+
 ### 2. **Fragmentation Benchmark** (`fragmentation_benchmark`)
 Advanced parametric grid testing for memory fragmentation under realistic workloads.
 
