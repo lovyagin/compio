@@ -125,6 +125,23 @@ root is diagnostic; recovery of the entire original file remains the criterion.
 In a clean control, header/root comparisons describe the completed update and
 are not preservation requirements.
 
+## Mixed workload
+
+`mixed_kill` runs a writer that appends stamped records to several files, runs
+transactions (a quarter of them aborted), removes and recreates a file, uses batches,
+flushes and compacts. The parent sends SIGKILL after a random delay, reopens the archive
+and requires every record to be valid and in order, no torn size, both files written by a
+transaction to have the same length, and the recovered archive to compact and reopen.
+
+```sh
+build_check/tests/mixed_kill <trials> <wal_sync_mode 0|1|2> <tiny_nodes 0|1> <max_delay_ms>
+build_check/tests/mixed_kill 1000 0 1 1500
+```
+
+`tiny_nodes=1` uses 512-byte blocks and B-tree degree 2, which splits the index often.
+A failing trial prints its number and the reason; the exit code is 1. The `mixed_kill_short`
+CTest runs 15 trials. SIGKILL keeps the OS page cache, so this does not simulate power loss.
+
 ## Artifacts and replay
 
 Each invocation creates a unique `crash-consistency-*` directory under `--dir`
