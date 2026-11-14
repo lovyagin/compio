@@ -2059,7 +2059,7 @@ static uint64_t compio_write_impl(const void *ptr, uint64_t size, compio_file *f
 
     if (!wal_tx_guard.commit()) {
         errno = EIO;
-        return ptr_bytes_written;
+        return 0;
     }
 
     // Auto-batching logic - end batch if threshold reached

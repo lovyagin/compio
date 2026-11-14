@@ -1379,15 +1379,17 @@ TEST_P(BlockWriteTest, EvictionFailurePreventsAutomaticWalCheckpoint) {
     auto *file = compio_open_file("other", archive);
     ASSERT_NE(file, nullptr);
     const std::string data(8 * config.block_size, 'x');
-    EXPECT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    errno = 0;
+    EXPECT_EQ(compio_write(data.data(), data.size(), file), 0u);
+    EXPECT_EQ(errno, EIO);
     EXPECT_TRUE(fault.triggered);
     EXPECT_TRUE(archive->block_reader->has_write_error());
     EXPECT_GT(std::filesystem::file_size(std::string(path) + ".wal"), 0u);
     EXPECT_EQ(compio_close_file(file), COMPIO_SUCCESS);
     fault = {};
     clearerr(archive->file);
-    // The commit of the write already reported the failure; the blocks stayed
-    // dirty, so this flush retries them and publishes.
+    // The write reported the failed commit; the blocks stayed dirty, so this
+    // flush retries them and publishes.
     compio_flush(archive);
     EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
     retry_and_reopen();
@@ -1526,6 +1528,35 @@ TEST(WalSyncFailure, WalSyncFailureBreaksArchive) {
 
 // A record that fails midway leaves a fragment; the journal must be cut back, or every
 // later commit lands behind bytes recovery cannot get past.
+TEST(WalSyncFailure, WriteReportsNothingWrittenWhenCommitFails) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("a", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write("base", 4, file), 4u);
+
+    fault = {};
+    fault.descriptor = descriptor_of(std::string(std::filesystem::absolute(path)) + ".wal");
+    ASSERT_GE(fault.descriptor, 0);
+    fault.publishing = true;
+    fault.kind = failure::sync;
+    errno = 0;
+    EXPECT_EQ(compio_write("more", 4, file), 0u);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(errno, EIO);
+    fault = {};
+    EXPECT_TRUE(archive->is_broken());
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+    remove(path);
+}
+
 TEST(WalTornRecord, FailedRecordWriteDoesNotHideLaterCommits) {
     char path[256];
     generate_tmp_fn(path, sizeof(path));
