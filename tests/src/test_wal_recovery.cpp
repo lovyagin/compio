@@ -510,3 +510,37 @@ TEST_F(WalRecoveryTest, JournalOfUnpublishedNewArchiveIsDiscarded) {
     EXPECT_EQ(recovered_bytes(filename, 4096, 4), std::string(4, '\0'));
     EXPECT_FALSE(wal.has_pending_recovery());
 }
+
+// A new archive killed before its first flush: it must open, and what was committed to
+// the journal must be there.
+TEST_F(WalRecoveryTest, NewArchiveKilledBeforeFirstFlushKeepsCommittedWrites) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *ar = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(ar, nullptr);
+    write_whole_file(ar, "a", "fresh");
+
+    const std::string image = std::string(filename) + ".image";
+    spit(image, slurp(filename));
+    spit(image + ".wal", slurp(wal_filename));
+    ASSERT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+
+    compio_archive *copy = compio_open_archive(image.c_str(), "r+", &config);
+    ASSERT_NE(copy, nullptr) << "a new archive became unopenable after a kill";
+    EXPECT_EQ(read_whole_file(copy, "a"), "fresh");
+    compio_close_archive(copy);
+    remove(image.c_str());
+    remove((image + ".wal").c_str());
+}
+
+// Both headers unreadable: the archive is refused, and the journal that may hold the only
+// copy of recent writes is left alone.
+TEST_F(WalRecoveryTest, UnreadableHeadersDoNotConsumeTheJournal) {
+    make_journal(filename, 3);
+    const std::string journal = slurp(wal_filename);
+    compio_config config;
+    compio_build_default_config(&config);
+    EXPECT_EQ(compio_open_archive(filename, "r+", &config), nullptr);
+    EXPECT_TRUE(slurp(wal_filename) == journal);
+}

@@ -339,6 +339,7 @@ public:
 
 private:
     bool sync_wal();
+    bool abandon_record(uint64_t start);
     bool write_record(WalRecordType type, uint64_t addr, const iovec_buf* buffers, size_t count);
     
     // Internal implementations without mutex locking

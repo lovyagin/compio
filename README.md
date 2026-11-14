@@ -72,7 +72,9 @@ See [`docs/`](docs/) and [`examples/`](examples/) for more.
 An archive stays consistent after a process kill or a power loss in every `wal_sync_mode`.
 With `COMPIO_WAL_SYNC_ALWAYS` every committed operation survives both. The default,
 `COMPIO_WAL_SYNC_NORMAL`, loses nothing on a process kill, and a power loss may drop the
-operations since the last `compio_flush`, batch end or close. After a failed fsync an archive
+operations since the last `compio_flush`, batch end or close. `COMPIO_WAL_SYNC_OFF` may lose
+those operations on a process kill too. A new archive is safe from creation only in ALWAYS
+mode; in the others, flush it once after creating it. After a failed fsync an archive
 refuses further writes with `EIO`; reopen it to continue from the last durable state.
 
 ## License

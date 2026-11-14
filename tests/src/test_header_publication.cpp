@@ -35,7 +35,18 @@ struct io_fault {
     bool next_seek = false;
     bool every_seek = false;
     int wal_record = -1;
+    // Tears the next journal record of this type after 10 bytes (ENOSPC), skipping `torn_skip` first.
+    int torn_record = -1;
+    int torn_skip = 0;
+    int truncate_descriptor = -1;
 };
+
+struct FsyncTrace {
+    bool on = false;
+    std::string wal;
+    std::vector<std::pair<std::string, bool>> entries; // target, journal existed at that moment
+};
+FsyncTrace trace;
 
 io_fault fault;
 
@@ -49,6 +60,7 @@ int __real_fseeko(FILE *, off_t, int);
 size_t __real_fwrite(const void *, size_t, size_t, FILE *);
 int __real_fflush(FILE *);
 int __real_fsync(int);
+int __real_ftruncate(int, off_t);
 
 int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
     if (stream == fault.stream && whence == SEEK_SET && (offset == fault.target || fault.next_seek || fault.every_seek)) {
@@ -64,6 +76,13 @@ int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
 }
 
 size_t __wrap_fwrite(const void *data, size_t size, size_t count, FILE *stream) {
+    if (fault.torn_record >= 0 && stream != fault.stream && size == 1 && count == wal_record_fields_bytes &&
+        *static_cast<const unsigned char *>(data) == fault.torn_record && fault.torn_skip-- <= 0) {
+        fault.triggered = true;
+        fault.torn_record = -1;
+        errno = ENOSPC;
+        return __real_fwrite(data, 1, 10, stream);
+    }
     if (fault.wal_record >= 0 && stream != fault.stream && size == 1 && count == wal_record_fields_bytes &&
         *static_cast<const unsigned char *>(data) == fault.wal_record) {
         fault.triggered = true;
@@ -88,7 +107,22 @@ int __wrap_fflush(FILE *stream) {
     return __real_fflush(stream);
 }
 
+int __wrap_ftruncate(int descriptor, off_t length) {
+    if (descriptor == fault.truncate_descriptor) {
+        fault.triggered = true;
+        errno = EIO;
+        return -1;
+    }
+    return __real_ftruncate(descriptor, length);
+}
+
 int __wrap_fsync(int descriptor) {
+    if (trace.on) {
+        std::error_code ec;
+        trace.entries.emplace_back(
+            std::filesystem::read_symlink("/proc/self/fd/" + std::to_string(descriptor), ec).string(),
+            std::filesystem::exists(trace.wal));
+    }
     if (descriptor == fault.descriptor && fault.publishing && fault.kind == failure::sync) {
         fault.triggered = true;
         errno = EIO;
@@ -1488,4 +1522,104 @@ TEST(WalSyncFailure, WalSyncFailureBreaksArchive) {
     EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
     remove(path);
     remove((std::string(path) + ".wal").c_str());
+}
+
+// A record that fails midway leaves a fragment; the journal must be cut back, or every
+// later commit lands behind bytes recovery cannot get past.
+TEST(WalTornRecord, FailedRecordWriteDoesNotHideLaterCommits) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    FILE *archive = fopen(path, "w+b");
+    ASSERT_NE(archive, nullptr);
+    const std::vector<char> zeros(8192, 0);
+    ASSERT_EQ(fwrite(zeros.data(), 1, zeros.size(), archive), zeros.size());
+    fflush(archive);
+
+    compio::WalManager wal(path);
+    ASSERT_TRUE(wal.open());
+    wal.set_epoch(3);
+    const auto block = static_cast<int>(compio::WalRecordType::BLOCK);
+
+    wal.begin_transaction();
+    ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, 4096, "AAAA", 4));
+    ASSERT_TRUE(wal.commit_transaction());
+
+    fault = {};
+    fault.stream = archive;
+    fault.torn_record = block;
+    wal.begin_transaction();
+    EXPECT_FALSE(wal.log_write(compio::WalRecordType::BLOCK, 4100, "BBBB", 4));
+    EXPECT_TRUE(fault.triggered);
+    wal.rollback_transaction();
+    fault = {};
+
+    wal.begin_transaction();
+    ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, 4104, "CCCC", 4));
+    ASSERT_TRUE(wal.commit_transaction());
+    wal.close();
+
+    compio::WalManager recovery(path);
+    ASSERT_TRUE(recovery.recover(archive, 3));
+    char got[12] = {};
+    ASSERT_EQ(fseek(archive, 4096, SEEK_SET), 0);
+    ASSERT_EQ(fread(got, 1, 12, archive), 12u);
+    EXPECT_EQ(std::string(got, 4), "AAAA");
+    EXPECT_EQ(std::string(got + 8, 4), "CCCC");
+    fclose(archive);
+    remove(path);
+    remove((std::string(path) + ".wal").c_str());
+}
+
+// The journal is truncated after a header is published. If that fails, records of the next
+// epoch would land behind the old epoch's, where recovery stops: nothing may be logged.
+TEST(WalSyncFailure, FailedCheckpointAfterPublishBreaksArchive) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("a", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write("base", 4, file), 4u);
+
+    fault = {};
+    fault.truncate_descriptor = descriptor_of(std::string(std::filesystem::absolute(path)) + ".wal");
+    ASSERT_GE(fault.truncate_descriptor, 0);
+    compio_flush(archive);
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    EXPECT_TRUE(archive->is_broken());
+
+    errno = 0;
+    EXPECT_EQ(compio_write("more", 4, file), 0u);
+    EXPECT_EQ(errno, EIO);
+    compio_close_file(file);
+    compio_close_archive(archive);
+    remove(path);
+    remove((std::string(path) + ".wal").c_str());
+}
+
+// Creating the journal adds a directory entry; without a directory fsync after it, a power
+// cut can take the journal, and the commits in it, away.
+TEST(WalDirectory, JournalEntryIsSyncedAfterItIsCreated) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    const std::string absolute = std::filesystem::absolute(path).string();
+    const std::string directory = std::filesystem::path(absolute).parent_path().string();
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    trace = {};
+    trace.on = true;
+    trace.wal = absolute + ".wal";
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    trace.on = false;
+    ASSERT_NE(archive, nullptr);
+    bool synced = false;
+    for (const auto &[target, wal_existed] : trace.entries) synced |= target == directory && wal_existed;
+    EXPECT_TRUE(synced);
+    compio_close_archive(archive);
+    remove(path);
+    remove((absolute + ".wal").c_str());
 }

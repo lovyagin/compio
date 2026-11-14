@@ -247,11 +247,14 @@ typedef enum {
  * consistent archive after both: a torn write is never replayed, and an archive
  * never opens in a half-published state.
  *
- * | mode   | SIGKILL                 | power loss                                          |
- * |--------|-------------------------|-----------------------------------------------------|
- * | ALWAYS | every returned operation | every committed operation                           |
- * | NORMAL | every returned operation | operations since the last flush, batch end or close may be lost |
- * | OFF    | every returned operation | as NORMAL, over a wider window                       |
+ * | mode   | SIGKILL                                  | power loss                                          |
+ * |--------|------------------------------------------|-----------------------------------------------------|
+ * | ALWAYS | every committed operation                | every committed operation                           |
+ * | NORMAL | every committed operation                | operations since the last flush, batch end or close may be lost |
+ * | OFF    | operations since the last flush, batch end or close may be lost | as SIGKILL |
+ *
+ * A new archive has a header on disk from its creation only in ALWAYS mode; in the other
+ * modes a crash before its first flush or close can leave it unopenable.
  *
  * A failed fsync of the archive or the journal makes the archive refuse further
  * writes (errno EIO) and publish nothing; reopening recovers the last durable state.

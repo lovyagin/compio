@@ -395,7 +395,15 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
                     // whose format this version does not fully know.
                     header current;
                     uint64_t epoch = compio::WalManager::genesis_epoch;
-                    if (!is_file_empty(file) && select_header_slot(file, current, true) >= 0) {
+                    if (!is_file_empty(file)) {
+                        // Without a readable header there is nothing the journal can be matched
+                        // to, and it may hold the only copy of recent writes: leave it alone.
+                        if (select_header_slot(file, current, true) < 0) {
+                            WARNING_PRINT("CRITICAL: Both archive headers are corrupted. Unable to open archive.\n");
+                            fclose(file);
+                            errno = EINVAL;
+                            return NULL;
+                        }
                         if (!features_usable(current, true)) {
                             fclose(file);
                             return NULL;
@@ -438,6 +446,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
 
     compio_config local_config = *c;
     bool is_new_file = is_file_empty(file);
+    bool publish_at_creation = false;
     if (is_new_file) {
         if (local_config.max_files == 0) {
             local_config.max_files = COMPIO_MAX_FILES;
@@ -616,6 +625,23 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
         archive->header->allocator_state_size = 0;
     }
 
+    // A new archive has no header on disk yet, so a kill before its first flush leaves
+    // nothing to open. ALWAYS promises every committed operation: publish the empty header
+    // now, so the journal of every later operation has one to extend. The other modes keep
+    // the cheaper creation and gain the header with the first flush or close.
+    publish_at_creation =
+        is_new_file && !archive->is_readonly() && archive->wal && local_config.wal_sync_mode == COMPIO_WAL_SYNC_ALWAYS;
+    if (publish_at_creation && !flush_impl(archive)) {
+        WARNING_PRINT("warning: failed to publish the header of a new archive\n");
+        if (errno == 0) errno = EIO;
+        archive->header.unmodify();
+        goto no_recovery;
+    }
+    if (publish_at_creation) {
+        // The published header is a copy; the table's reserve is the caller's sizing hint.
+        archive->header->ftable.files.reserve(static_cast<size_t>(local_config.max_files));
+    }
+
     return archive;
 
 no_recovery:
@@ -626,6 +652,8 @@ no_block_reader:
 no_index:
     delete archive->allocator;
 no_allocator:
+    // A refused open must not rewrite the live header slot when the object is destroyed.
+    archive->header.unmodify();
     delete archive;
 no_archive:
     fclose(file);

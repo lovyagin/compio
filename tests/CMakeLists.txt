@@ -112,6 +112,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Cl
     target_link_libraries(header_publication_tests PRIVATE compio GTest::GTest GTest::Main)
     target_include_directories(header_publication_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_options(header_publication_tests PRIVATE
-        -Wl,--wrap=fseeko -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fsync)
+        -Wl,--wrap=fseeko -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fsync -Wl,--wrap=ftruncate)
     add_test(NAME header_publication_tests COMMAND header_publication_tests)
 endif()

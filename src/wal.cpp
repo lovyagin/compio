@@ -21,20 +21,9 @@
 namespace compio {
 
 // Helper for Little-Endian I/O
-static bool write_u64_le(FILE* f, uint64_t v) {
-    if (is_big_endian()) swap_uint64(&v);
-    return fwrite(&v, sizeof(v), 1, f) == 1;
-}
-
 static bool write_u32_le(FILE* f, uint32_t v) {
     if (is_big_endian()) swap_uint32(&v);
     return fwrite(&v, sizeof(v), 1, f) == 1;
-}
-
-static bool read_u64_le(FILE* f, uint64_t* v) {
-    if (fread(v, sizeof(*v), 1, f) != 1) return false;
-    if (is_big_endian()) swap_uint64(v);
-    return true;
 }
 
 static bool read_u32_le(FILE* f, uint32_t* v) {
@@ -105,7 +94,11 @@ bool read_record(FILE* f, int64_t file_size, ParsedRecord* rec) {
 
 bool WalManager::sync_wal() {
     if (failed_) return false;
-    if (fflush(wal_file_) != 0) return false;
+    // A flush that fails midway leaves an unknown part of the buffer in the file.
+    if (fflush(wal_file_) != 0) {
+        failed_ = true;
+        return false;
+    }
     if (!compio::sync_file(wal_file_)) {
         failed_ = true;
         return false;
@@ -113,8 +106,36 @@ bool WalManager::sync_wal() {
     return true;
 }
 
+// A record that fails midway leaves a fragment in the file, and later records would land
+// behind it, where recovery cannot get past. Cut the journal back to where the record began.
+// If that is not possible the journal can no longer be trusted: nothing is logged after.
+bool WalManager::abandon_record(uint64_t start) {
+    fclose(wal_file_); // may write out what was buffered; the file is measured afterwards
+    wal_file_ = nullptr;
+    current_wal_size_ = start;
+
+    bool cut = false;
+    if (FILE* f = fopen(wal_path_.c_str(), "rb+")) {
+        if (fseek64(f, 0, SEEK_END) == 0) {
+            const int64_t size = ftell64(f);
+            if (size >= 0 && static_cast<uint64_t>(size) >= start) {
+#ifdef _WIN32
+                cut = _chsize_s(_fileno(f), static_cast<int64_t>(start)) == 0;
+#else
+                cut = ftruncate(fileno(f), static_cast<off_t>(start)) == 0;
+#endif
+            }
+        }
+        fclose(f);
+    }
+    if (cut) wal_file_ = fopen(wal_path_.c_str(), "ab+");
+    if (!wal_file_) failed_ = true;
+    return false;
+}
+
 bool WalManager::write_record(WalRecordType type, uint64_t addr, const iovec_buf* buffers, size_t count) {
     if (failed_) return false;
+    const uint64_t start = current_wal_size_;
     uint64_t size = 0;
     for (size_t i = 0; i < count; ++i) size += buffers[i].size;
 
@@ -127,11 +148,11 @@ bool WalManager::write_record(WalRecordType type, uint64_t addr, const iovec_buf
         }
     }
 
-    if (fwrite(fields, 1, sizeof(fields), wal_file_) != sizeof(fields)) return false;
-    if (!write_u32_le(wal_file_, checksum)) return false;
+    if (fwrite(fields, 1, sizeof(fields), wal_file_) != sizeof(fields)) return abandon_record(start);
+    if (!write_u32_le(wal_file_, checksum)) return abandon_record(start);
     for (size_t i = 0; i < count; ++i) {
         if (buffers[i].size > 0 && fwrite(buffers[i].data, 1, buffers[i].size, wal_file_) != buffers[i].size) {
-            return false;
+            return abandon_record(start);
         }
     }
     current_wal_size_ += kRecordHeaderBytes + size;
@@ -254,7 +275,10 @@ bool WalManager::commit_transaction_impl(compio_wal_sync_mode sync_mode) {
     if (sync_mode == COMPIO_WAL_SYNC_ALWAYS) {
         if (!sync_wal()) return false;
     } else if (sync_mode != COMPIO_WAL_SYNC_OFF) {
-        if (fflush(wal_file_) != 0) return false;
+        if (fflush(wal_file_) != 0) {
+            failed_ = true;
+            return false;
+        }
     }
 
     return true;
@@ -288,18 +312,25 @@ bool WalManager::checkpoint() {
     if (!wal_file_) return true; // Nothing to truncate
     if (failed_) return false;   // The journal may hold the only copy of lost pages
 
-    if (fflush(wal_file_) != 0) return false;
+    // The header this journal extends may already be replaced: records of the next epoch
+    // must not land behind the old ones, so a checkpoint that fails ends all logging.
+    if (fflush(wal_file_) != 0) {
+        failed_ = true;
+        return false;
+    }
 
 #ifdef _WIN32
     int fd = _fileno(wal_file_);
-    if (_chsize_s(fd, 0) != 0) return false;
-    // Seek to beginning for subsequent writes
-    if (_lseek(fd, 0, SEEK_SET) == -1) return false;
+    if (_chsize_s(fd, 0) != 0 || _lseek(fd, 0, SEEK_SET) == -1) {
+        failed_ = true;
+        return false;
+    }
 #else
     int fd = fileno(wal_file_);
-    if (ftruncate(fd, 0) != 0) return false;
-    // Seek to beginning for subsequent writes
-    if (lseek(fd, 0, SEEK_SET) < 0) return false;
+    if (ftruncate(fd, 0) != 0 || lseek(fd, 0, SEEK_SET) < 0) {
+        failed_ = true;
+        return false;
+    }
 #endif
     if (!sync_wal()) return false;
 
@@ -317,11 +348,17 @@ bool WalManager::clear() {
         wal_file_ = nullptr;
     }
     
-    // Truncate file
-    wal_file_ = fopen(wal_path_.c_str(), "wb"); // 'w' truncates
-    if (!wal_file_) return false;
-    fclose(wal_file_);
-    wal_file_ = nullptr;
+    // Truncate file. The truncation and a new directory entry must reach the disk, or a
+    // journal of an earlier archive at this path can come back and be replayed.
+    struct stat existing;
+    const bool existed = stat(wal_path_.c_str(), &existing) == 0;
+    const bool had_content = existed && existing.st_size > 0;
+    FILE* truncated = fopen(wal_path_.c_str(), "wb"); // 'w' truncates
+    if (!truncated) return false;
+    const bool durable = (existed && !had_content) ||
+                         (compio::sync_file(truncated) && (existed || compio::sync_parent_directory(wal_path_)));
+    fclose(truncated);
+    if (!durable) return false;
     
     // Reopen in append mode
     lock.unlock();
