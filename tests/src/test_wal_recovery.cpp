@@ -4,10 +4,23 @@
 #include <vector>
 #include <thread>
 #include "compio.h"
+#include "compio/file.hpp"
 #include "compio/wal.hpp"
 #include "test_util.hpp"
 
 namespace fs = std::filesystem;
+
+// sequence_id of the newest valid header slot: the epoch a journal must carry.
+static uint64_t published_epoch(const char *path) {
+    FILE *f = fopen(path, "rb");
+    uint64_t epoch = 0;
+    for (uint64_t slot : {uint64_t{0}, compio::header::disk_size_bytes}) {
+        compio::header h;
+        if (h.load_and_validate(f, slot, true) && h.sequence_id > epoch) epoch = h.sequence_id;
+    }
+    fclose(f);
+    return epoch;
+}
 
 class WalRecoveryTest : public ::testing::Test {
 protected:
@@ -44,6 +57,7 @@ TEST_F(WalRecoveryTest, RecoversDataFromWal) {
     {
         compio::WalManager wal(filename);
         ASSERT_TRUE(wal.open());
+        wal.set_epoch(published_epoch(filename));
 
         // Prepare dummy data for a block
         std::vector<uint8_t> data(config.block_size, 'A');
@@ -88,6 +102,7 @@ TEST_F(WalRecoveryTest, ClearsWalAfterSuccessfulOpen) {
     {
         compio::WalManager wal(filename);
         ASSERT_TRUE(wal.open());
+        wal.set_epoch(published_epoch(filename));
         std::vector<uint8_t> data(10, 'B');
         
         // Ensure file is big enough
@@ -143,6 +158,7 @@ TEST_F(WalRecoveryTest, IgnoresIncompleteTransactions) {
     {
         compio::WalManager wal(filename);
         ASSERT_TRUE(wal.open());
+        wal.set_epoch(published_epoch(filename));
 
         // Transaction 1: Valid
         wal.begin_transaction();
@@ -191,6 +207,7 @@ TEST_F(WalRecoveryTest, NestedTransactionsAreAtomic) {
     {
         compio::WalManager wal(filename);
         ASSERT_TRUE(wal.open());
+        wal.set_epoch(published_epoch(filename));
 
         wal.begin_transaction(); // Outer
         
@@ -317,4 +334,213 @@ TEST_F(WalRecoveryTest, FlushIsDurableDuringSequentialWrites) {
         fs::remove(filename);
         fs::remove(wal_filename);
     }
+}
+
+namespace {
+
+std::string slurp(const std::string &path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), {});
+}
+
+void spit(const std::string &path, const std::string &bytes) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+}
+
+std::string read_whole_file(compio_archive *archive, const char *name) {
+    compio_file *f = compio_open_file(name, archive);
+    if (!f) return "";
+    char buf[64] = {};
+    const size_t n = compio_read(buf, sizeof(buf), f);
+    compio_close_file(f);
+    return std::string(buf, n);
+}
+
+void write_whole_file(compio_archive *archive, const char *name, const std::string &text) {
+    compio_file *f = compio_open_file(name, archive);
+    ASSERT_NE(f, nullptr);
+    ASSERT_EQ(compio_write(text.data(), text.size(), f), text.size());
+    compio_close_file(f);
+}
+
+}  // namespace
+
+// Raw archive file plus a one-block committed journal stamped with `epoch`.
+static void make_journal(const char *archive_path, uint64_t epoch) {
+    {
+        std::ofstream out(archive_path, std::ios::binary | std::ios::trunc);
+        const std::string zeros(8192, '\0');
+        out.write(zeros.data(), static_cast<std::streamsize>(zeros.size()));
+    }
+    compio::WalManager wal(archive_path);
+    ASSERT_TRUE(wal.open());
+    wal.set_epoch(epoch);
+    wal.begin_transaction();
+    ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, 4096, "ABCD", 4));
+    ASSERT_TRUE(wal.commit_transaction());
+    wal.close();
+}
+
+static void flip_wal_bit(const std::string &wal_path, std::streamoff offset) {
+    std::string bytes = slurp(wal_path);
+    ASSERT_LT(static_cast<size_t>(offset), bytes.size());
+    bytes[static_cast<size_t>(offset)] ^= 0x01;
+    spit(wal_path, bytes);
+}
+
+static std::string recovered_bytes(const char *archive_path, long offset, size_t n) {
+    std::ifstream in(archive_path, std::ios::binary);
+    in.seekg(offset);
+    std::string out(n, '\0');
+    in.read(&out[0], static_cast<std::streamsize>(n));
+    return out;
+}
+
+// Offsets inside a record: type(1) epoch(8) addr(8) size(8) checksum(4).
+TEST_F(WalRecoveryTest, CorruptedRecordAddressIsNotReplayed) {
+    make_journal(filename, 7);
+    flip_wal_bit(wal_filename, 9);
+
+    FILE *f = fopen(filename, "r+b");
+    ASSERT_NE(f, nullptr);
+    compio::WalManager wal(filename);
+    EXPECT_TRUE(wal.recover(f, 7));
+    fclose(f);
+
+    EXPECT_EQ(recovered_bytes(filename, 4096, 4), std::string(4, '\0'));
+    EXPECT_EQ(recovered_bytes(filename, 4097, 4), std::string(4, '\0'));
+}
+
+TEST_F(WalRecoveryTest, CorruptedRecordSizeStopsReplay) {
+    make_journal(filename, 7);
+    flip_wal_bit(wal_filename, 17);
+
+    FILE *f = fopen(filename, "r+b");
+    ASSERT_NE(f, nullptr);
+    compio::WalManager wal(filename);
+    EXPECT_TRUE(wal.recover(f, 7));
+    fclose(f);
+
+    EXPECT_EQ(recovered_bytes(filename, 4096, 4), std::string(4, '\0'));
+}
+
+TEST_F(WalRecoveryTest, StaleEpochJournalIsIgnored) {
+    make_journal(filename, 5);
+
+    FILE *f = fopen(filename, "r+b");
+    ASSERT_NE(f, nullptr);
+    compio::WalManager wal(filename);
+    EXPECT_TRUE(wal.recover(f, 6));
+    fclose(f);
+
+    EXPECT_EQ(recovered_bytes(filename, 4096, 4), std::string(4, '\0'));
+    EXPECT_FALSE(wal.has_pending_recovery());
+}
+
+TEST_F(WalRecoveryTest, MatchingEpochJournalIsReplayed) {
+    make_journal(filename, 6);
+
+    FILE *f = fopen(filename, "r+b");
+    ASSERT_NE(f, nullptr);
+    compio::WalManager wal(filename);
+    EXPECT_TRUE(wal.recover(f, 6));
+    fclose(f);
+
+    EXPECT_EQ(recovered_bytes(filename, 4096, 4), "ABCD");
+}
+
+// Power cut after the header was published but before the journal truncation reached
+// the disk: the journal still describes the state before that publication.
+TEST_F(WalRecoveryTest, StaleJournalAfterPublishIsNotReplayed) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *ar = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(ar, nullptr);
+    write_whole_file(ar, "a", "base");
+    compio_flush(ar);
+
+    write_whole_file(ar, "a", "oldd");
+    const std::string stale = slurp(wal_filename);
+    ASSERT_FALSE(stale.empty());
+    compio_flush(ar);
+    write_whole_file(ar, "a", "neww");
+    ASSERT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+
+    spit(wal_filename, stale);
+    ar = compio_open_archive(filename, "r+", &config);
+    ASSERT_NE(ar, nullptr);
+    EXPECT_EQ(read_whole_file(ar, "a"), "neww");
+    compio_close_archive(ar);
+}
+
+TEST_F(WalRecoveryTest, JournalWithoutPublishedHeaderIsDiscarded) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *ar = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(ar, nullptr);
+    write_whole_file(ar, "a", "base");
+    compio_flush(ar);
+    write_whole_file(ar, "a", "old");
+    const std::string journal = slurp(wal_filename);
+    ASSERT_FALSE(journal.empty());
+    ASSERT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+
+    spit(filename, "");
+    spit(wal_filename, journal);
+    ar = compio_open_archive(filename, "a", &config);
+    ASSERT_NE(ar, nullptr);
+    EXPECT_EQ(read_whole_file(ar, "a"), "");
+    compio_close_archive(ar);
+}
+
+// A new archive killed before its first header was published: nothing exists for the
+// journal to extend, so replaying it would only scribble over an empty file.
+TEST_F(WalRecoveryTest, JournalOfUnpublishedNewArchiveIsDiscarded) {
+    make_journal(filename, compio::WalManager::genesis_epoch);
+
+    FILE *f = fopen(filename, "r+b");
+    ASSERT_NE(f, nullptr);
+    compio::WalManager wal(filename);
+    EXPECT_TRUE(wal.recover(f, compio::WalManager::genesis_epoch));
+    fclose(f);
+
+    EXPECT_EQ(recovered_bytes(filename, 4096, 4), std::string(4, '\0'));
+    EXPECT_FALSE(wal.has_pending_recovery());
+}
+
+// A new archive killed before its first flush: it must open, and what was committed to
+// the journal must be there.
+TEST_F(WalRecoveryTest, NewArchiveKilledBeforeFirstFlushKeepsCommittedWrites) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *ar = compio_open_archive(filename, "w", &config);
+    ASSERT_NE(ar, nullptr);
+    write_whole_file(ar, "a", "fresh");
+
+    const std::string image = std::string(filename) + ".image";
+    spit(image, slurp(filename));
+    spit(image + ".wal", slurp(wal_filename));
+    ASSERT_EQ(compio_close_archive(ar), COMPIO_SUCCESS);
+
+    compio_archive *copy = compio_open_archive(image.c_str(), "r+", &config);
+    ASSERT_NE(copy, nullptr) << "a new archive became unopenable after a kill";
+    EXPECT_EQ(read_whole_file(copy, "a"), "fresh");
+    compio_close_archive(copy);
+    remove(image.c_str());
+    remove((image + ".wal").c_str());
+}
+
+// Both headers unreadable: the archive is refused, and the journal that may hold the only
+// copy of recent writes is left alone.
+TEST_F(WalRecoveryTest, UnreadableHeadersDoNotConsumeTheJournal) {
+    make_journal(filename, 3);
+    const std::string journal = slurp(wal_filename);
+    compio_config config;
+    compio_build_default_config(&config);
+    EXPECT_EQ(compio_open_archive(filename, "r+", &config), nullptr);
+    EXPECT_TRUE(slurp(wal_filename) == journal);
 }

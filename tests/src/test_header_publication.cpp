@@ -35,9 +35,23 @@ struct io_fault {
     bool next_seek = false;
     bool every_seek = false;
     int wal_record = -1;
+    // Tears the next journal record of this type after 10 bytes (ENOSPC), skipping `torn_skip` first.
+    int torn_record = -1;
+    int torn_skip = 0;
+    int truncate_descriptor = -1;
 };
 
+struct FsyncTrace {
+    bool on = false;
+    std::string wal;
+    std::vector<std::pair<std::string, bool>> entries; // target, journal existed at that moment
+};
+FsyncTrace trace;
+
 io_fault fault;
+
+// A journal record starts with one fwrite of type, epoch, addr and size.
+constexpr size_t wal_record_fields_bytes = 1 + 8 + 8 + 8;
 
 } // namespace
 
@@ -46,6 +60,7 @@ int __real_fseeko(FILE *, off_t, int);
 size_t __real_fwrite(const void *, size_t, size_t, FILE *);
 int __real_fflush(FILE *);
 int __real_fsync(int);
+int __real_ftruncate(int, off_t);
 
 int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
     if (stream == fault.stream && whence == SEEK_SET && (offset == fault.target || fault.next_seek || fault.every_seek)) {
@@ -61,7 +76,14 @@ int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
 }
 
 size_t __wrap_fwrite(const void *data, size_t size, size_t count, FILE *stream) {
-    if (fault.wal_record >= 0 && stream != fault.stream && size == 1 && count == 1 &&
+    if (fault.torn_record >= 0 && stream != fault.stream && size == 1 && count == wal_record_fields_bytes &&
+        *static_cast<const unsigned char *>(data) == fault.torn_record && fault.torn_skip-- <= 0) {
+        fault.triggered = true;
+        fault.torn_record = -1;
+        errno = ENOSPC;
+        return __real_fwrite(data, 1, 10, stream);
+    }
+    if (fault.wal_record >= 0 && stream != fault.stream && size == 1 && count == wal_record_fields_bytes &&
         *static_cast<const unsigned char *>(data) == fault.wal_record) {
         fault.triggered = true;
         errno = ENOSPC;
@@ -85,7 +107,22 @@ int __wrap_fflush(FILE *stream) {
     return __real_fflush(stream);
 }
 
+int __wrap_ftruncate(int descriptor, off_t length) {
+    if (descriptor == fault.truncate_descriptor) {
+        fault.triggered = true;
+        errno = EIO;
+        return -1;
+    }
+    return __real_ftruncate(descriptor, length);
+}
+
 int __wrap_fsync(int descriptor) {
+    if (trace.on) {
+        std::error_code ec;
+        trace.entries.emplace_back(
+            std::filesystem::read_symlink("/proc/self/fd/" + std::to_string(descriptor), ec).string(),
+            std::filesystem::exists(trace.wal));
+    }
     if (descriptor == fault.descriptor && fault.publishing && fault.kind == failure::sync) {
         fault.triggered = true;
         errno = EIO;
@@ -195,7 +232,8 @@ protected:
     void TearDown() override {
         fault = {};
         if (archive) {
-            EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+            const int expected = archive->is_broken() ? COMPIO_ERROR : COMPIO_SUCCESS;
+            EXPECT_EQ(compio_close_archive(archive), expected);
         }
         remove(path);
         remove((std::string(path) + ".wal").c_str());
@@ -269,7 +307,39 @@ protected:
         }
     }
 
+    // A failed sync leaves the archive unable to promise anything about what it wrote:
+    // retrying could succeed over pages the disk never got. It refuses to write or publish
+    // and keeps the last published state for the next open.
+    void expect_broken() {
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_TRUE(archive->is_broken());
+        if (auto *file = compio_open_file("after_failure", archive)) {
+            errno = 0;
+            EXPECT_EQ(compio_write("x", 1, file), 0u);
+            EXPECT_EQ(errno, EIO);
+            compio_close_file(file);
+        }
+        compio_flush(archive);
+        EXPECT_FALSE(archive->publish_header());
+        EXPECT_EQ(archive->current_header_slot, slot);
+        EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+
+        const compio_config config = archive->config;
+        errno = 0;
+        EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+        EXPECT_EQ(errno, EIO);
+        archive = nullptr;
+
+        archive = compio_open_archive(path, wal_enabled() ? "r+" : "r", &config);
+        ASSERT_NE(archive, nullptr);
+    }
+
     void retry() {
+        if (std::get<1>(GetParam()) == failure::sync) {
+            expect_broken();
+            return;
+        }
         fault = {};
         clearerr(archive->file);
         ASSERT_TRUE(archive->publish_header());
@@ -340,6 +410,10 @@ TEST_P(HeaderPublicationTest, IndexFailureKeepsCheckpointAndRetriesNode) {
     compio_flush(archive);
     expect_old_slot();
     expect_wal_retained();
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -360,6 +434,10 @@ TEST_P(HeaderPublicationTest, IndexFailureMakesBatchFail) {
     EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
     expect_old_slot();
     expect_wal_retained();
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -490,6 +568,10 @@ TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
         EXPECT_EQ(readonly(archive->header, compio::header)->files_table_addr, old_addr);
         EXPECT_EQ(readonly(archive->header, compio::header)->files_table_checksum, old_checksum);
     }
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -507,6 +589,10 @@ TEST_P(HeaderPublicationTest, FilesTableFailureMakesBatchFail) {
     EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
     expect_old_slot();
     expect_wal_retained();
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -554,6 +640,10 @@ TEST_P(HeaderPublicationTest, FailedCheckpointKeepsDeferredBlocksReservedUntilRe
         ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
                   static_cast<ssize_t>(actual.size()));
         EXPECT_EQ(actual, original);
+        if (std::get<1>(GetParam()) == failure::sync) {
+            expect_broken();
+            return;
+        }
         fault = {};
         clearerr(archive->file);
         EXPECT_NE(archive->allocator->allocate(original.size()), offset);
@@ -582,6 +672,10 @@ TEST_P(HeaderPublicationTest, SnapshotFailureKeepsDeferredBlocksReservedUntilRet
     ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
               static_cast<ssize_t>(actual.size()));
     EXPECT_EQ(actual, original);
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     EXPECT_NE(archive->allocator->allocate(original.size()), offset);
@@ -636,6 +730,10 @@ TEST_P(HeaderPublicationTest, RepeatedFlushFailuresPreserveAllocatorSnapshot) {
         ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
                   static_cast<ssize_t>(actual.size()));
         EXPECT_EQ(actual, saved);
+        if (std::get<1>(GetParam()) == failure::sync) {
+            expect_broken();
+            return;
+        }
     }
     retry();
 }
@@ -655,6 +753,10 @@ TEST_P(HeaderPublicationTest, AllocatorWriteFailureAllowsRetry) {
     expect_old_slot();
     EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_offset, pending_offset);
     EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_size, pending_size);
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     ASSERT_TRUE(archive->allocator->save_state(archive));
@@ -686,6 +788,10 @@ TEST_P(HeaderPublicationTest, AllocatorGrowthFailureAllowsRetry) {
         const auto after = archive->allocator->get_fragmentation_stats();
         EXPECT_EQ(after.total_free_bytes, before.total_free_bytes);
         EXPECT_EQ(after.num_free_regions, before.num_free_regions);
+    }
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
     }
     fault = {};
     clearerr(archive->file);
@@ -1273,15 +1379,17 @@ TEST_P(BlockWriteTest, EvictionFailurePreventsAutomaticWalCheckpoint) {
     auto *file = compio_open_file("other", archive);
     ASSERT_NE(file, nullptr);
     const std::string data(8 * config.block_size, 'x');
-    EXPECT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    errno = 0;
+    EXPECT_EQ(compio_write(data.data(), data.size(), file), 0u);
+    EXPECT_EQ(errno, EIO);
     EXPECT_TRUE(fault.triggered);
     EXPECT_TRUE(archive->block_reader->has_write_error());
     EXPECT_GT(std::filesystem::file_size(std::string(path) + ".wal"), 0u);
     EXPECT_EQ(compio_close_file(file), COMPIO_SUCCESS);
     fault = {};
     clearerr(archive->file);
-    // The commit of the write already reported the failure; the blocks stayed
-    // dirty, so this flush retries them and publishes.
+    // The write reported the failed commit; the blocks stayed dirty, so this
+    // flush retries them and publishes.
     compio_flush(archive);
     EXPECT_GT(readonly(archive->header, compio::header)->sequence_id, sequence);
     retry_and_reopen();
@@ -1352,3 +1460,197 @@ INSTANTIATE_TEST_SUITE_P(
     WalCompressionReclamationAndCache, BlockWriteTest,
     ::testing::Combine(::testing::Bool(), ::testing::Bool(), ::testing::Bool(),
                        ::testing::Values(0, 1, 3)));
+
+namespace {
+
+// The descriptor stdio holds for `target`, found through /proc.
+int descriptor_of(const std::string &target) {
+    for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+        std::error_code ec;
+        if (std::filesystem::read_symlink(entry.path(), ec) == target) return std::stoi(entry.path().filename());
+    }
+    return -1;
+}
+
+std::string read_a(compio_archive *archive) {
+    compio_file *file = compio_open_file("a", archive);
+    if (!file) return "";
+    char buf[16] = {};
+    const size_t n = compio_read(buf, sizeof(buf), file);
+    compio_close_file(file);
+    return std::string(buf, n);
+}
+
+}  // namespace
+
+TEST(WalSyncFailure, WalSyncFailureBreaksArchive) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("a", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write("base", 4, file), 4u);
+    compio_flush(archive);
+    const uint64_t sequence = readonly(archive->header, compio::header)->sequence_id;
+
+    fault = {};
+    fault.descriptor = descriptor_of(std::string(std::filesystem::absolute(path)) + ".wal");
+    ASSERT_GE(fault.descriptor, 0);
+    fault.publishing = true;
+    fault.kind = failure::sync;
+    compio_seek(file, 0, COMPIO_SEEK_SET);
+    compio_write("neww", 4, file);
+    compio_flush(archive);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_TRUE(archive->is_broken());
+
+    fault = {};
+    errno = 0;
+    EXPECT_EQ(compio_write("more", 4, file), 0u);
+    EXPECT_EQ(errno, EIO);
+    compio_flush(archive);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    compio_close_file(file);
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+
+    archive = compio_open_archive(path, "r+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    const std::string content = read_a(archive);
+    EXPECT_TRUE(content == "base" || content == "neww") << content;
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    remove(path);
+    remove((std::string(path) + ".wal").c_str());
+}
+
+// A record that fails midway leaves a fragment; the journal must be cut back, or every
+// later commit lands behind bytes recovery cannot get past.
+TEST(WalSyncFailure, WriteReportsNothingWrittenWhenCommitFails) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("a", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write("base", 4, file), 4u);
+
+    fault = {};
+    fault.descriptor = descriptor_of(std::string(std::filesystem::absolute(path)) + ".wal");
+    ASSERT_GE(fault.descriptor, 0);
+    fault.publishing = true;
+    fault.kind = failure::sync;
+    errno = 0;
+    EXPECT_EQ(compio_write("more", 4, file), 0u);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_EQ(errno, EIO);
+    fault = {};
+    EXPECT_TRUE(archive->is_broken());
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+    remove(path);
+}
+
+TEST(WalTornRecord, FailedRecordWriteDoesNotHideLaterCommits) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    FILE *archive = fopen(path, "w+b");
+    ASSERT_NE(archive, nullptr);
+    const std::vector<char> zeros(8192, 0);
+    ASSERT_EQ(fwrite(zeros.data(), 1, zeros.size(), archive), zeros.size());
+    fflush(archive);
+
+    compio::WalManager wal(path);
+    ASSERT_TRUE(wal.open());
+    wal.set_epoch(3);
+    const auto block = static_cast<int>(compio::WalRecordType::BLOCK);
+
+    wal.begin_transaction();
+    ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, 4096, "AAAA", 4));
+    ASSERT_TRUE(wal.commit_transaction());
+
+    fault = {};
+    fault.stream = archive;
+    fault.torn_record = block;
+    wal.begin_transaction();
+    EXPECT_FALSE(wal.log_write(compio::WalRecordType::BLOCK, 4100, "BBBB", 4));
+    EXPECT_TRUE(fault.triggered);
+    wal.rollback_transaction();
+    fault = {};
+
+    wal.begin_transaction();
+    ASSERT_TRUE(wal.log_write(compio::WalRecordType::BLOCK, 4104, "CCCC", 4));
+    ASSERT_TRUE(wal.commit_transaction());
+    wal.close();
+
+    compio::WalManager recovery(path);
+    ASSERT_TRUE(recovery.recover(archive, 3));
+    char got[12] = {};
+    ASSERT_EQ(fseek(archive, 4096, SEEK_SET), 0);
+    ASSERT_EQ(fread(got, 1, 12, archive), 12u);
+    EXPECT_EQ(std::string(got, 4), "AAAA");
+    EXPECT_EQ(std::string(got + 8, 4), "CCCC");
+    fclose(archive);
+    remove(path);
+    remove((std::string(path) + ".wal").c_str());
+}
+
+// The journal is truncated after a header is published. If that fails, records of the next
+// epoch would land behind the old epoch's, where recovery stops: nothing may be logged.
+TEST(WalSyncFailure, FailedCheckpointAfterPublishBreaksArchive) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("a", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write("base", 4, file), 4u);
+
+    fault = {};
+    fault.truncate_descriptor = descriptor_of(std::string(std::filesystem::absolute(path)) + ".wal");
+    ASSERT_GE(fault.truncate_descriptor, 0);
+    compio_flush(archive);
+    EXPECT_TRUE(fault.triggered);
+    fault = {};
+    EXPECT_TRUE(archive->is_broken());
+
+    errno = 0;
+    EXPECT_EQ(compio_write("more", 4, file), 0u);
+    EXPECT_EQ(errno, EIO);
+    compio_close_file(file);
+    compio_close_archive(archive);
+    remove(path);
+    remove((std::string(path) + ".wal").c_str());
+}
+
+// Creating the journal adds a directory entry; without a directory fsync after it, a power
+// cut can take the journal, and the commits in it, away.
+TEST(WalDirectory, JournalEntryIsSyncedAfterItIsCreated) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    const std::string absolute = std::filesystem::absolute(path).string();
+    const std::string directory = std::filesystem::path(absolute).parent_path().string();
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    trace = {};
+    trace.on = true;
+    trace.wal = absolute + ".wal";
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    trace.on = false;
+    ASSERT_NE(archive, nullptr);
+    bool synced = false;
+    for (const auto &[target, wal_existed] : trace.entries) synced |= target == directory && wal_existed;
+    EXPECT_TRUE(synced);
+    compio_close_archive(archive);
+    remove(path);
+    remove((absolute + ".wal").c_str());
+}

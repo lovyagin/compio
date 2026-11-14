@@ -878,11 +878,7 @@ bool block_allocator::save_state(compio_archive *archive) {
     if (result && wal_) {
         // After writing allocator state to disk, we must ensure it hits physical storage
         // before we might update the header pointing to it.
-        #ifdef _WIN32
-        result = _commit(_fileno(archive->file)) == 0;
-        #else
-        result = fsync(fileno(archive->file)) == 0;
-        #endif
+        result = archive->sync_data();
     }
     
     return result;

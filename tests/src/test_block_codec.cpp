@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <fstream>
 
 #include <cerrno>
 #include <cstdint>
@@ -177,6 +178,28 @@ TEST_F(BlockCodecTest, OpenWithAnotherCompressorNeedsPermission) {
     EXPECT_TRUE(read_matches(archive, "before", before));
     EXPECT_TRUE(read_matches(archive, "after", after));
     ASSERT_EQ(compio_close_archive(archive), 0);
+}
+
+// A refused open must leave the file as it was: the live header slot is rewritten only by
+// a checked, double-buffered publication.
+TEST_F(BlockCodecTest, RefusedOpenDoesNotRewriteTheHeader) {
+    compio_archive *archive = open("w+", config);
+    ASSERT_NE(archive, nullptr);
+    write_file(archive, "before", pattern(40000, 4));
+    ASSERT_EQ(compio_close_archive(archive), 0);
+
+    const auto slurp = [&] {
+        std::ifstream in(fn, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const std::string before = slurp();
+
+    compio_config other = config;
+    compio_build_zstd_compressor(&other.compressor);
+    other.allow_compressor_change = true;
+    other.b_tree_degree = config.b_tree_degree + 1;
+    EXPECT_EQ(open("r+", other), nullptr);
+    EXPECT_TRUE(slurp() == before) << "a refused open modified the archive";
 }
 
 TEST_F(BlockCodecTest, RecompressRewritesOnlyBlocksOfOtherCodecs) {

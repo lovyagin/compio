@@ -26,6 +26,7 @@ protected:
 TEST_F(WalFormatTest, EnforcesLittleEndianOnDisk) {
     compio::WalManager wal(filename);
     ASSERT_TRUE(wal.open());
+    wal.set_epoch(0x0102030405060708);
 
     // Use a pattern that is distinct in LE vs BE
     // 0x1234567890ABCDEF
@@ -43,13 +44,19 @@ TEST_F(WalFormatTest, EnforcesLittleEndianOnDisk) {
     ASSERT_TRUE(f.is_open());
 
     // Record structure:
-    // [Type(1)][Addr(8)][Size(8)][Checksum(4)]
+    // [Type(1)][Epoch(8)][Addr(8)][Size(8)][Checksum(4)]
     // ... data ...
     
     // Read Type
     char type;
     f.read(&type, 1);
     ASSERT_EQ(static_cast<uint8_t>(type), static_cast<uint8_t>(compio::WalRecordType::BLOCK));
+
+    // Read Epoch (8 bytes), Little Endian
+    uint8_t epoch_bytes[8];
+    f.read(reinterpret_cast<char*>(epoch_bytes), 8);
+    ASSERT_EQ(epoch_bytes[0], 0x08);
+    ASSERT_EQ(epoch_bytes[7], 0x01);
 
     // Read Addr (8 bytes)
     uint8_t addr_bytes[8];

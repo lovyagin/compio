@@ -1,5 +1,6 @@
 #include "compio/utils.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -292,6 +293,39 @@ int64_t ftell64(FILE *file) {
     return _ftelli64(file);
 #else
     return static_cast<int64_t>(ftello(file));
+#endif
+}
+
+} // namespace compio
+namespace compio {
+
+bool sync_file(FILE *file) {
+    if (fflush(file) != 0) return false;
+#ifdef _WIN32
+    return _commit(_fileno(file)) == 0;
+#else
+    const int fd = fileno(file);
+#ifdef __APPLE__
+    if (fcntl(fd, F_FULLFSYNC) == 0) return true;
+    if (errno != ENOTSUP && errno != EINVAL && errno != ENOTTY) return false;
+#endif
+    return fsync(fd) == 0;
+#endif
+}
+
+bool sync_parent_directory(const std::string &path) {
+#ifdef _WIN32
+    (void)path;
+    return true;
+#else
+    const size_t slash = path.find_last_of('/');
+    std::string dir = slash == std::string::npos ? "." : path.substr(0, slash);
+    if (dir.empty()) dir = "/";
+    const int fd = open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+    if (fd < 0) return false;
+    const bool ok = fsync(fd) == 0;
+    close(fd);
+    return ok;
 #endif
 }
 

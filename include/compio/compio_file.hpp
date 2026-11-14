@@ -1,6 +1,7 @@
 #ifndef COMPIO_FILE_HEADER_
 #define COMPIO_FILE_HEADER_
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <shared_mutex>
@@ -67,6 +68,15 @@ struct compio_archive {
     std::unordered_set<std::string> table_dirty;
     // Between compio_begin_transaction and its commit or abort: no header is published.
     bool in_transaction = false;
+    // Set by a failed sync of the archive file. Linux reports a lost write once and then
+    // forgets it, so a retry could succeed over pages that never reached the disk: the
+    // archive refuses writes and publications from then on. Reads keep working.
+    std::atomic<bool> broken{false};
+
+    // Flushes and syncs the archive file; a failure breaks the archive.
+    bool sync_data();
+    // The archive file or its journal failed a sync.
+    bool is_broken() const;
 
     compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config);
     bool is_readonly() const;

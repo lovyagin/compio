@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 #include <cstdio>
 #include "compio.h"
@@ -31,9 +32,10 @@ enum class WalRecordType : uint8_t {
  */
 struct WalRecordHeader {
     WalRecordType type;     ///< Type of record (BLOCK, INDEX_NODE, META, COMMIT)
+    uint64_t epoch;         ///< sequence_id of the archive header this record extends
     uint64_t addr;          ///< Address/offset in the main archive file where data will be written
     uint64_t size;          ///< Size of the record payload in bytes
-    uint32_t checksum;      ///< FNV-1a (32-bit) of the payload for integrity verification
+    uint32_t checksum;      ///< FNV-1a (32-bit) of the other header fields and the payload
 };
 
 /**
@@ -69,6 +71,11 @@ struct WalRecordHeader {
  * @endcode
  */
 class WalManager {
+public:
+    /// Epoch of an archive no header was ever published for: nothing exists yet for a journal to extend, so none is replayed.
+    static constexpr uint64_t genesis_epoch = UINT64_MAX;
+
+private:
     std::string wal_path_;
     FILE* wal_file_;
     std::mutex mutex_;
@@ -76,6 +83,10 @@ class WalManager {
     int transaction_depth_ = 0;
     int batch_depth_ = 0;
     uint64_t current_wal_size_ = 0;
+    uint64_t epoch_ = genesis_epoch;
+    // Set by a failed sync. Linux reports a lost write once and then forgets it, so a
+    // retry could succeed over pages that never reached the disk: nothing is logged after.
+    std::atomic<bool> failed_{false};
     compio_wal_sync_mode sync_mode_ = COMPIO_WAL_SYNC_ALWAYS;
 
 public:
@@ -288,6 +299,9 @@ public:
      * Should be called once at archive open time if WAL exists.
      *
      * @param[in] archive_file Opened archive file to replay WAL into
+     * @param[in] epoch sequence_id of the newest valid archive header, or genesis_epoch
+     *            when the file holds none. Records that carry another epoch belong to
+     *            an older publication and are dropped.
      * @param[out] meta Payload of the last committed META record, if any. The
      *             WAL is then kept: the caller applies the payload and
      *             truncates it once the result is published.
@@ -299,7 +313,20 @@ public:
      *
      * @see has_pending_recovery()
      */
-    bool recover(FILE* archive_file, std::vector<uint8_t>* meta = nullptr);
+    bool recover(FILE* archive_file, uint64_t epoch, std::vector<uint8_t>* meta = nullptr);
+
+    /**
+     * @brief Sets the epoch stamped on every record logged from now on
+     *
+     * Call with the sequence_id of the archive header the journal extends: at open,
+     * and after every header publication.
+     */
+    void set_epoch(uint64_t epoch);
+
+    /**
+     * @brief True once a sync of the journal failed; every later write is refused
+     */
+    bool failed() const { return failed_; }
 
     /**
      * @brief Checks if WAL has pending recovery work
@@ -311,7 +338,9 @@ public:
     bool has_pending_recovery() const;
 
 private:
-    uint32_t calculate_checksum(const void* data, uint64_t size);
+    bool sync_wal();
+    bool abandon_record(uint64_t start);
+    bool write_record(WalRecordType type, uint64_t addr, const iovec_buf* buffers, size_t count);
     
     // Internal implementations without mutex locking
     void begin_transaction_impl();

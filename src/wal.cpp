@@ -21,25 +21,141 @@
 namespace compio {
 
 // Helper for Little-Endian I/O
-static bool write_u64_le(FILE* f, uint64_t v) {
-    if (is_big_endian()) swap_uint64(&v);
-    return fwrite(&v, sizeof(v), 1, f) == 1;
-}
-
 static bool write_u32_le(FILE* f, uint32_t v) {
     if (is_big_endian()) swap_uint32(&v);
     return fwrite(&v, sizeof(v), 1, f) == 1;
 }
 
-static bool read_u64_le(FILE* f, uint64_t* v) {
-    if (fread(v, sizeof(*v), 1, f) != 1) return false;
-    if (is_big_endian()) swap_uint64(v);
-    return true;
-}
-
 static bool read_u32_le(FILE* f, uint32_t* v) {
     if (fread(v, sizeof(*v), 1, f) != 1) return false;
     if (is_big_endian()) swap_uint32(v);
+    return true;
+}
+
+// Record: [type u8][epoch u64][addr u64][size u64][checksum u32][payload]. The
+// checksum covers the 25 header bytes before it and the payload, so a torn or
+// bit-rotted header can never redirect a valid payload to another address.
+static constexpr size_t kRecordFieldsBytes = 1 + 8 + 8 + 8;
+static constexpr uint64_t kRecordHeaderBytes = kRecordFieldsBytes + 4;
+static constexpr uint64_t kMaxRecordPayload = 64ULL * 1024 * 1024;
+
+static void put_u64_le(uint8_t* out, uint64_t v) {
+    for (int i = 0; i < 8; ++i) out[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+
+static uint64_t get_u64_le(const uint8_t* in) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; ++i) v |= static_cast<uint64_t>(in[i]) << (8 * i);
+    return v;
+}
+
+static void encode_record_fields(uint8_t* out, WalRecordType type, uint64_t epoch, uint64_t addr, uint64_t size) {
+    out[0] = static_cast<uint8_t>(type);
+    put_u64_le(out + 1, epoch);
+    put_u64_le(out + 9, addr);
+    put_u64_le(out + 17, size);
+}
+
+namespace {
+
+struct ParsedRecord {
+    uint8_t type = 0;
+    uint64_t epoch = 0;
+    uint64_t addr = 0;
+    std::vector<uint8_t> payload;
+};
+
+// Reads the record at the current position. False when it is truncated, claims
+// more than the file holds, or fails its checksum.
+bool read_record(FILE* f, int64_t file_size, ParsedRecord* rec) {
+    uint8_t fields[kRecordFieldsBytes];
+    if (fread(fields, 1, sizeof(fields), f) != sizeof(fields)) return false;
+    uint32_t expected;
+    if (!read_u32_le(f, &expected)) return false;
+
+    const uint64_t size = get_u64_le(fields + 17);
+    const int64_t pos = ftell64(f);
+    if (pos < 0 || size > static_cast<uint64_t>(file_size - pos) || size > kMaxRecordPayload) return false;
+
+    rec->payload.assign(size, 0);
+    if (size > 0 && fread(rec->payload.data(), 1, size, f) != size) return false;
+
+    uint32_t computed = fnv1a_32(fields, sizeof(fields));
+    if (size > 0) computed = fnv1a_32_continue(computed, rec->payload.data(), size);
+    if (computed != expected) return false;
+
+    rec->type = fields[0];
+    rec->epoch = get_u64_le(fields + 1);
+    rec->addr = get_u64_le(fields + 9);
+    return true;
+}
+
+}  // namespace
+
+bool WalManager::sync_wal() {
+    if (failed_) return false;
+    // A flush that fails midway leaves an unknown part of the buffer in the file.
+    if (fflush(wal_file_) != 0) {
+        failed_ = true;
+        return false;
+    }
+    if (!compio::sync_file(wal_file_)) {
+        failed_ = true;
+        return false;
+    }
+    return true;
+}
+
+// A record that fails midway leaves a fragment in the file, and later records would land
+// behind it, where recovery cannot get past. Cut the journal back to where the record began.
+// If that is not possible the journal can no longer be trusted: nothing is logged after.
+bool WalManager::abandon_record(uint64_t start) {
+    fclose(wal_file_); // may write out what was buffered; the file is measured afterwards
+    wal_file_ = nullptr;
+    current_wal_size_ = start;
+
+    bool cut = false;
+    if (FILE* f = fopen(wal_path_.c_str(), "rb+")) {
+        if (fseek64(f, 0, SEEK_END) == 0) {
+            const int64_t size = ftell64(f);
+            if (size >= 0 && static_cast<uint64_t>(size) >= start) {
+#ifdef _WIN32
+                cut = _chsize_s(_fileno(f), static_cast<int64_t>(start)) == 0;
+#else
+                cut = ftruncate(fileno(f), static_cast<off_t>(start)) == 0;
+#endif
+            }
+        }
+        fclose(f);
+    }
+    if (cut) wal_file_ = fopen(wal_path_.c_str(), "ab+");
+    if (!wal_file_) failed_ = true;
+    return false;
+}
+
+bool WalManager::write_record(WalRecordType type, uint64_t addr, const iovec_buf* buffers, size_t count) {
+    if (failed_) return false;
+    const uint64_t start = current_wal_size_;
+    uint64_t size = 0;
+    for (size_t i = 0; i < count; ++i) size += buffers[i].size;
+
+    uint8_t fields[kRecordFieldsBytes];
+    encode_record_fields(fields, type, epoch_, addr, size);
+    uint32_t checksum = fnv1a_32(fields, sizeof(fields));
+    for (size_t i = 0; i < count; ++i) {
+        if (buffers[i].size > 0) {
+            checksum = fnv1a_32_continue(checksum, static_cast<const uint8_t*>(buffers[i].data), buffers[i].size);
+        }
+    }
+
+    if (fwrite(fields, 1, sizeof(fields), wal_file_) != sizeof(fields)) return abandon_record(start);
+    if (!write_u32_le(wal_file_, checksum)) return abandon_record(start);
+    for (size_t i = 0; i < count; ++i) {
+        if (buffers[i].size > 0 && fwrite(buffers[i].data, 1, buffers[i].size, wal_file_) != buffers[i].size) {
+            return abandon_record(start);
+        }
+    }
+    current_wal_size_ += kRecordHeaderBytes + size;
     return true;
 }
 
@@ -57,10 +173,18 @@ bool WalManager::open() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (wal_file_) return true;
 
+    struct stat existing;
+    const bool existed = stat(wal_path_.c_str(), &existing) == 0;
+
     // Open for append/update, binary
     wal_file_ = fopen(wal_path_.c_str(), "ab+");
     if (!wal_file_) {
         // Maybe try to create it? "ab+" should create if not exists.
+        return false;
+    }
+    if (!existed && !compio::sync_parent_directory(wal_path_)) {
+        fclose(wal_file_);
+        wal_file_ = nullptr;
         return false;
     }
     
@@ -92,79 +216,15 @@ void WalManager::close() {
 bool WalManager::log_write(WalRecordType type, uint64_t addr, const void* data, uint64_t size) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!wal_file_) return false;
-
-    // Checksum: always use the same convention as recovery/commit logic
-    uint32_t checksum = calculate_checksum(data, size);
-
-    // Prepare Header
-    // We serialize type as uint8_t
-    uint8_t type_u8 = static_cast<uint8_t>(type);
-    
-    // Write Header Fields
-    // Format: [Type(1)][Addr(8)][Size(8)][Checksum(4)]
-    // Transaction ID? Maybe skip for now, just simple log.
-    
-    if (fwrite(&type_u8, sizeof(uint8_t), 1, wal_file_) != 1) return false;
-    if (!write_u64_le(wal_file_, addr)) return false;
-    if (!write_u64_le(wal_file_, size)) return false;
-    if (!write_u32_le(wal_file_, checksum)) return false;
-    
-    // Write Data
-    if (size > 0) {
-        if (fwrite(data, 1, size, wal_file_) != size) return false;
-    }
-    
-    // Update size tracker
-    // Record size = 1 (type) + 8 (addr) + 8 (size) + 4 (checksum) + data_size
-    current_wal_size_ += (1 + 8 + 8 + 4 + size);
-
-    // Flush to OS buffer is DEFERRED until commit or sync
-    // This improves performance for batched writes.
-    // if (fflush(wal_file_) != 0) return false;
-
-    return true;
+    const iovec_buf buffer{data, size};
+    // Flush to the OS is deferred until commit or sync: batched writes stay cheap.
+    return write_record(type, addr, &buffer, 1);
 }
 
 bool WalManager::log_write_vectored(WalRecordType type, uint64_t addr, const std::vector<iovec_buf>& buffers) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!wal_file_) return false;
-
-    uint64_t total_size = 0;
-    for (const auto& buf : buffers) {
-        total_size += buf.size;
-    }
-
-    // Checksum: initialize using the same zero-length convention as calculate_checksum(nullptr, 0)
-    uint32_t checksum = calculate_checksum(nullptr, 0);
-    for (const auto& buf : buffers) {
-        if (buf.size > 0) {
-            checksum = fnv1a_32_continue(
-                checksum,
-                static_cast<const uint8_t*>(buf.data),
-                buf.size
-            );
-        }
-    }
-
-    // Prepare Header
-    uint8_t type_u8 = static_cast<uint8_t>(type);
-    
-    if (fwrite(&type_u8, sizeof(uint8_t), 1, wal_file_) != 1) return false;
-    if (!write_u64_le(wal_file_, addr)) return false;
-    if (!write_u64_le(wal_file_, total_size)) return false;
-    if (!write_u32_le(wal_file_, checksum)) return false;
-    
-    // Write Data
-    for (const auto& buf : buffers) {
-        if (buf.size > 0) {
-            if (fwrite(buf.data, 1, buf.size, wal_file_) != buf.size) return false;
-        }
-    }
-    
-    // Update size tracker
-    current_wal_size_ += (1 + 8 + 8 + 4 + total_size);
-
-    return true;
+    return write_record(type, addr, buffers.data(), buffers.size());
 }
 
 void WalManager::begin_transaction() {
@@ -209,36 +269,16 @@ bool WalManager::commit_transaction_impl(compio_wal_sync_mode sync_mode) {
 
     if (transaction_depth_ > 0) return true; // Nested commit, defer actual commit
 
-    // Write COMMIT record
-    // Type=255, Addr=0, Size=0, Checksum=FNV1a(empty)
-    uint8_t type = static_cast<uint8_t>(WalRecordType::COMMIT);
-    uint64_t zero = 0;
-    
-    // Compute checksum of empty data for consistency
-    uint32_t checksum = calculate_checksum(nullptr, 0);
-    
-    if (fwrite(&type, sizeof(uint8_t), 1, wal_file_) != 1) return false;
-    if (!write_u64_le(wal_file_, zero)) return false; // Addr
-    if (!write_u64_le(wal_file_, zero)) return false; // Size
-    if (!write_u32_le(wal_file_, checksum)) return false; // Checksum
-    
-    // Update size for COMMIT record (1+8+8+4 = 21 bytes)
-    current_wal_size_ += 21;
+    if (!write_record(WalRecordType::COMMIT, 0, nullptr, 0)) return false;
 
     // Based on sync_mode, decide whether to fsync, fflush, or nothing
-    if (sync_mode != COMPIO_WAL_SYNC_OFF) {
-        if (fflush(wal_file_) != 0) return false;
-    }
-
     if (sync_mode == COMPIO_WAL_SYNC_ALWAYS) {
-        // Force sync for durability
-#ifdef _WIN32
-        int fd = _fileno(wal_file_);
-        if (_commit(fd) != 0) return false;
-#else
-        int fd = fileno(wal_file_);
-        if (fsync(fd) != 0) return false;
-#endif
+        if (!sync_wal()) return false;
+    } else if (sync_mode != COMPIO_WAL_SYNC_OFF) {
+        if (fflush(wal_file_) != 0) {
+            failed_ = true;
+            return false;
+        }
     }
 
     return true;
@@ -260,17 +300,7 @@ bool WalManager::sync() {
         return true;
     }
     
-    if (fflush(wal_file_) != 0) return false;
-    
-    // fsync
-#ifdef _WIN32
-    int fd = _fileno(wal_file_);
-    if (_commit(fd) != 0) return false;
-#else
-    int fd = fileno(wal_file_);
-    if (fsync(fd) != 0) return false;
-#endif
-    return true;
+    return sync_wal();
 }
 
 bool WalManager::checkpoint() {
@@ -280,22 +310,29 @@ bool WalManager::checkpoint() {
     if (transaction_depth_ > 0) return false;
     
     if (!wal_file_) return true; // Nothing to truncate
+    if (failed_) return false;   // The journal may hold the only copy of lost pages
 
-    if (fflush(wal_file_) != 0) return false;
+    // The header this journal extends may already be replaced: records of the next epoch
+    // must not land behind the old ones, so a checkpoint that fails ends all logging.
+    if (fflush(wal_file_) != 0) {
+        failed_ = true;
+        return false;
+    }
 
 #ifdef _WIN32
     int fd = _fileno(wal_file_);
-    if (_chsize_s(fd, 0) != 0) return false;
-    // Seek to beginning for subsequent writes
-    if (_lseek(fd, 0, SEEK_SET) == -1) return false;
-    if (_commit(fd) != 0) return false;
+    if (_chsize_s(fd, 0) != 0 || _lseek(fd, 0, SEEK_SET) == -1) {
+        failed_ = true;
+        return false;
+    }
 #else
     int fd = fileno(wal_file_);
-    if (ftruncate(fd, 0) != 0) return false;
-    // Seek to beginning for subsequent writes
-    if (lseek(fd, 0, SEEK_SET) < 0) return false;
-    if (fsync(fd) != 0) return false;
+    if (ftruncate(fd, 0) != 0 || lseek(fd, 0, SEEK_SET) < 0) {
+        failed_ = true;
+        return false;
+    }
 #endif
+    if (!sync_wal()) return false;
 
     // Update stdio buffer position as well
     rewind(wal_file_);
@@ -311,11 +348,17 @@ bool WalManager::clear() {
         wal_file_ = nullptr;
     }
     
-    // Truncate file
-    wal_file_ = fopen(wal_path_.c_str(), "wb"); // 'w' truncates
-    if (!wal_file_) return false;
-    fclose(wal_file_);
-    wal_file_ = nullptr;
+    // Truncate file. The truncation and a new directory entry must reach the disk, or a
+    // journal of an earlier archive at this path can come back and be replayed.
+    struct stat existing;
+    const bool existed = stat(wal_path_.c_str(), &existing) == 0;
+    const bool had_content = existed && existing.st_size > 0;
+    FILE* truncated = fopen(wal_path_.c_str(), "wb"); // 'w' truncates
+    if (!truncated) return false;
+    const bool durable = (existed && !had_content) ||
+                         (compio::sync_file(truncated) && (existed || compio::sync_parent_directory(wal_path_)));
+    fclose(truncated);
+    if (!durable) return false;
     
     // Reopen in append mode
     lock.unlock();
@@ -330,7 +373,7 @@ bool WalManager::has_pending_recovery() const {
     return false;
 }
 
-bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
+bool WalManager::recover(FILE* archive_file, uint64_t epoch, std::vector<uint8_t>* meta) {
     std::unique_lock<std::mutex> lock(mutex_);
     // Close current handle if open, to read from start
     if (wal_file_) {
@@ -341,73 +384,32 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
     FILE* wal_in = fopen(wal_path_.c_str(), "rb");
     if (!wal_in) return true; // No WAL, nothing to recover
 
-    // Check size
     fseek64(wal_in, 0, SEEK_END);
-    int64_t size = ftell64(wal_in);
+    const int64_t size = ftell64(wal_in);
     rewind(wal_in);
-    
+
     if (size == 0) {
         fclose(wal_in);
         return true;
     }
 
-    // Pass 1: Scan for valid transactions
+    // Pass 1: the committed prefix is every record up to the last COMMIT, as long
+    // as each record is intact and extends the header of the given epoch. A torn
+    // tail, a corrupt record or a journal left over from an older publication ends
+    // the scan; what follows is never replayed.
     uint64_t valid_limit = 0;
-    while (true) {
-        // current_pos was unused
-        
-        uint8_t type_u8;
-        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) break;
-        
-        uint64_t addr;
-        if (!read_u64_le(wal_in, &addr)) break;
-        
-        uint64_t data_size;
-        if (!read_u64_le(wal_in, &data_size)) break;
-        
-        // Sanity check for data size to prevent OOM on corrupt WAL
-        // 1GB limit seems reasonable for a single record? Or even smaller.
-        // Block size is usually 4KB-64KB. Header is small.
-        int64_t current_pos = ftell64(wal_in);
-        int64_t remaining = size - current_pos;
-        if (data_size > static_cast<uint64_t>(remaining)) {
-            // Record claims to be larger than remaining file size -> corrupt
-            break;
-        }
-        if (data_size > 64 * 1024 * 1024) { // 64MB hard limit for sanity
-             break;
-        }
-
-        uint32_t expected_checksum;
-        if (!read_u32_le(wal_in, &expected_checksum)) break;
-        
-        if (data_size > 0) {
-            if (fseek64(wal_in, data_size, SEEK_CUR) != 0) break;
-        }
-        
-        // Note: In Pass 1 we strictly rely on COMMIT record to mark valid boundary.
-        // But for backward compatibility (allocator records without COMMIT), we might need to be smarter.
-        // However, we just updated allocator to use COMMIT.
-        // What if we have old WALs? They will be ignored!
-        // This is a risk. But typically WAL is empty on upgrade.
-        // Let's assume we require COMMIT for durability.
-        
-        if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
-            // Validate COMMIT record structure: addr=0, size=0, checksum=valid
-            // And ensure we have seen valid records leading up to this commit.
-            // Since we don't track transaction boundaries in Pass 1, we just check
-            // that the COMMIT record itself is structurally valid.
-            uint32_t valid_checksum = calculate_checksum(nullptr, 0);
-            if (addr == 0 && data_size == 0 && expected_checksum == valid_checksum) {
-                valid_limit = ftell64(wal_in);
-            }
+    ParsedRecord rec;
+    while (epoch != genesis_epoch && read_record(wal_in, size, &rec) && rec.epoch == epoch) {
+        if (rec.type == static_cast<uint8_t>(WalRecordType::COMMIT)) {
+            if (rec.addr != 0 || !rec.payload.empty()) break;
+            valid_limit = ftell64(wal_in);
         }
     }
-    
+
     // Pass 2: Replay up to valid_limit
     rewind(wal_in);
     bool success = true;
-    
+
     // Buffer of pending records for the current transaction. These are only
     // applied to the archive when a COMMIT record is encountered.
     std::vector<std::pair<uint64_t, std::vector<uint8_t>>> pending_records;
@@ -425,39 +427,17 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
         if (static_cast<uint64_t>(pos) >= valid_limit) {
             break;
         }
-        uint8_t type_u8;
-        if (fread(&type_u8, sizeof(uint8_t), 1, wal_in) != 1) { success = false; break; }
-        
-        uint64_t addr;
-        if (!read_u64_le(wal_in, &addr)) { success = false; break; }
-        
-        uint64_t data_size;
-        if (!read_u64_le(wal_in, &data_size)) { success = false; break; }
-        
-        uint32_t expected_checksum;
-        if (!read_u32_le(wal_in, &expected_checksum)) { success = false; break; }
-        
-        std::vector<uint8_t> buffer(data_size);
-        if (data_size > 0) {
-            if (fread(buffer.data(), 1, data_size, wal_in) != data_size) { success = false; break; }
-        }
-        
-        // Verify checksum before doing anything with the record
-        uint32_t computed_checksum = calculate_checksum(buffer.data(), data_size);
-            
-        if (computed_checksum != expected_checksum) {
-            fprintf(stderr, "[WAL] Corrupt record at addr %" PRIu64 ". Type=%u, Size=%" PRIu64 ", Expected Checksum=%u, Computed Checksum=%u\n",
-                    addr, type_u8, data_size, expected_checksum, computed_checksum);
+        if (!read_record(wal_in, size, &rec)) {
+            fprintf(stderr, "[WAL] Record changed between recovery passes at offset %" PRId64 ".\n", pos);
             success = false;
             break;
         }
 
         // On COMMIT, apply all buffered records atomically to the archive.
-        if (type_u8 == static_cast<uint8_t>(WalRecordType::COMMIT)) {
-            for (const auto &rec : pending_records) {
-                uint64_t rec_addr = rec.first;
-                const std::vector<uint8_t> &rec_data = rec.second;
-                if (fseek64(archive_file, rec_addr, SEEK_SET) != 0) {
+        if (rec.type == static_cast<uint8_t>(WalRecordType::COMMIT)) {
+            for (const auto &pending : pending_records) {
+                const std::vector<uint8_t> &rec_data = pending.second;
+                if (fseek64(archive_file, pending.first, SEEK_SET) != 0) {
                     fprintf(stderr, "[WAL] Failed to seek during recovery.\n");
                     success = false;
                     break;
@@ -481,16 +461,16 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
             has_pending_meta = false;
             continue;
         }
-        
+
         // Non-COMMIT records are buffered until we see a COMMIT.
-        if (type_u8 == static_cast<uint8_t>(WalRecordType::META)) {
-            pending_meta = std::move(buffer);
+        if (rec.type == static_cast<uint8_t>(WalRecordType::META)) {
+            pending_meta = std::move(rec.payload);
             has_pending_meta = true;
             continue;
         }
-        pending_records.emplace_back(addr, std::move(buffer));
+        pending_records.emplace_back(rec.addr, std::move(rec.payload));
     }
-    
+
     fclose(wal_in);
     
     if (!success) {
@@ -503,14 +483,7 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
 
     // Clear WAL after successful recovery
     // Sync archive first
-    if (fflush(archive_file) != 0) return false;
-#ifdef _WIN32
-    int fd = _fileno(archive_file);
-    if (_commit(fd) != 0) return false;
-#else
-    int fd = fileno(archive_file);
-    if (fsync(fd) != 0) return false;
-#endif
+    if (!compio::sync_file(archive_file)) return false;
 
     // A META record is applied by the caller, which truncates the WAL once the
     // state it describes is published.
@@ -522,13 +495,7 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
     // Now clear WAL (durable truncation)
     FILE* wal_trunc = fopen(wal_path_.c_str(), "wb");
     if (wal_trunc) {
-        if (fflush(wal_trunc) == 0) {
-#ifdef _WIN32
-            _commit(_fileno(wal_trunc));
-#else
-            fsync(fileno(wal_trunc));
-#endif
-        }
+        compio::sync_file(wal_trunc);
         fclose(wal_trunc);
     }
 
@@ -537,9 +504,9 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
     return open();
 }
 
-uint32_t WalManager::calculate_checksum(const void* data, uint64_t size) {
-    // FNV-1a 32-bit
-    return fnv1a_32(static_cast<const uint8_t*>(data), size);
+void WalManager::set_epoch(uint64_t epoch) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    epoch_ = epoch;
 }
 
 void WalManager::begin_batch() {
@@ -569,6 +536,7 @@ bool WalManager::end_batch() {
         return true;
     }
     
+    if (failed_) return false;
     if (!wal_file_) return true;
     
     if (transaction_depth_ != 0) {
