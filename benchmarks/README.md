@@ -1,0 +1,186 @@
+# Compio Benchmarks
+
+Comprehensive benchmark suite for testing Compio library performance and fragmentation characteristics.
+
+## Available Benchmarks
+
+### 1. **Main Performance Benchmarks** (`compio_benchmarks`)
+Google Benchmark-based performance tests for core operations.
+
+**What it tests:**
+- Consecutive read/write performance
+- Random read/write performance
+- Allocator performance across different strategies
+
+**Run:**
+```bash
+cd build/benchmarks
+./compio_benchmarks
+```
+
+### Cantor set generation (`cantor_set`, `cantor_compare.py`)
+Generates a random Cantor set in R^n: the cube [-1, 1]^n is split into m^n subcubes, each
+survives with probability p, the step repeats k times, and the last generation is replaced
+by one random point per cube. Every generation is a logical file read sequentially while the
+next one is appended, so the working set is the files, not memory. Backends: `stdio`, `ram`
+and `compio` (any compressor, WAL on or off). All backends consume the same random stream
+and print the same checksum.
+
+```bash
+cd build/benchmarks
+./cantor_set --backend=compio --compressor=zstd --n=3 --m=4 --p=0.1 --k=9 --keep=1
+python3 ../../benchmarks/cantor_compare.py ./cantor_set --runs 5 --dir /path/on/disk -- --k=9
+```
+
+The expected dimension is `ln(m^n p) / ln(m)`; the run prints it next to the measured one.
+Wall time depends on the disk, so compare the `cpu_seconds` line as well.
+
+### 2. **Fragmentation Benchmark** (`fragmentation_benchmark`)
+Advanced parametric grid testing for memory fragmentation under realistic workloads.
+
+**What it tests:**
+- 4 allocation strategies (FIRST_FIT, BEST_FIT, WORST_FIT, NEXT_FIT)
+- 6 block sizes (512B - 16KB)
+- 5 compression ratios (10% - 90% compressible data)
+- 6 deletion patterns (aggressive small/large/mixed, random/middle)
+- **Total: 720 test configurations**
+
+**Key metrics:**
+- Overhead percentage (wasted space)
+- Fragmentation level (0-100)
+- Free region count
+- Files created/deleted/rewritten
+
+**Run:**
+```bash
+cd build/benchmarks
+./fragmentation_benchmark                    # default: fragmentation_results.*
+./fragmentation_benchmark my_test            # custom: my_test.csv, my_test_report.txt
+```
+
+**Output:**
+- `fragmentation_results.csv` - detailed data for all 720 tests
+- `fragmentation_results_report.txt` - human-readable summary with rankings
+
+**Key findings:**
+- **BEST_FIT** shows lowest fragmentation
+
+- **Deletion pattern matters**: Random deletion creates more fragmentation
+- **Optimal block size**: 4-8 KB gives best balance
+
+### 3. **File Size Benchmark** (`fsize_benchmark`)
+Tests archive size efficiency across different configurations.
+
+**Run:**
+```bash
+cd build/benchmarks
+./fsize_benchmark
+```
+
+### 4. **Random Usage Benchmark** (`random_usage`)
+Simulates realistic mixed workload patterns.
+
+**Run:**
+```bash
+cd build/benchmarks
+./random_usage
+```
+
+### 5. **Random Modification Benchmark** (`random_modification`)
+Sustained random overwrites / inserts / erases of one logical file. Shows whether
+throughput and the container size degrade as modifications accumulate.
+
+**Key metrics** (one CSV row per window of operations):
+- operations per second and MiB/s
+- container size and space actually allocated on disk (they differ with hole punching)
+- free bytes, number of free regions, fragmentation percent
+- container / data ratio
+
+Sequential and random read speed are reported before and after the modifications.
+
+**Run:**
+```bash
+cd build/benchmarks
+./random_modification --file-mb=256 --ops=40000 --window=10000 --cache-blocks=1024
+./random_modification --strategy=first --threshold=30 --overwrite=60 --insert=20 --erase=20
+./random_modification --data=/path/to/enwik9 --file-mb=1024 --compressor=zstd
+```
+
+All options are listed at the top of `custom/random_modification.cpp`.
+
+### 6. **Free Space Scaling** (`free_space_scaling`)
+Cost of the free space manager against the number of free regions, without any
+file I/O: time to build the set of regions (paid when an archive is opened), one
+allocation and one release, for each placement strategy. Output is CSV.
+
+**Run:**
+```bash
+cd build/benchmarks
+./free_space_scaling            # 1000 ... 256000 regions
+./free_space_scaling 4096000
+```
+
+### 7. **Parallel Compression** (`parallel_compression`)
+Write throughput of one file against `compression_threads`, for each built-in
+compressor, with and without the write-ahead log. Text-like data is written in
+1 MiB calls; the time includes closing the archive. Best of three runs. Output is CSV.
+
+**Run:**
+```bash
+cd build/benchmarks
+./parallel_compression            # 256 MiB
+./parallel_compression 1024 /path/on/target/disk.compio
+```
+
+## Quick Start
+
+### Build all benchmarks:
+```bash
+cd build
+cmake ..
+make compio_benchmarks fragmentation_benchmark fsize_benchmark random_usage
+```
+
+### Run fragmentation benchmark:
+```bash
+cd build/benchmarks
+./fragmentation_benchmark
+```
+
+### Analyze results:
+```bash
+cd benchmarks
+./analyze_fragmentation.sh
+```
+
+Or specify custom CSV file:
+```bash
+./analyze_fragmentation.sh /path/to/custom_results.csv
+```
+
+## Interpreting Results
+
+### Fragmentation Benchmark Results
+
+**Overhead Percentage:**
+- `< 20%`: Excellent - minimal wasted space
+- `20-40%`: Good - acceptable fragmentation
+- `40-60%`: Poor - significant waste
+- `> 60%`: Critical - severe fragmentation
+
+**Free Regions Count:**
+- Lower is better (more contiguous free space)
+- High count indicates scattered small gaps
+
+**Strategy Selection Guide:**
+- **BEST_FIT**: Best for minimizing wasted space (recommended for most cases)
+- **FIRST_FIT**: Fast, reasonable overhead
+- **WORST_FIT**: Useful when future large allocations expected
+- **NEXT_FIT**: Generally worst, but can help in cyclic access patterns
+
+## Output Files
+
+All benchmarks output to `build/benchmarks/`:
+- `fragmentation_results.csv` - raw data (720 rows)
+- `fragmentation_results_report.txt` - formatted analysis
+- Performance benchmark results go to stdout (redirect to save)

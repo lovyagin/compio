@@ -1,0 +1,170 @@
+#include <gtest/gtest.h>
+#include <filesystem>
+#include <vector>
+#include <cstring>
+#include <cstdlib>
+#include <random>
+#include "compio.h"
+#include "compio/compio_file.hpp"
+#include "test_util.hpp"
+
+namespace fs = std::filesystem;
+
+class AutoCheckpointTest : public ::testing::Test {
+protected:
+    char archive_path[256];
+    std::string wal_path;
+
+    void SetUp() override {
+        generate_tmp_fn(archive_path, sizeof(archive_path));
+        wal_path = std::string(archive_path) + ".wal";
+    }
+
+    void TearDown() override {
+        if (fs::exists(archive_path)) fs::remove(archive_path);
+        if (fs::exists(wal_path)) fs::remove(wal_path);
+    }
+    
+    uint64_t get_wal_size() {
+        if (fs::exists(wal_path)) {
+            return fs::file_size(wal_path);
+        }
+        return 0;
+    }
+};
+
+static uint64_t published_sequence(compio_archive *archive) {
+    return readonly(archive->header, compio::header)->sequence_id;
+}
+
+static compio_config tiny_wal_limit_config() {
+    compio_config config;
+    compio_build_default_config(&config);
+    // Set tiny limit so even a COMMIT record exceeds it.
+    config.wal_max_size_bytes = 1;
+    config.block_size = 512;
+    // Evict on every block so the data reaches the WAL during the write.
+    config.cache_size__blocks = 1;
+    return config;
+}
+
+static std::vector<uint8_t> random_bytes(size_t size) {
+    std::mt19937 rng(12345);
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
+    std::vector<uint8_t> data(size);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
+    return data;
+}
+
+TEST_F(AutoCheckpointTest, PublishesHeaderWhenWalExceedsLimit) {
+    const compio_config config = tiny_wal_limit_config();
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file* file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+
+    const std::vector<uint8_t> data = random_bytes(2000);
+    const uint64_t sequence = published_sequence(archive);
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+
+    // The journal is truncated only after a newer header is published.
+    EXPECT_GT(published_sequence(archive), sequence);
+    EXPECT_EQ(get_wal_size(), 0);
+
+    compio_seek(file, 0, COMPIO_SEEK_SET);
+    std::vector<uint8_t> read_buf(data.size());
+    ASSERT_EQ(compio_read(read_buf.data(), read_buf.size(), file), read_buf.size());
+    EXPECT_EQ(read_buf, data);
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+TEST_F(AutoCheckpointTest, ExplicitBatchDefersLimitCheckpoint) {
+    const compio_config config = tiny_wal_limit_config();
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    compio_file* file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+
+    const std::vector<uint8_t> data = random_bytes(2000);
+    const uint64_t sequence = published_sequence(archive);
+    ASSERT_EQ(compio_begin_batch(archive), COMPIO_SUCCESS);
+    ASSERT_EQ(compio_write(data.data(), data.size(), file), data.size());
+    EXPECT_EQ(published_sequence(archive), sequence);
+    EXPECT_GT(get_wal_size(), 0);
+
+    ASSERT_EQ(compio_end_batch(archive), COMPIO_SUCCESS);
+    EXPECT_GT(published_sequence(archive), sequence);
+    EXPECT_EQ(get_wal_size(), 0);
+
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+TEST_F(AutoCheckpointTest, CheckpointDisabledWithZeroLimit) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_max_size_bytes = 0;
+    config.block_size = 512; // Must set small block size to force eviction with cache_size=1
+    config.cache_size__blocks = 1; // Force WAL writes
+    
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    
+    compio_file* file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    
+    // Write incompressible data
+    std::mt19937 rng(12345);
+    std::uniform_int_distribution<unsigned int> dist(0, 255);
+    std::vector<uint8_t> data(2000);
+    for(size_t i=0; i<data.size(); ++i) data[i] = static_cast<uint8_t>(dist(rng));
+    
+    uint64_t written = compio_write(data.data(), data.size(), file);
+    ASSERT_EQ(written, data.size());
+    
+    // WAL size should be > 0 (no checkpoint when limit is 0).
+    
+    uint64_t wal_size = get_wal_size();
+    EXPECT_GT(wal_size, 0);
+    
+    compio_close_file(file);
+    compio_close_archive(archive);
+}
+
+TEST_F(AutoCheckpointTest, FlushTruncatesWal) {
+    compio_config config;
+    compio_build_default_config(&config);
+    config.wal_max_size_bytes = 1024 * 1024; // Large limit to prevent auto-checkpoint
+    config.block_size = 512;
+    config.cache_size__blocks = 100; // Large cache to hold data until flush
+    
+    compio_archive* archive = compio_open_archive(archive_path, "w+", &config);
+    ASSERT_NE(archive, nullptr);
+    
+    compio_file* file = compio_open_file("data", archive);
+    ASSERT_NE(file, nullptr);
+    
+    // Write data
+    std::vector<uint8_t> data(2000, 'A');
+    uint64_t written = compio_write(data.data(), data.size(), file);
+    ASSERT_EQ(written, data.size());
+    
+    // Force flush
+    compio_flush(archive);
+    
+    // After flush, WAL size should be 0 (truncated).
+    // Note: get_wal_size() returns actual file size. 
+    // If truncated properly, it should be 0.
+    EXPECT_EQ(get_wal_size(), 0);
+    
+    // Verify data is readable
+    compio_seek(file, 0, COMPIO_SEEK_SET);
+    std::vector<uint8_t> read_buf(2000);
+    ASSERT_EQ(compio_read(read_buf.data(), 2000, file), 2000);
+    EXPECT_EQ(std::memcmp(read_buf.data(), data.data(), 2000), 0);
+    
+    compio_close_file(file);
+    compio_close_archive(archive);
+}

@@ -1,0 +1,117 @@
+find_package(GTest REQUIRED)
+
+add_executable(compio_gtest
+    test_runner.cpp
+    src/test_allocator.cpp
+    src/test_allocator_comprehensive.cpp
+    src/test_allocator_advanced.cpp
+    src/test_allocator_edge_cases.cpp
+    src/test_allocator_serialization.cpp
+    src/test_deferred_free.cpp
+    src/test_allocator_strategies.cpp
+    src/test_allocator_drift.cpp
+    src/test_api_limits.cpp
+    src/test_block_codec.cpp
+    src/test_compression_type.cpp
+    src/test_compressor.cpp
+    src/test_data_integrity.cpp
+    src/test_defragmentation.cpp
+    src/test_defragmentation_advanced.cpp
+    src/test_library.cpp
+    src/test_file_removal.cpp
+    src/test_files_table_lifecycle.cpp
+    src/test_files_table_v6.cpp
+    src/test_files_table_compression.cpp
+    src/test_flat_map.cpp
+    src/test_btree.cpp
+    src/test_btree_advanced.cpp
+    src/test_btree_edge_cases.cpp
+    src/test_btree_range_add.cpp
+    src/test_btree_get_block.cpp
+    src/test_insert_erase.cpp
+    src/test_free_space_manager.cpp
+    src/test_feature_flags.cpp
+    src/test_sync.cpp
+    src/test_max_files.cpp
+    src/test_concurrency.cpp
+    src/test_concurrency_advanced.cpp
+    src/test_header_validation.cpp
+    src/test_hole_punching.cpp
+    src/test_max_files_scalability.cpp
+    src/test_crash_protection.cpp
+    src/test_crash_sigkill.cpp
+    src/test_wal_table_delta.cpp
+    src/test_flush_files_table.cpp
+    src/test_flush_durability.cpp
+    src/test_batch_durability.cpp
+    src/test_wal_recovery.cpp
+    src/test_wal_format.cpp
+    src/test_auto_checkpoint.cpp
+    src/test_block_cache.cpp
+    src/test_data_integrity_strict.cpp
+    src/test_concurrency_stress.cpp
+    src/test_concurrency_maintenance.cpp
+    src/test_parallel_compression.cpp
+    src/test_transactions.cpp
+    src/test_checksums.cpp
+    src/test_repair.cpp
+    src/test_wal_sync_mode.cpp
+    src/test_dynamic_files_table.cpp
+    src/test_auto_batching.cpp
+    src/test_range_cache.cpp
+    src/test_cpp_wrapper.cpp
+)
+
+target_link_libraries(compio_gtest PRIVATE compio GTest::GTest GTest::Main)
+target_include_directories(compio_gtest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Checks that are run by hand and are not part of the test suite: they report
+# how an archive survives a SIGKILL (crash_consistency) and a damaged index
+# node (index_corruption).
+if (UNIX)
+    add_executable(crash_consistency crash/crash_consistency.cpp)
+    target_link_libraries(crash_consistency PRIVATE compio)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_definitions(crash_consistency PRIVATE COMPIO_CRASH_HEADER_CUT)
+        target_link_options(crash_consistency PRIVATE -Wl,--wrap=fseeko -Wl,--wrap=fsync)
+    endif()
+
+    find_package(Python3 3.9 COMPONENTS Interpreter QUIET)
+    if (Python3_Interpreter_FOUND)
+        add_test(NAME crash_consistency_harness
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/crash/test_crash_consistency.py
+                    $<TARGET_FILE:crash_consistency>)
+        set_tests_properties(crash_consistency_harness PROPERTIES TIMEOUT 120)
+    endif()
+
+    add_executable(mixed_kill crash/mixed_kill.cpp)
+    target_link_libraries(mixed_kill PRIVATE compio)
+    add_test(NAME mixed_kill_short COMMAND mixed_kill 15 1 1 200)
+    set_tests_properties(mixed_kill_short PROPERTIES TIMEOUT 120)
+
+    add_executable(index_corruption crash/index_corruption.cpp)
+    target_link_libraries(index_corruption PRIVATE compio)
+
+    add_executable(compaction_crash crash/compaction_crash.cpp)
+    target_link_libraries(compaction_crash PRIVATE compio)
+    target_include_directories(compaction_crash PRIVATE ${PROJECT_SOURCE_DIR})
+    foreach (wal 0 1)
+        add_test(NAME compaction_crash_wal${wal}
+            COMMAND compaction_crash 25 ${wal} 2 4096 1 4000)
+        set_tests_properties(compaction_crash_wal${wal} PROPERTIES TIMEOUT 120)
+    endforeach()
+endif()
+
+enable_testing()
+
+add_test(NAME compio_gtest_tests COMMAND compio_gtest)
+
+# Link-time I/O faults stay confined to this executable and out of the library.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_executable(header_publication_tests src/test_header_publication.cpp)
+    target_link_libraries(header_publication_tests PRIVATE compio GTest::GTest GTest::Main)
+    target_include_directories(header_publication_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_options(header_publication_tests PRIVATE
+        -Wl,--wrap=fseeko -Wl,--wrap=fwrite -Wl,--wrap=fflush -Wl,--wrap=fsync -Wl,--wrap=ftruncate)
+    add_test(NAME header_publication_tests COMMAND header_publication_tests)
+endif()

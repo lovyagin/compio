@@ -1,0 +1,548 @@
+#define __STDC_FORMAT_MACROS
+#include "compio/storage_block_reader.hpp"
+#include "compio/wal.hpp"
+#include "compio/file.hpp"
+
+#include <algorithm>
+#include <cassert>
+#include <cerrno>
+#include <cstring>
+#include <mutex>
+#include <cinttypes>
+#include <algorithm>
+#include <vector>
+
+#include "compio/debug_print.hpp"
+
+namespace compio {
+
+static thread_local bool tl_maintenance_mode = false;
+
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+long long bm_n_blocks = 0;
+#endif
+
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+long long bm_n_compressed_bytes = 0;
+long long bm_n_decompressed_bytes = 0;
+#endif
+
+block::block(context_t &context, const tree_key &key, uint64_t addr)
+    : context(context),
+      _key(key),
+      _addr(addr),
+      _c_size(0),
+      _data(nullptr),
+      _size(0),
+      _is_modified(false),
+      _is_removed(false),
+      _is_valid(true) {
+
+    storage_block b;
+    {
+        std::unique_lock<std::mutex> lock;
+        if (context.io_mutex)
+            lock = std::unique_lock<std::mutex>(*context.io_mutex);
+        if (!b.read_from(context.file, addr)) {
+            WARNING_PRINT("warning: failed to read storage block at addr %" PRIu64 "\n", addr);
+            _is_valid = false;
+            return;
+        }
+    }
+
+    // Only the hash (file identity) is checked: pos legitimately drifts when
+    // add_to_range/shift moves keys without rewriting on-disk blocks, so a pos
+    // mismatch is expected. A hash mismatch means the index points at a block
+    // of a different file: genuine corruption, reject it.
+    if (b.src_key.hash != key.hash) {
+        WARNING_PRINT("warning: storage block at addr %" PRIu64 " hash mismatch: "
+                      "index {%" PRIu64 ",%" PRIu64 "} != block {%" PRIu64 ",%" PRIu64 "}\n",
+                      addr, key.hash, key.pos, b.src_key.hash, b.src_key.pos);
+        _is_valid = false;
+        return;
+    }
+
+    _codec = b.codec;
+    _c_size = b.size;
+    _size = b.original_size;
+
+    if (b.is_compressed()) {
+        const compio_compressor *compressor = context.compressors->find(b.codec);
+        if (!compressor) {
+            WARNING_PRINT("warning: no compressor registered for codec %u of the block at addr %" PRIu64 "\n",
+                          b.codec, addr);
+            _is_valid = false;
+            return;
+        }
+        _data = std::make_unique<uint8_t[]>(_size);
+        int ret = compressor->decompress(compressor, _data.get(), &_size, b.data.get(), b.size);
+        if (ret != 0 || _size != b.original_size) {
+            WARNING_PRINT("warning: block at addr %" PRIu64 " does not decompress to %" PRIu64 " bytes\n", addr,
+                          b.original_size);
+            errno = EIO;
+            _is_valid = false;
+            return;
+        }
+        if (storage_block::compute_data_checksum(b.checksum_type, _data.get(), _size) != b.data_checksum) {
+            WARNING_PRINT("warning: decompressed data of the block at addr %" PRIu64 " fails its checksum\n", addr);
+            errno = EIO;
+            _is_valid = false;
+            return;
+        }
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+        bm_n_decompressed_bytes += _size;
+#endif
+    } else {
+        _data = std::move(b.data);
+    }
+}
+
+block::block(context_t &context, const tree_key &key, uint64_t size, bool unused)
+    : context(context),
+      _key(key),
+      _addr(0),
+      _c_size(0),
+      _data(std::make_unique<uint8_t[]>(size)),
+      _size(size),
+      _is_modified(true),
+      _is_removed(false),
+      _is_valid(true) {
+    context.mark_dirty(this);
+    UNUSED(unused);
+}
+
+bool block::write_back() {
+    if (!_is_valid) {
+        errno = EIO;
+        return false;
+    }
+    if (!needs_write_back()) return true;
+    storage_block packed;
+    pack(packed);
+    return store(packed);
+}
+
+void block::pack(storage_block &b) const {
+    const compio_compressor *compressor = context.compressors->active();
+    b = storage_block(compressor->get_bufsize(compressor, _size));
+    b.original_size = _size;
+    b.checksum_type = context.checksum_type;
+    b.src_key = _key;
+
+    int ret = compressor->compress(compressor, b.data.get(), &b.size, _data.get(), _size);
+    if (ret != 0 || b.size > _size) {
+        if (ret != 0) {
+            WARNING_PRINT("warning: compressor->compress returned %d\n", ret);
+        }
+
+        b.codec = storage_block::codec_stored;
+        b.data = std::make_unique<uint8_t[]>(_size);
+        std::memcpy(b.data.get(), _data.get(), _size);
+        b.size = _size;
+    } else {
+        b.codec = static_cast<uint32_t>(compressor->compression_type);
+        b.data_checksum = storage_block::compute_data_checksum(b.checksum_type, _data.get(), _size);
+    }
+}
+
+bool block::store(storage_block &b) {
+#ifdef COMPIO_BENCHMARK_COMPRESSION_BYTES
+    if (b.codec != storage_block::codec_stored) bm_n_compressed_bytes += _size;
+#endif
+    const uint64_t disk_size = STORAGE_BLOCK_METASIZE + b.size;
+    const uint64_t new_addr = context.allocator->allocate(disk_size);
+    if (new_addr == UINT64_MAX) {
+        if (!errno) errno = ENOSPC;
+        return false;
+    }
+
+    bool written;
+    if (context.io_mutex) {
+        std::lock_guard<std::mutex> lock(*context.io_mutex);
+        written = b.write_to(context.file, new_addr, context.wal);
+    } else {
+        written = b.write_to(context.file, new_addr, context.wal);
+    }
+
+    const bool updated = written && (tl_maintenance_mode
+        ? context.index->_update_impl(_key, {new_addr, _size})
+        : context.index->update(_key, {new_addr, _size}));
+    if (!updated) {
+        const int error = errno ? errno : EIO;
+        context.allocator->deallocate(new_addr, disk_size, false);
+        errno = error;
+        return false;
+    }
+    // Preserve the old allocation until the replacement is written and indexed.
+    if (_addr != 0) {
+        context.allocator->deallocate(_addr, _c_size + STORAGE_BLOCK_METASIZE, false);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            // save allocated address to temporary_index
+            context.temporary_index[_key] = new_addr;
+        }
+    }
+
+    _addr = new_addr;
+    _c_size = b.size;
+    _codec = b.codec;
+    _is_modified = false;
+    context.clear_dirty(this);
+    return true;
+}
+
+const uint8_t *block::data() const { return _data.get(); }
+
+uint8_t *block::data() {
+    set_modified();
+    return _data.get();
+}
+
+bool block::is_valid() const { return _is_valid; }
+
+void block::shrink(uint64_t new_size) {
+    assert(new_size < _size);
+    set_modified();
+    _size = new_size;
+    // Range operations need the new logical size before write-back.
+    context.index->update(_key, {_addr, new_size});
+}
+
+void block::grow(uint64_t new_size) {
+    assert(new_size > _size);
+
+    std::unique_ptr<uint8_t[]> new_data(new uint8_t[new_size]);
+    std::copy_n(_data.get(), _size, new_data.get());
+    _data = std::move(new_data);
+
+    set_modified();
+    _size = new_size;
+    context.index->update(_key, {_addr, new_size});
+}
+
+void block::remove() {
+    _is_removed = true;
+    context.clear_dirty(this);
+}
+
+void block::shift_key(int64_t addition) {
+    assert(addition != 0);
+    // A shift moves the block within its file without touching its data, so the
+    // copy on disk stays valid: the index carries the new position, and the
+    // position stored inside the block is allowed to lag behind (blocks that are
+    // not cached are never rewritten on a shift either).
+    DEBUG_PRINT("[B][shift_key]: key.pos=%" PRIu64 ", shifting with addition=%" PRId64 "\n", _key.pos, addition);
+    _key += addition;
+}
+
+void block::set_key(const tree_key &new_key) {
+    if (_key != new_key) {
+        set_modified();
+        _key = new_key;
+    }
+}
+
+const tree_key &block::key() const { return _key; }
+
+uint64_t block::size() const { return _size; }
+
+uint64_t block::addr() const { return _addr; }
+
+uint64_t block::c_size() const { return _c_size; }
+
+storage_block_reader::storage_block_reader(FILE *file, block_allocator *allocator, btree *index,
+                                           compressor_set *compressors, int max_size,
+                                           std::mutex *io_mutex, compio::WalManager *wal,
+                                           compio_checksum_type checksum_type, unsigned compression_threads)
+    : context{file, allocator, index, compressors, io_mutex, wal, checksum_type},
+      cache(max_size, shard_by_hash{},
+            [this](const std::shared_ptr<block> &b) { return prepare_eviction(b); }),
+      packers(compression_threads),
+      max_blocks(max_size > 0 ? static_cast<size_t>(max_size) : 0) {}
+
+std::shared_ptr<block> storage_block_reader::read_block(uint64_t addr, tree_key key) {
+    DEBUG_PRINT("[SBR][read_block]: addr=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", addr, key.hash,
+                key.pos);
+#if !defined(NDEBUG) && defined(COMPIO_DEBUG_PRINT)
+    {
+        auto keys = cache.debug_keys();
+        DEBUG_PRINT("[SBR][CACHE]: cache contents (%zu entries):\n", keys.size());
+        for (const auto &k : keys) {
+            DEBUG_PRINT("\t{%lu, %lu}\n", k.hash, k.pos);
+        }
+    }
+#endif
+
+    auto b_cached = cache.get(key);
+    if (b_cached.has_value()) {
+        DEBUG_PRINT("[SBR][read_block]: cache hit\n");
+        return b_cached.value();
+    }
+    DEBUG_PRINT("[SBR][read_block]: cache miss\n");
+    
+    if (context.temp_index_refcount.load(std::memory_order_acquire) > 0) {
+        // Only lock if temporary index is active (double-checked optimization)
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        // check in temporary index first
+        auto it = context.temporary_index.find(key);
+        if (it != context.temporary_index.end()) {
+            addr = it->second;
+            DEBUG_PRINT("[SBR][read_block]: getting addr from temporary_index: addr=%" PRIu64 "\n", (uint64_t)addr);
+        }
+#ifndef NDEBUG
+            auto val = context.index->get(key);
+            assert(val.has_value());
+            // assert(val.value().addr == addr); // This assert is race-prone in concurrent environment
+#endif
+    }
+    
+    if (addr == 0) {
+        // If addr is 0 and not in cache, it might have been evicted and flushed by another thread.
+        // Re-query index to get the authoritative address.
+        auto val = context.index->get(key);
+        if (val.has_value()) {
+            addr = val.value().addr;
+             DEBUG_PRINT("[SBR][read_block]: re-queried index for stale addr=0, got addr=%" PRIu64 "\n", addr);
+        }
+    }
+
+    auto b = std::make_shared<block>(context, key, addr);
+    if (!b->is_valid()) {
+        return nullptr;
+    }
+    cache.put(key, b);
+    return b;
+}
+
+std::shared_ptr<block> storage_block_reader::create_block(uint64_t size, tree_key key) {
+    DEBUG_PRINT("[SBR][create_block]: size=%" PRIu64 ", key.hash=%" PRIu64 ", key.pos=%" PRIu64 "\n", 
+                (uint64_t)size, (uint64_t)key.hash, (uint64_t)key.pos);
+    auto b_cached = cache.get(key);
+    if (b_cached.has_value()) {
+        WARNING_PRINT("warning: trying to create block with key (%llu, %llu), that "
+                      "already exists in storage_block_reader.cache\n",
+                      (unsigned long long)key.hash, (unsigned long long)key.pos);
+        return b_cached.value();
+    }
+    auto b = std::make_shared<block>(context, key, size, false);
+    cache.put(key, b);
+
+    // adding element to btree, but without file address (we didn't allocate memory block yet)
+    // Checked write-back fills in the address before eviction or checkpoint.
+    context.index->insert(key, {0, size});
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+    ++bm_n_blocks;
+#endif
+    return b;
+}
+
+// Order in which blocks are written out. Blocks that already have a place go
+// first, by address. New blocks
+// follow in logical order, so that a file written in one go is laid out front
+// to back and reads sequentially on disk.
+static void sort_for_write_back(std::vector<block *> &blocks) {
+    std::sort(blocks.begin(), blocks.end(), [](const block *a, const block *b) {
+        bool a_exists = a->addr() != 0;
+        bool b_exists = b->addr() != 0;
+        if (a_exists != b_exists) {
+            return a_exists;
+        }
+        if (a_exists) {
+            return a->addr() < b->addr();
+        }
+        const tree_key &ka = a->key();
+        const tree_key &kb = b->key();
+        return ka.hash != kb.hash ? ka.hash < kb.hash : ka.pos < kb.pos;
+    });
+}
+
+bool storage_block_reader::prepare_eviction(const std::shared_ptr<block> &b) {
+    if (b.use_count() != 1) return false;
+    if (b->write_back()) return true;
+    int expected = 0;
+    write_error.compare_exchange_strong(expected, errno ? errno : EIO);
+    return false;
+}
+
+bool storage_block_reader::clear_cache() {
+    if (!flush_cache()) {
+        int expected = 0;
+        write_error.compare_exchange_strong(expected, errno ? errno : EIO);
+        return false;
+    }
+    // Keep externally held blocks canonical: callers may still modify them.
+    for (const auto &b : cache.values()) {
+        if (b.use_count() == 2) cache.remove(b->key());
+    }
+    return true;
+}
+
+bool storage_block_reader::flush_cache() {
+    int error = write_error.exchange(0);
+    std::vector<block *> blocks;
+    {
+        std::lock_guard<std::mutex> lock(context.dirty_mutex);
+        blocks.assign(context.dirty.begin(), context.dirty.end());
+    }
+    sort_for_write_back(blocks);
+
+    // Blocks are compressed in parallel, then placed and indexed in order. An
+    // external compressor is called from one thread: it need not be reentrant.
+    const bool parallel = packers.threads() > 1 &&
+                          context.compressors->active()->compression_type < COMPIO_COMPRESS_CUSTOM;
+    const size_t group = parallel ? 8 * static_cast<size_t>(packers.threads()) : 1;
+    std::vector<storage_block> packed;
+    for (size_t first = 0; first < blocks.size(); first += group) {
+        const size_t count = std::min(group, blocks.size() - first);
+        if (count == 1 || !parallel) {
+            block *b = blocks[first];
+            if (!b->write_back() && !error) error = errno ? errno : EIO;
+            continue;
+        }
+        packed.clear();
+        packed.resize(count);
+        packers.run(count, [&](size_t i) {
+            if (blocks[first + i]->needs_write_back()) blocks[first + i]->pack(packed[i]);
+        });
+        for (size_t i = 0; i < count; ++i) {
+            block *b = blocks[first + i];
+            bool ok;
+            if (!b->is_valid()) {
+                errno = EIO;
+                ok = false;
+            } else {
+                ok = !b->needs_write_back() || b->store(packed[i]);
+            }
+            if (!ok && !error) error = errno ? errno : EIO;
+        }
+    }
+    flush_failed.store(error != 0);
+    if (error) {
+        errno = error;
+        return false;
+    }
+    return true;
+}
+
+bool storage_block_reader::write_back_if_crowded() {
+    if (packers.threads() < 2 || max_blocks < 2 || has_write_error()) return true;
+    {
+        std::lock_guard<std::mutex> lock(context.dirty_mutex);
+        if (context.dirty.size() < max_blocks / 2) return true;
+    }
+    return flush_cache();
+}
+
+void storage_block_reader::set_maintenance_mode(bool enabled) {
+    tl_maintenance_mode = enabled;
+}
+
+double storage_block_reader::get_cache_hit_probability() const { return cache.get_hit_probability(); }
+
+void storage_block_reader::enable_temporary_index() {
+    // Lock-free on the hot read path: refcount is atomic and the map is only
+    // touched (under temp_index_mutex) when refcount transitions to 0.
+    context.temp_index_refcount.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void storage_block_reader::disable_temporary_index() {
+    // Decrement, flooring at 0 (matches the previous guarded behaviour).
+    int cur = context.temp_index_refcount.load(std::memory_order_relaxed);
+    while (cur > 0 && !context.temp_index_refcount.compare_exchange_weak(
+                          cur, cur - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+    }
+    if (cur == 1) {
+        // We performed the 1->0 transition; clear the map unless another thread
+        // has re-enabled it in the meantime.
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount.load(std::memory_order_acquire) == 0) {
+            context.temporary_index.clear();
+        }
+    }
+}
+
+void storage_block_reader::invalidate_temporary_index() {
+    std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+    context.temporary_index.clear();
+}
+
+void storage_block_reader::add_to_range(int64_t addition, const tree_key &key_min,
+                                        const tree_key &key_max) {
+    DEBUG_PRINT("[SBR][add_to_range]: adding %" PRId64 " to range [%" PRIu64 ", %" PRIu64 "]\n", addition, key_min.pos,
+                key_max.pos);
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        // shift keys in temporary index
+        auto it_start = context.temporary_index.lower_bound(key_min);
+        auto it_end = context.temporary_index.upper_bound(key_max);
+        std::vector<std::pair<tree_key, uint64_t>> items_to_update;
+        for (auto it = it_start; it != it_end; ++it) {
+            items_to_update.push_back(*it);
+        }
+        context.temporary_index.erase(it_start, it_end);
+        for (const auto &[key, addr] : items_to_update) {
+            assert(context.temporary_index.find(key + addition) == context.temporary_index.end());
+            context.temporary_index[key + addition] = addr;
+        }
+    }
+
+    cache.for_each_in_range(key_min, key_max,
+        [addition](tree_key& new_key, std::shared_ptr<block>& b) {
+            b->shift_key(addition);
+            new_key = b->key();
+        });
+}
+
+void storage_block_reader::rename_block(const tree_key &old_key, const tree_key &new_key, std::shared_ptr<block> b) {
+    DEBUG_PRINT("[SBR][rename_block]: old_key.pos=%" PRIu64 ", new_key.pos=%" PRIu64 "\n", old_key.pos, new_key.pos);
+
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            auto it = context.temporary_index.find(old_key);
+            if (it != context.temporary_index.end()) {
+                uint64_t addr = it->second;
+                context.temporary_index.erase(it);
+                context.temporary_index[new_key] = addr;
+            }
+        }
+    }
+
+    b->set_key(new_key);
+
+    if (cache.exists(old_key)) {
+        cache.remove(old_key);
+        cache.put(new_key, b);
+    }
+}
+
+void storage_block_reader::remove_block(std::shared_ptr<block> b) {
+    DEBUG_PRINT("[SBR]removing block with key.pos=%" PRIu64 "\n", b->key().pos);
+    b->remove();
+    const auto &key = b->key();
+    if (cache.exists(key)) {
+        // when cache_size=0, storage_block_reader returns blocks from read/create, but don't save
+        // them in cache, so we should check it
+        cache.remove(key);
+    }
+    {
+        std::lock_guard<std::mutex> lock(context.temp_index_mutex);
+        if (context.temp_index_refcount > 0) {
+            context.temporary_index.erase(key);
+        }
+    }
+    context.index->remove(key);
+    if (b->addr() != 0) {
+        context.allocator->deallocate(b->addr(), b->c_size() + STORAGE_BLOCK_METASIZE);
+    }
+#ifdef COMPIO_BENCHMARK_BLOCKS_COUNTER
+    --bm_n_blocks;
+#endif
+}
+
+bool storage_block_reader::cache_contains(const tree_key &key) const { return cache.exists(key); }
+
+} // namespace compio

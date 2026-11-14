@@ -50,3 +50,55 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Documentation
+docs/dev/html/
+docs/public/html/
+
+# IDE-specific files (for CLion and other JetBrains products)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Build directories (for CMake)
+build/
+build_release/
+build-*/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Testing/
+CTestTestfile.cmake
+cmake_install.cmake
+tests/Makefile
+CMakeUserPresets.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*.bak
+*.old
+
+# Dependencies installed by vcpkg outside a build directory
+/vcpkg_installed/
+
+*.cmake
+*build.ninja
+
+.vscode/
+.gdb_history
+
+Makefile
+docs/html/**
+tests/compio_gtest
+
+# Benchmark results
+fragmentation_results.csv
+fragmentation_results_report.txt
+# Benchmark temporary files
+bench_*.tmp
+bench_*.tmp.wal
+build*/

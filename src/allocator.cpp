@@ -1,0 +1,1235 @@
+/**
+ * @file allocator.cpp
+ * @brief Implementation of block allocation management
+ */
+
+#include "compio/allocator.hpp"
+
+#include <algorithm>
+#include <cassert>
+#include <cerrno>
+#include <cinttypes>
+#include <cstdio>
+#include <cstring>
+#include <iostream>
+#include <iterator>
+#include <limits>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+#include "compio/compio_file.hpp"
+
+#ifdef _WIN32
+#include <io.h>   // _chsize_s, _fileno
+#else
+#include <unistd.h> // ftruncate, fileno
+#endif
+
+#include "compio/compio_file.hpp"
+#include "compio/debug_print.hpp"
+#include "compio/file.hpp"
+#include "compio/sha256.hpp"
+#include "compio/utils.hpp"
+
+namespace compio {
+
+free_blocks_manager::free_blocks_manager(const uint64_t *file_size)
+    : total_free_(0),
+      file_size_(file_size),
+      cached_fragmentation_(0),
+      fragmentation_dirty_(true) {
+    assert(file_size_ != nullptr);
+}
+
+free_blocks_manager::region_map::iterator
+free_blocks_manager::insert_region(region_map::iterator hint, uint64_t offset, uint64_t size) {
+    by_size_.emplace(size, offset);
+    return by_offset_.emplace_hint(hint, offset, size);
+}
+
+free_blocks_manager::region_map::iterator free_blocks_manager::erase_region(region_map::iterator it) {
+    by_size_.erase({it->second, it->first});
+    return by_offset_.erase(it);
+}
+
+void free_blocks_manager::clear_regions() {
+    by_offset_.clear();
+    by_size_.clear();
+    next_fit_cursor_ = 0;
+    total_free_ = 0;
+    fragmentation_dirty_ = true;
+    deferred_.clear();
+    saved_deferred_.clear();
+    saved_state_offset_ = saved_state_size_ = 0;
+}
+
+bool free_blocks_manager::add_free_block(uint64_t offset, uint64_t size, uint64_t *merged_offset,
+                                         uint64_t *merged_size) {
+    if (size == 0)
+        return false;
+    if (offset > UINT64_MAX - size) // overflow guard: offset + size would wrap
+        return false;
+
+    auto next = by_offset_.lower_bound(offset);
+    auto prev = next == by_offset_.begin() ? by_offset_.end() : std::prev(next);
+
+    // A region that is already (partly) free must not be added again: the two
+    // copies would be handed out to two different owners.
+    if (next != by_offset_.end() && next->first < offset + size)
+        return false;
+    if (prev != by_offset_.end() && prev->first + prev->second > offset)
+        return false;
+
+    uint64_t start = offset;
+    uint64_t end = offset + size;
+    if (prev != by_offset_.end() && prev->first + prev->second == offset) {
+        start = prev->first;
+        erase_region(prev);
+    }
+    if (next != by_offset_.end() && next->first == end) {
+        end = next->first + next->second;
+        next = erase_region(next);
+    }
+    insert_region(next, start, end - start);
+
+    if (merged_offset && merged_size) {
+        *merged_offset = start;
+        *merged_size = end - start;
+    }
+
+    total_free_ += size;
+    fragmentation_dirty_ = true;
+    return true;
+}
+
+uint64_t free_blocks_manager::allocate_block(uint64_t size, allocation_strategy strategy) {
+    if (size == 0 || by_offset_.empty())
+        return UINT64_MAX;
+
+    auto target = by_offset_.end();
+
+    switch (strategy) {
+    case allocation_strategy::FIRST_FIT:
+        target = find_first_fit(size);
+        break;
+    case allocation_strategy::BEST_FIT:
+        target = find_best_fit(size);
+        break;
+    case allocation_strategy::WORST_FIT:
+        target = find_worst_fit(size);
+        break;
+    case allocation_strategy::NEXT_FIT:
+        target = find_next_fit(size);
+        break;
+    }
+
+    if (target == by_offset_.end())
+        return UINT64_MAX;
+
+    return take_region(target, size);
+}
+
+uint64_t free_blocks_manager::take_region(region_map::iterator target, uint64_t size) {
+    // The request takes the start of the region; what is left stays free.
+    const uint64_t allocated_offset = target->first;
+    const uint64_t remaining_size = target->second - size;
+    auto hint = erase_region(target);
+    if (remaining_size != 0) {
+        insert_region(hint, allocated_offset + size, remaining_size);
+    }
+
+    next_fit_cursor_ = allocated_offset + size;
+    total_free_ -= size;
+    fragmentation_dirty_ = true;
+
+    return allocated_offset;
+}
+
+uint64_t free_blocks_manager::allocate_below(uint64_t size, uint64_t limit) {
+    if (size == 0 || by_offset_.empty())
+        return UINT64_MAX;
+    auto target = find_first_fit(size);
+    if (target == by_offset_.end() || target->first >= limit)
+        return UINT64_MAX;
+    return take_region(target, size);
+}
+
+void free_blocks_manager::defragment() {
+    // Regions are merged when they are freed, so this pass normally finds
+    // nothing; it is kept as the documented way to restore that invariant.
+    for (auto it = by_offset_.begin(); it != by_offset_.end();) {
+        auto next = std::next(it);
+        if (next != by_offset_.end() && it->first + it->second == next->first) {
+            const uint64_t offset = it->first;
+            const uint64_t size = it->second + next->second;
+            erase_region(next);
+            it = insert_region(erase_region(it), offset, size);
+        } else {
+            it = next;
+        }
+    }
+
+    next_fit_cursor_ = 0;
+    fragmentation_dirty_ = true;
+}
+
+void free_blocks_manager::print_list() const {
+    for (const auto &[offset, size] : by_offset_) {
+        DEBUG_PRINT("Block: %" PRIu64 ", %" PRIu64 "\n", offset, size);
+        UNUSED(offset);
+        UNUSED(size);
+    }
+}
+
+uint8_t free_blocks_manager::get_cached_fragmentation() const {
+    // The value depends on the container size as well, which changes without
+    // touching the free list, so it is recomputed on every call (it is O(1)).
+    cached_fragmentation_ = calculate_fragmentation();
+    fragmentation_dirty_ = false;
+    return cached_fragmentation_;
+}
+
+free_blocks_manager::fragmentation_stats free_blocks_manager::get_fragmentation_stats() const {
+    fragmentation_stats stats = {};
+
+    if (by_offset_.empty()) {
+        return stats;
+    }
+
+    const size_t block_count = by_offset_.size();
+    stats.num_free_regions = block_count;
+    stats.total_free_bytes = total_free_;
+    stats.largest_free_region = by_size_.rbegin()->first;
+    stats.smallest_free_region = by_size_.begin()->first;
+    stats.avg_free_region_size = static_cast<double>(total_free_) / static_cast<double>(block_count);
+    stats.fragmentation_percent = calculate_fragmentation();
+
+    return stats;
+}
+
+void free_blocks_manager::update_fragmentation() {
+    fragmentation_dirty_ = true;
+}
+
+bool free_blocks_manager::is_region_free(uint64_t offset, uint64_t size) const {
+    if (!size)
+        return false;
+    if (size > UINT64_MAX - offset)
+        return false;
+
+    auto it = by_offset_.upper_bound(offset);
+    if (it == by_offset_.begin())
+        return false;
+    --it;
+    return offset + size <= it->first + it->second;
+}
+
+uint8_t free_blocks_manager::calculate_fragmentation() const {
+    // External fragmentation as the share of the container taken by free
+    // regions: the space a compaction would give back. How scattered the free
+    // space is does not matter here, only how much of it there is.
+    const uint64_t container_size = file_size_ ? *file_size_ : 0;
+    if (container_size == 0 || total_free_ == 0) {
+        return 0;
+    }
+    const double share = static_cast<double>(total_free_) / static_cast<double>(container_size);
+    return static_cast<uint8_t>(std::min(100.0, share * 100.0));
+}
+
+// On-disk layout of the allocator state, all fields little-endian:
+//   count u64, count x (offset u64, size u64),
+//   spare slot offset u64, spare slot size u64, crc32c u32 over the bytes before it.
+// States written before the trailer was introduced end right after the pairs.
+static constexpr size_t STATE_ENTRY_SIZE = 2 * sizeof(uint64_t);
+static constexpr size_t STATE_TRAILER_SIZE = 2 * sizeof(uint64_t) + sizeof(uint32_t);
+static constexpr uint64_t MIN_STATE_SLOT_SIZE = 64;
+
+static void put_le64(uint8_t *dst, uint64_t v) {
+    if (is_big_endian()) swap_uint64(&v);
+    memcpy(dst, &v, sizeof(v));
+}
+
+static uint64_t get_le64(const uint8_t *src) {
+    uint64_t v;
+    memcpy(&v, src, sizeof(v));
+    if (is_big_endian()) swap_uint64(&v);
+    return v;
+}
+
+size_t free_blocks_manager::free_region_count() const { return by_offset_.size(); }
+
+uint32_t free_blocks_manager::serialize(std::vector<uint8_t> &buffer) {
+    const size_t block_count = free_region_count();
+    const size_t list_size = sizeof(uint64_t) + block_count * STATE_ENTRY_SIZE;
+    const uint32_t size_needed = static_cast<uint32_t>(list_size + STATE_TRAILER_SIZE);
+
+    buffer.resize(size_needed);
+
+    uint8_t *out = buffer.data();
+    put_le64(out, block_count);
+    out += sizeof(uint64_t);
+    for (const auto &[offset, size] : by_offset_) {
+        put_le64(out, offset);
+        put_le64(out + sizeof(uint64_t), size);
+        out += STATE_ENTRY_SIZE;
+    }
+    put_le64(out, spare_slot_offset_);
+    put_le64(out + sizeof(uint64_t), spare_slot_size_);
+    out += 2 * sizeof(uint64_t);
+
+    uint32_t checksum = crc32c(buffer.data(), static_cast<size_t>(out - buffer.data()));
+    if (is_big_endian()) swap_uint32(&checksum);
+    memcpy(out, &checksum, sizeof(checksum));
+
+    return size_needed;
+}
+
+bool free_blocks_manager::deserialize(const uint8_t *buffer, uint32_t size) {
+    if (size < sizeof(uint64_t)) {
+        return false;
+    }
+
+    const uint64_t count = get_le64(buffer);
+
+    // Guard against integer overflow: count * 16 could wrap
+    if (count > (UINT32_MAX - sizeof(uint64_t) - STATE_TRAILER_SIZE) / STATE_ENTRY_SIZE) {
+        return false;
+    }
+    const uint32_t list_size = static_cast<uint32_t>(sizeof(uint64_t) + count * STATE_ENTRY_SIZE);
+    if (size < list_size) {
+        return false;
+    }
+
+    // A legacy state is exactly list_size long; anything longer carries the trailer.
+    uint64_t spare_offset = 0;
+    uint64_t spare_size = 0;
+    if (size != list_size) {
+        if (size < list_size + STATE_TRAILER_SIZE) {
+            return false;
+        }
+        const uint8_t *trailer = buffer + list_size;
+        uint32_t stored;
+        memcpy(&stored, trailer + 2 * sizeof(uint64_t), sizeof(stored));
+        if (is_big_endian()) swap_uint32(&stored);
+        if (stored != crc32c(buffer, list_size + 2 * sizeof(uint64_t))) {
+            return false;
+        }
+        spare_offset = get_le64(trailer);
+        spare_size = get_le64(trailer + sizeof(uint64_t));
+    }
+
+    clear_regions();
+    spare_slot_offset_ = spare_offset;
+    spare_slot_size_ = spare_size;
+
+    const uint8_t *in = buffer + sizeof(uint64_t);
+    for (uint64_t i = 0; i < count; i++, in += STATE_ENTRY_SIZE) {
+        const uint64_t offset = get_le64(in);
+        const uint64_t block_size = get_le64(in + sizeof(uint64_t));
+
+        // Skip invalid entries
+        if (block_size == 0) continue;
+        if (offset + block_size < offset) continue; // overflow
+        if (file_size_ && offset + block_size > *file_size_) continue;
+
+        if (!add_free_block(offset, block_size)) {
+            // Overlapping free regions: the state is corrupted, start empty.
+            clear_regions();
+            spare_slot_offset_ = spare_slot_size_ = 0;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool free_blocks_manager::save_to_file(compio_archive *archive) {
+    if (!archive || !archive->file || !archive->header) {
+        return false;
+    }
+
+    const uint64_t reserved_end = readonly(archive->header, header)->reserved_size();
+    const uint64_t logical_end = readonly(archive->header, header)->file_size;
+    auto is_slot = [&](uint64_t offset, uint64_t size) {
+        return offset >= reserved_end && size != 0 && size <= UINT64_MAX - offset &&
+               offset + size <= logical_end;
+    };
+
+    const uint64_t published_offset = archive->published_allocator_state_offset;
+    const uint64_t published_size = archive->published_allocator_state_size;
+    if (published_size > UINT64_MAX - published_offset) {
+        errno = EINVAL;
+        return false;
+    }
+    auto overlaps_published = [&](uint64_t offset, uint64_t size) {
+        if (published_size == 0 || size == 0) return false;
+        return offset <= published_offset ? size > published_offset - offset
+                                          : published_size > offset - published_offset;
+    };
+
+    // Prepare slot rotation and free-list changes locally. Failed writes must
+    // not change which slots are reserved or available for allocation.
+    free_blocks_manager staged(*this);
+    uint64_t pos = readonly(archive->header, header)->allocator_state_offset;
+    uint64_t slot_size = readonly(archive->header, header)->allocator_state_size;
+    if (!is_slot(pos, slot_size) || overlaps_published(pos, slot_size)) {
+        pos = spare_slot_offset_;
+        slot_size = spare_slot_size_;
+    }
+    if (!is_slot(pos, slot_size) || overlaps_published(pos, slot_size)) {
+        pos = slot_size = 0;
+    }
+
+    // Include deferred frees and at most one released spare slot.
+    const uint64_t needed = sizeof(uint64_t) +
+                            (static_cast<uint64_t>(free_region_count()) + deferred_.size() + 1) * STATE_ENTRY_SIZE +
+                            STATE_TRAILER_SIZE;
+    if (needed > UINT32_MAX / 2) {
+        WARNING_PRINT("warning: allocator state is too large to save\n");
+        return false;
+    }
+
+    // The unpublished slot moves down into free space below it, so that
+    // compaction can cut the container behind the live data.
+    if (archive->compacting && slot_size != 0 && slot_size >= needed && !staged.by_offset_.empty()) {
+        auto hole = staged.find_first_fit(slot_size);
+        if (hole != staged.by_offset_.end() && hole->first + slot_size <= pos) {
+            const uint64_t lower = staged.take_region(hole, slot_size);
+            staged.add_free_block(pos, slot_size);
+            pos = lower;
+        }
+    }
+
+    // Reuse the unpublished slot until a header actually publishes it.
+    bool appended = false;
+    if (slot_size < needed) {
+        if (slot_size != 0) {
+            staged.add_free_block(pos, slot_size);
+        }
+        slot_size = MIN_STATE_SLOT_SIZE;
+        while (slot_size < needed) {
+            slot_size *= 2;
+        }
+        pos = std::max(logical_end, reserved_end);
+        if (overlaps_published(pos, slot_size)) {
+            pos = published_offset + published_size;
+        }
+        appended = true;
+    }
+    if (slot_size > UINT64_MAX - pos) {
+        errno = EOVERFLOW;
+        return false;
+    }
+    // Once the new header is published, the old slot becomes the spare. A slot
+    // past the container end (left by compaction) is not reserved: appended
+    // blocks reuse that space, so it must not be written to later.
+    const uint64_t container_end = std::max(logical_end, pos + slot_size);
+    const bool keep_spare = published_size != 0 && published_offset >= reserved_end &&
+                            published_offset < container_end &&
+                            published_size <= container_end - published_offset;
+    staged.spare_slot_offset_ = keep_spare ? published_offset : 0;
+    staged.spare_slot_size_ = keep_spare ? published_size : 0;
+
+    free_blocks_manager snapshot(staged);
+    for (const auto &[offset, size] : deferred_) {
+        if (!snapshot.add_free_block(offset, size)) {
+            errno = EINVAL;
+            return false;
+        }
+    }
+    std::vector<uint8_t> buffer;
+    snapshot.serialize(buffer);
+    assert(buffer.size() <= slot_size);
+    buffer.resize(slot_size, 0);
+    const uint32_t size = static_cast<uint32_t>(slot_size);
+
+    if (fseek64(archive->file, static_cast<int64_t>(pos), SEEK_SET) != 0) {
+        WARNING_PRINT("warning: fseek returned error in allocator.save_state\n");
+        return false;
+    }
+
+    // Not logged: the slot is unreferenced until the header published after
+    // this write, which fsyncs it first; recovery rebuilds the state instead.
+    DEBUG_PRINT("[W][allocator]addr=%" PRIu64 ";size=%" PRIu32 "\n", pos, size);
+    size_t written = fwrite(buffer.data(), 1, size, archive->file);
+    if (written != size) {
+        WARNING_PRINT(
+            "warning: fwrite failed to write all bytes in allocator.save_state (%zu < %u)\n", written, size);
+        return false;
+    }
+    if (fflush(archive->file) != 0) return false;
+
+    staged.saved_deferred_ = deferred_;
+    staged.saved_state_offset_ = pos;
+    staged.saved_state_size_ = size;
+    *this = std::move(staged);
+    archive->header->allocator_state_offset = pos;
+    archive->header->allocator_state_size = size;
+    if (appended) archive->header->file_size = pos + size;
+    return true;
+}
+
+bool free_blocks_manager::load_from_file(compio_archive *archive) {
+    if (!archive || !archive->file || !archive->header) {
+        return false;
+    }
+
+    // Check if allocator state exists
+    if (readonly(archive->header, header)->allocator_state_offset == 0 ||
+        readonly(archive->header, header)->allocator_state_size == 0) {
+        return false;
+    }
+
+    // Seek to allocator state position
+    if (fseek64(archive->file,
+               static_cast<int64_t>(readonly(archive->header, header)->allocator_state_offset),
+               SEEK_SET) != 0) {
+        return false;
+    }
+
+    // Create buffer for reading data
+    std::vector<uint8_t> buffer(readonly(archive->header, header)->allocator_state_size);
+
+    // Read allocator state data
+    size_t read = fread(buffer.data(), 1, readonly(archive->header, header)->allocator_state_size,
+                        archive->file);
+    if (read != readonly(archive->header, header)->allocator_state_size) {
+        return false;
+    }
+
+    // Deserialize buffer into this manager
+    return deserialize(buffer.data(), static_cast<uint32_t>(buffer.size()));
+}
+
+// Private helper methods
+
+free_blocks_manager::region_map::iterator free_blocks_manager::find_first_fit(const uint64_t size) {
+    // Nothing fits: skip the walk over every region.
+    if (by_size_.rbegin()->first < size)
+        return by_offset_.end();
+    return std::find_if(by_offset_.begin(), by_offset_.end(),
+                        [size](const auto &region) { return region.second >= size; });
+}
+
+free_blocks_manager::region_map::iterator free_blocks_manager::find_best_fit(const uint64_t size) {
+    auto it = by_size_.lower_bound({size, 0});
+    return it == by_size_.end() ? by_offset_.end() : by_offset_.find(it->second);
+}
+
+free_blocks_manager::region_map::iterator free_blocks_manager::find_worst_fit(const uint64_t size) {
+    const uint64_t largest = by_size_.rbegin()->first;
+    if (largest < size)
+        return by_offset_.end();
+    return by_offset_.find(by_size_.lower_bound({largest, 0})->second);
+}
+
+free_blocks_manager::region_map::iterator free_blocks_manager::find_next_fit(const uint64_t size) {
+    if (by_size_.rbegin()->first < size)
+        return by_offset_.end();
+
+    const auto fits = [size](const auto &region) { return region.second >= size; };
+    const auto start = by_offset_.lower_bound(next_fit_cursor_);
+    auto it = std::find_if(start, by_offset_.end(), fits);
+    if (it == by_offset_.end()) {
+        it = std::find_if(by_offset_.begin(), start, fits);
+        if (it == start)
+            return by_offset_.end();
+    }
+    return it;
+}
+
+// block_allocator implementation
+
+block_allocator::block_allocator(compio_archive *archive, WalManager *wal)
+    : archive_(archive),
+      wal_(wal),
+      blocks_manager_(&readonly(archive->header, header)->file_size),
+      last_fragmentation_(0) {
+    if (!archive_) {
+        throw std::runtime_error("Archive pointer is null");
+    }
+    if (!archive_->header) {
+        throw std::runtime_error("Archive header is null");
+    }
+
+    // Don't set initial allocator_state_size here - it should remain 0 until first save
+    // The header fields allocator_state_offset and allocator_state_size are initialized to 0
+    // and will be set properly when save_state() is called
+
+    // Ensure we reserve space for double-buffered header
+    if (!(archive_->mode_b & mode_bit::r)) {
+        uint64_t reserved_size = readonly(archive_->header, header)->reserved_size();
+        if (readonly(archive_->header, header)->file_size < reserved_size) {
+            archive_->header->file_size = reserved_size;
+            if (wal_) {
+                // TODO: Log this header size change to WAL if we had a HeaderUpdate record type,
+                // but currently header updates are handled via double-buffering.
+                // However, since we're modifying in-memory state that affects durability, 
+                // we should be aware.
+            }
+        }
+    }
+}
+
+uint8_t block_allocator::get_fragmentation() const {
+    if (!archive_) return 0;
+    std::shared_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+    return blocks_manager_.get_cached_fragmentation();
+}
+
+free_blocks_manager::fragmentation_stats block_allocator::get_fragmentation_stats() const {
+    if (!archive_) return {};
+    std::shared_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+    return blocks_manager_.get_fragmentation_stats();
+}
+
+uint64_t block_allocator::allocate(uint64_t size) {
+    if (size == 0) {
+        return UINT64_MAX;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+
+    try {
+        // Convert allocation strategy from config to internal enum
+        allocation_strategy strategy;
+        switch (archive_->config.allocation_strategy) {
+        case COMPIO_ALLOC_BEST_FIT:
+            strategy = allocation_strategy::BEST_FIT;
+            break;
+        case COMPIO_ALLOC_WORST_FIT:
+            strategy = allocation_strategy::WORST_FIT;
+            break;
+        case COMPIO_ALLOC_NEXT_FIT:
+            strategy = allocation_strategy::NEXT_FIT;
+            break;
+        default:
+            strategy = allocation_strategy::FIRST_FIT;
+        }
+
+        // Try to find space in existing free blocks
+        uint64_t offset = blocks_manager_.allocate_block(size, strategy);
+        if (offset != UINT64_MAX) {
+            if (wal_) {
+                // Log the free list change (allocation from free list)
+                // When we allocate from free list, we remove a free block.
+                // The FreeListUpdate record is designed to track additions/removals of free blocks.
+                // However, the current WAL implementation focuses on data consistency.
+                // Full allocator state recovery is handled by periodic snapshots.
+                // For now, we rely on the fact that if we crash, we reload the last valid allocator state
+                // from disk, which matches the consistent state of the archive.
+            }
+            return offset;
+        }
+
+        // If no suitable free block found, allocate at the end
+        {
+            std::lock_guard<std::mutex> h_lock(archive_->header_mutex);
+            offset = readonly(archive_->header, header)->file_size;
+            if (offset > UINT64_MAX - size) {
+                return UINT64_MAX;
+            }
+            archive_->header->file_size += size;
+        }
+        return offset;
+    } catch (const std::exception &e) {
+        std::cerr << "Allocation failed: " << e.what() << std::endl;
+        return UINT64_MAX;
+    }
+}
+
+void block_allocator::deallocate(uint64_t offset, uint64_t size) {
+    deallocate(offset, size, true);
+}
+
+void block_allocator::deallocate(uint64_t offset, uint64_t size, bool perform_maintenance) {
+    if (size == 0 || size > UINT64_MAX - offset || !archive_ || !archive_->header) {
+        return;
+    }
+
+    bool run_maintenance = false;
+    {
+        std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+
+        // The caller may hold header_mutex, so use the cached size pointer.
+        const uint64_t *file_size_ptr = blocks_manager_.get_file_size_ptr();
+        if ((file_size_ptr && offset + size > *file_size_ptr) ||
+            offset < readonly(archive_->header, header)->reserved_size()) {
+            return;
+        }
+
+        auto overlaps = [&](const auto &regions) {
+            auto next = regions.lower_bound(offset);
+            return (next != regions.end() && next->first < offset + size) ||
+                   (next != regions.begin() && std::prev(next)->first + std::prev(next)->second > offset);
+        };
+        if (overlaps(blocks_manager_.by_offset_) || overlaps(blocks_manager_.deferred_)) return;
+
+        // The old checkpoint cannot reference allocations beyond its logical end.
+        // Everything below it stays reserved until a full checkpoint is published.
+        if (offset < archive_->published_file_size) {
+            blocks_manager_.deferred_.emplace(offset, size);
+            return;
+        }
+
+        uint64_t merged_offset = offset;
+        uint64_t merged_size = size;
+        if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+            return;
+        }
+
+        if (archive_->config.fill_holes_with_zeros && archive_->file) {
+            release_to_filesystem(offset, size, merged_offset, merged_size);
+        }
+
+        // Throttle maintenance to avoid O(N) work on every deallocation.
+        if (perform_maintenance && maintenance_suspended_ == 0 && ++deallocate_count_ % 64 == 0) {
+            run_maintenance = true;
+        }
+    }
+
+    if (run_maintenance) {
+        maintenance();
+    }
+}
+
+bool block_allocator::punch_hole(uint64_t offset, uint64_t size, uint64_t merged_offset,
+                                 uint64_t merged_size) {
+    if (fs_block_size_ == 0) {
+        fs_block_size_ = hole_granularity(archive_->file);
+        if (fs_block_size_ == 0) {
+            return false;
+        }
+    }
+    const uint64_t bs = fs_block_size_;
+    const uint64_t end = offset + size;
+    const uint64_t merged_end = merged_offset + merged_size;
+
+    // The filesystem can only take back whole blocks. A freed region seldom
+    // covers one on its own, but together with the free neighbours it has just
+    // been merged with it may, so the range is widened to the block boundaries
+    // that lie inside the merged free region.
+    const uint64_t lo = std::max((merged_offset + bs - 1) / bs * bs, offset / bs * bs);
+    const uint64_t hi = std::min(merged_end / bs * bs, (end + bs - 1) / bs * bs);
+    const uint64_t punch_start = std::min(lo, offset);
+    const uint64_t punch_end = std::max(hi, end);
+
+    return punch_file_hole(archive_->file, punch_start, punch_end - punch_start);
+}
+
+void block_allocator::release_to_filesystem(uint64_t offset, uint64_t size, uint64_t merged_offset,
+                                            uint64_t merged_size) {
+    DEBUG_PRINT("[W][deallocate]addr=%" PRIu64 ";size=%" PRIu64 "\n", offset, size);
+
+    // Buffered writes into the region must reach the file first, otherwise they
+    // would land after the hole is punched and bring the blocks back.
+    if (fflush(archive_->file) != 0) return;
+
+    if (hole_punching_supported_) {
+        if (punch_hole(offset, size, merged_offset, merged_size)) {
+            return;
+        }
+        hole_punching_supported_ = false;
+    }
+
+    // No hole punching on this platform or filesystem: overwrite with zeros,
+    // which at least lets a compressing filesystem reclaim the space.
+    static constexpr size_t BUFFER_SIZE = 4096;
+    static uint8_t zeros[BUFFER_SIZE] = {0};
+
+    if (fseek64(archive_->file, offset, SEEK_SET) != 0) return;
+
+    size_t remaining = size;
+    while (remaining > 0) {
+        size_t write_size = std::min(remaining, BUFFER_SIZE);
+        if (fwrite(zeros, 1, write_size, archive_->file) != write_size) {
+            break;
+        }
+        remaining -= write_size;
+    }
+
+    fflush(archive_->file);
+}
+
+bool block_allocator::force_defragmentation() {
+    // Flush caches before locking allocator/index to avoid deadlock.
+    // Block write-back locks allocator/index; pinned blocks cannot be relocated.
+    if (archive_->file) {
+        archive_->block_reader->set_maintenance_mode(true);
+        if (!archive_->block_reader->clear_cache()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            return false;
+        }
+        if (!archive_->block_reader->cache_empty()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            errno = EBUSY;
+            return false;
+        }
+        // Use public clear_cache which handles its own locking if needed, 
+        // or just relies on the fact we are the only thread (compio_defragment holds archive mutex).
+        if (!archive_->index->clear_cache()) {
+            archive_->block_reader->set_maintenance_mode(false);
+            return false;
+        }
+    }
+
+    {
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+        blocks_manager_.defragment();
+    }
+    bool success = true;
+    if (archive_->file && archive_->index) {
+        success = perform_defragmentation();
+    }
+    {
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+    }
+
+    if (archive_->file) {
+        archive_->block_reader->set_maintenance_mode(false);
+    }
+    return success;
+}
+
+bool block_allocator::maintenance(bool at_checkpoint) {
+    if (maintenance_suspended_ > 0) {
+        return true;
+    }
+
+    // Background callers cannot publish a new layout or report relocation errors.
+    if (!at_checkpoint) {
+        std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+        blocks_manager_.defragment();
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+        return true;
+    }
+
+    uint8_t current_fragmentation = get_fragmentation();
+    uint8_t threshold = archive_->config.fragmentation_threshold;
+
+    if (current_fragmentation > threshold) {
+        // Flush caches before compacting: block write-back calls allocate/deallocate.
+        if (archive_->file) {
+            archive_->block_reader->set_maintenance_mode(true);
+            if (!archive_->block_reader->clear_cache()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return false;
+            }
+            if (!archive_->block_reader->cache_empty()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return true;
+            }
+            if (!archive_->index->clear_cache()) {
+                archive_->block_reader->set_maintenance_mode(false);
+                return false;
+            }
+        }
+
+        bool success = true;
+        bool compact = false;
+        {
+            std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+            if (maintenance_suspended_ == 0 && blocks_manager_.get_cached_fragmentation() > threshold) {
+                blocks_manager_.defragment();
+                compact = blocks_manager_.get_cached_fragmentation() > threshold;
+            }
+        }
+        if (compact && archive_->file && archive_->index) {
+            success = perform_defragmentation();
+        }
+        {
+            std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+            last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+        }
+
+        if (archive_->file) {
+            archive_->block_reader->set_maintenance_mode(false);
+        }
+        return success;
+    } else {
+        std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+        last_fragmentation_ = blocks_manager_.get_cached_fragmentation();
+    }
+    return true;
+}
+
+bool block_allocator::save_state(compio_archive *archive) {
+    if (!archive) {
+        return false;
+    }
+    std::unique_lock<std::shared_mutex> alloc_lock(archive->allocator_mutex);
+    std::lock_guard<std::mutex> head_lock(archive->header_mutex);
+    std::lock_guard<std::mutex> io_lock(archive->io_mutex);
+    
+    // Check if WAL is available to sync the allocator state update
+    if (wal_) {
+        // To be fully safe, we should ideally write the serialized allocator state 
+        // through the WAL as a large raw write, or just rely on fsync.
+        // Since the allocator state can be large, we typically don't put it *inside* the WAL log.
+        // Instead we write it to the archive file and sync it.
+        // But we MUST ensure any previous WAL entries are flushed first.
+        if (!wal_->sync()) return false;
+    }
+    
+    bool result = blocks_manager_.save_to_file(archive);
+    
+    if (result && wal_) {
+        // After writing allocator state to disk, we must ensure it hits physical storage
+        // before we might update the header pointing to it.
+        result = archive->sync_data();
+    }
+    
+    return result;
+}
+
+bool block_allocator::load_state(compio_archive *archive) {
+    if (!archive) {
+        return false;
+    }
+    std::unique_lock<std::shared_mutex> alloc_lock(archive->allocator_mutex);
+    std::lock_guard<std::mutex> head_lock(archive->header_mutex);
+    std::lock_guard<std::mutex> io_lock(archive->io_mutex);
+    return blocks_manager_.load_from_file(archive);
+}
+
+void block_allocator::commit_state() {
+    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+    std::lock_guard<std::mutex> io_lock(archive_->io_mutex);
+    if (blocks_manager_.saved_state_offset_ != archive_->published_allocator_state_offset ||
+        blocks_manager_.saved_state_size_ != archive_->published_allocator_state_size) return;
+
+    for (const auto &[offset, size] : blocks_manager_.saved_deferred_) {
+        uint64_t merged_offset = offset;
+        uint64_t merged_size = size;
+        if (!blocks_manager_.add_free_block(offset, size, &merged_offset, &merged_size)) {
+            // A failed invariant must leak space rather than release live data.
+            WARNING_PRINT("warning: failed to release a checkpoint's deferred region\n");
+            continue;
+        }
+        blocks_manager_.deferred_.erase(offset);
+        if (archive_->config.fill_holes_with_zeros) {
+            release_to_filesystem(offset, size, merged_offset, merged_size);
+        }
+    }
+    blocks_manager_.saved_deferred_.clear();
+}
+
+// Private methods
+
+uint64_t block_allocator::allocate_below(uint64_t size, uint64_t limit) {
+    std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+    return blocks_manager_.allocate_below(size, limit);
+}
+
+bool block_allocator::trim_tail() {
+    std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+    auto &regions = blocks_manager_.by_offset_;
+    if (regions.empty()) return false;
+    auto last = std::prev(regions.end());
+    std::lock_guard<std::mutex> header_lock(archive_->header_mutex);
+    if (last->first + last->second != readonly(archive_->header, header)->file_size) return false;
+
+    const uint64_t offset = last->first;
+    blocks_manager_.total_free_ -= last->second;
+    blocks_manager_.erase_region(last);
+    blocks_manager_.fragmentation_dirty_ = true;
+    archive_->header->file_size = offset;
+    // The physical file is cut once a header with the smaller size is durable.
+    archive_->truncate_after_publish = true;
+    return true;
+}
+
+bool block_allocator::block_footprint(uint64_t addr, uint64_t seekable_end, uint64_t &size) {
+    uint8_t sig = 0;
+    uint64_t compressed_size = 0;
+    if (fseek64(archive_->file, static_cast<int64_t>(addr), SEEK_SET) != 0 ||
+        fread(&sig, 1, 1, archive_->file) != 1 ||
+        fseek64(archive_->file, static_cast<int64_t>(addr + sizeof(uint8_t) + sizeof(uint32_t)), SEEK_SET) != 0 ||
+        lendian_fread(&compressed_size, sizeof(compressed_size), 1, archive_->file) != 1 ||
+        compressed_size == 0) {
+        WARNING_PRINT("warning: failed to read block header at %" PRIu64 "\n", addr);
+        errno = EIO;
+        return false;
+    }
+    const uint64_t meta_size = STORAGE_BLOCK_METASIZE;
+    if ((sig != storage_block::signature && sig != storage_block::signature_crc32c) || compressed_size > seekable_end - addr ||
+        meta_size > seekable_end - addr - compressed_size) {
+        WARNING_PRINT("warning: bad block at %" PRIu64 "\n", addr);
+        errno = EIO;
+        return false;
+    }
+    size = meta_size + compressed_size;
+    return true;
+}
+
+bool block_allocator::rebuild_from_index() {
+    const auto &hdr = *readonly(archive_->header, header);
+    const uint64_t container_end = hdr.file_size;
+    const uint64_t seekable_end = std::min(container_end,
+                                           static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+
+    tree_key key_max{};
+    key_max.hash = UINT64_MAX;
+    key_max.pos = UINT64_MAX;
+    auto blocks = archive_->index->get_range(tree_key{}, key_max);
+    uint64_t node_size = 0;
+    auto nodes = archive_->index->collect_node_addresses(node_size);
+    if (!blocks || !nodes) {
+        errno = EIO;
+        return false;
+    }
+
+    // What the durable header still references stays reserved until the next
+    // header replaces it.
+    std::vector<std::pair<uint64_t, uint64_t>> used;
+    used.reserve(blocks->size() + nodes->size() + 3);
+    used.emplace_back(0, hdr.reserved_size());
+    used.emplace_back(hdr.files_table_addr, hdr.files_table_size);
+    used.emplace_back(archive_->published_allocator_state_offset, archive_->published_allocator_state_size);
+    for (uint64_t node : *nodes) used.emplace_back(node, node_size);
+    for (const auto &entry : *blocks) {
+        uint64_t size = 0;
+        if (!block_footprint(entry.second.addr, seekable_end, size)) return false;
+        used.emplace_back(entry.second.addr, size);
+    }
+    std::sort(used.begin(), used.end());
+
+    free_blocks_manager rebuilt(&archive_->header->file_size);
+    uint64_t cursor = 0;
+    for (const auto &[addr, size] : used) {
+        if (size == 0) continue;
+        if (addr > cursor && !rebuilt.add_free_block(cursor, addr - cursor)) {
+            errno = EIO;
+            return false;
+        }
+        cursor = std::max(cursor, addr + size);
+    }
+    if (cursor > container_end) {
+        archive_->header->file_size = cursor;
+    } else if (cursor < container_end && !rebuilt.add_free_block(cursor, container_end - cursor)) {
+        errno = EIO;
+        return false;
+    }
+
+    std::unique_lock<std::shared_mutex> alloc_lock(archive_->allocator_mutex);
+    blocks_manager_ = std::move(rebuilt);
+    return true;
+}
+
+bool block_allocator::compaction_round(bool &moved, bool validate_only) {
+    const auto &hdr = *readonly(archive_->header, header);
+    const uint64_t container_end = hdr.file_size;
+    const uint64_t seekable_end = std::min(container_end,
+                                           static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+
+    // Blocks first: updating their index entries copies the leaves they live in.
+    constexpr tree_key key_min{};
+    tree_key key_max{};
+    key_max.hash = UINT64_MAX;
+    key_max.pos = UINT64_MAX;
+    auto used_blocks_opt = archive_->index->get_range(key_min, key_max);
+    if (!used_blocks_opt) {
+        WARNING_PRINT("defragmentation aborted: index read failed\n");
+        errno = EIO;
+        return false;
+    }
+    auto &used_blocks = *used_blocks_opt;
+    uint64_t node_size = 0;
+    auto node_addrs_opt = archive_->index->collect_node_addresses(node_size);
+    if (!node_addrs_opt) {
+        errno = EIO;
+        return false;
+    }
+    const auto &node_addrs = *node_addrs_opt;
+
+    const uint64_t ft_addr = hdr.files_table_addr;
+    const uint64_t ft_size = hdr.files_table_size;
+    const std::vector<uint8_t> table = hdr.ftable.serialize();
+    if (!validate_only && ft_size != 0 && crc32c(table.data(), table.size()) != archive_->stored_table_crc) {
+        WARNING_PRINT("warning: perform_defragmentation: files table not flushed\n");
+        errno = EIO;
+        return false;
+    }
+    auto overlaps = [](uint64_t start, uint64_t size, uint64_t other, uint64_t other_size) {
+        if (size == 0 || other_size == 0) return false;
+        return start <= other ? size > other - start : other_size > start - other;
+    };
+    auto overlaps_metadata = [&](uint64_t start, uint64_t size) {
+        return overlaps(start, size, ft_addr, ft_size) ||
+               overlaps(start, size, hdr.allocator_state_offset, hdr.allocator_state_size) ||
+               overlaps(start, size, archive_->published_allocator_state_offset,
+                        archive_->published_allocator_state_size);
+    };
+    auto overlaps_node = [&](uint64_t start, uint64_t size) {
+        auto it = std::upper_bound(node_addrs.begin(), node_addrs.end(), start);
+        if (it != node_addrs.begin() && *std::prev(it) + node_size > start) return true;
+        return it != node_addrs.end() && *it < start + size;
+    };
+    for (uint64_t na : node_addrs) {
+        if (overlaps_metadata(na, node_size)) {
+            WARNING_PRINT("warning: perform_defragmentation: index node overlaps metadata at %" PRIu64 "\n", na);
+            errno = EIO;
+            return false;
+        }
+    }
+
+    // Check every source before moving anything.
+    struct source {
+        tree_key key;
+        tree_val val;
+        uint64_t size;
+    };
+    std::vector<source> sources;
+    sources.reserve(used_blocks.size());
+    std::sort(used_blocks.begin(), used_blocks.end(),
+              [](const auto &a, const auto &b) { return a.second.addr < b.second.addr; });
+    uint64_t previous_end = hdr.reserved_size();
+    for (const auto &[key, val] : used_blocks) {
+        const uint64_t src = val.addr;
+        constexpr uint64_t prefix_size = 2 + sizeof(uint64_t);
+        if (src < previous_end || src > seekable_end || prefix_size > seekable_end - src) {
+            WARNING_PRINT("warning: perform_defragmentation: invalid block address %" PRIu64 "\n", src);
+            errno = EIO;
+            return false;
+        }
+
+        uint64_t block_size = 0;
+        if (!block_footprint(src, seekable_end, block_size)) return false;
+        if (overlaps_node(src, block_size) || overlaps_metadata(src, block_size)) {
+            WARNING_PRINT("warning: perform_defragmentation: block overlaps metadata at %" PRIu64 "\n", src);
+            errno = EIO;
+            return false;
+        }
+        previous_end = src + block_size;
+        sources.push_back({key, val, block_size});
+    }
+
+    if (validate_only) return true;
+
+    constexpr size_t MOVE_BUFFER_SIZE = 1024 * 1024;
+    std::vector<uint8_t> move_buffer(MOVE_BUFFER_SIZE);
+
+    for (auto it = sources.rbegin(); it != sources.rend(); ++it) {
+        const tree_key &key = it->key;
+        const tree_val &val = it->val;
+        const uint64_t src = val.addr;
+        const uint64_t block_size = it->size;
+
+        const uint64_t target = allocate_below(block_size, src);
+        if (target == UINT64_MAX) continue;
+
+        uint64_t src_cursor = src;
+        uint64_t dst_cursor = target;
+        uint64_t remaining = block_size;
+        bool copied = true;
+        while (remaining > 0 && copied) {
+            const size_t chunk = static_cast<size_t>(std::min<uint64_t>(remaining, MOVE_BUFFER_SIZE));
+            copied = fseek64(archive_->file, static_cast<int64_t>(src_cursor), SEEK_SET) == 0 &&
+                     fread(move_buffer.data(), 1, chunk, archive_->file) == chunk &&
+                     fseek64(archive_->file, static_cast<int64_t>(dst_cursor), SEEK_SET) == 0 &&
+                     fwrite(move_buffer.data(), 1, chunk, archive_->file) == chunk;
+            src_cursor += chunk;
+            dst_cursor += chunk;
+            remaining -= chunk;
+        }
+        if (!copied || !archive_->index->update(key, tree_val{target, val.size})) {
+            WARNING_PRINT("warning: perform_defragmentation: failed to move block at %" PRIu64 "\n", src);
+            deallocate(target, block_size, false);
+            if (errno == 0) errno = EIO;
+            return false;
+        }
+        // The old copy stays reserved until the header that no longer references it is durable.
+        deallocate(src, block_size, false);
+        moved = true;
+    }
+
+    // The files table is referenced from the header; the copy it describes stays reserved until the next header is durable.
+    if (ft_addr != 0 && ft_size != 0) {
+        const uint64_t target = allocate_below(ft_size, ft_addr);
+        if (target != UINT64_MAX) {
+            std::vector<uint8_t> table(ft_size);
+            if (fseek64(archive_->file, static_cast<int64_t>(ft_addr), SEEK_SET) != 0 ||
+                fread(table.data(), 1, table.size(), archive_->file) != table.size() ||
+                fseek64(archive_->file, static_cast<int64_t>(target), SEEK_SET) != 0 ||
+                fwrite(table.data(), 1, table.size(), archive_->file) != table.size()) {
+                deallocate(target, ft_size, false);
+                if (errno == 0) errno = EIO;
+                return false;
+            }
+            archive_->header->files_table_addr = target;
+            deallocate(ft_addr, ft_size, false);
+            moved = true;
+        }
+    }
+
+    // Index nodes, planned on the tree as it is now.
+    auto current_nodes = archive_->index->collect_node_addresses(node_size);
+    if (!current_nodes) {
+        errno = EIO;
+        return false;
+    }
+    std::unordered_map<uint64_t, uint64_t> node_moves;
+    for (auto it = current_nodes->rbegin(); it != current_nodes->rend(); ++it) {
+        const uint64_t target = allocate_below(node_size, *it);
+        if (target != UINT64_MAX) node_moves.emplace(*it, target);
+    }
+    if (!node_moves.empty()) {
+        if (!archive_->index->relocate_nodes(node_moves)) {
+            WARNING_PRINT("warning: perform_defragmentation: failed to move index nodes\n");
+            if (errno == 0) errno = EIO;
+            return false;
+        }
+        moved = true;
+    }
+
+    archive_->block_reader->invalidate_temporary_index();
+    return true;
+}
+
+bool block_allocator::perform_defragmentation() {
+    // Everything moves into space that is free in the durable state as well, so a
+    // crash at any point leaves the previous layout intact. Vacated space is
+    // reusable only after the header that no longer references it is published,
+    // hence several rounds, each ending in a checkpoint.
+    if (!archive_->checkpoint) return false;
+    constexpr int MAX_ROUNDS = 8;
+
+    // A damaged index is reported before anything is written.
+    bool unused = false;
+    if (!compaction_round(unused, true)) return false;
+
+    if (!archive_->checkpoint()) return false;
+    {
+        std::unique_lock<std::shared_mutex> lock(archive_->allocator_mutex);
+        // Deferred frees mean the checkpoint did not complete a full cycle.
+        if (!blocks_manager_.deferred_.empty()) return true;
+    }
+
+    ++maintenance_suspended_;
+    archive_->compacting = true;
+    bool ok = true;
+    int idle = 0;
+    for (int round = 0; round < MAX_ROUNDS && idle < 2; ++round) {
+        bool moved = false;
+        if (!compaction_round(moved) || !archive_->checkpoint()) {
+            ok = false;
+            break;
+        }
+        const bool trimmed = trim_tail();
+        idle = (moved || trimmed) ? 0 : idle + 1;
+    }
+    --maintenance_suspended_;
+    if (!ok) {
+        archive_->compacting = false;
+        return false;
+    }
+
+    // Publish the final container size; the file is cut after that.
+    const bool published = archive_->checkpoint();
+    archive_->compacting = false;
+    return published;
+}
+
+} // namespace compio
