@@ -378,12 +378,15 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
                     // Replaying the journal writes into the archive: do not do that to one
                     // whose format this version does not fully know.
                     header current;
-                    if (!is_file_empty(file) && select_header_slot(file, current, true) >= 0 &&
-                        !features_usable(current, true)) {
-                        fclose(file);
-                        return NULL;
+                    uint64_t epoch = compio::WalManager::genesis_epoch;
+                    if (!is_file_empty(file) && select_header_slot(file, current, true) >= 0) {
+                        if (!features_usable(current, true)) {
+                            fclose(file);
+                            return NULL;
+                        }
+                        epoch = current.sequence_id;
                     }
-                    if (!wal->recover(file, &wal_meta)) {
+                    if (!wal->recover(file, epoch, &wal_meta)) {
                         WARNING_PRINT("warning: WAL recovery failed\n");
                         // Continue anyway? Or fail?
                         // Fail seems safer.
@@ -526,6 +529,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->stored_table_crc = files_table_crc(*readonly(archive->header, header));
+    if (archive->wal && !is_new_file) archive->wal->set_epoch(archive->header->sequence_id);
 
     // A replayed journal carries the state its last committed operation left: adopt it
     // before the index reads its root.
@@ -1428,6 +1432,7 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         }
 
         // Switch internal state to point to the new slot
+        if (archive->wal) archive->wal->set_epoch(new_h_data->sequence_id);
         archive->current_header_slot = target_slot;
         archive->published_allocator_state_offset = new_h_data->allocator_state_offset;
         archive->published_allocator_state_size = new_h_data->allocator_state_size;

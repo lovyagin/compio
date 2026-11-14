@@ -39,6 +39,9 @@ struct io_fault {
 
 io_fault fault;
 
+// A journal record starts with one fwrite of type, epoch, addr and size.
+constexpr size_t wal_record_fields_bytes = 1 + 8 + 8 + 8;
+
 } // namespace
 
 extern "C" {
@@ -61,7 +64,7 @@ int __wrap_fseeko(FILE *stream, off_t offset, int whence) {
 }
 
 size_t __wrap_fwrite(const void *data, size_t size, size_t count, FILE *stream) {
-    if (fault.wal_record >= 0 && stream != fault.stream && size == 1 && count == 1 &&
+    if (fault.wal_record >= 0 && stream != fault.stream && size == 1 && count == wal_record_fields_bytes &&
         *static_cast<const unsigned char *>(data) == fault.wal_record) {
         fault.triggered = true;
         errno = ENOSPC;
