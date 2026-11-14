@@ -242,6 +242,19 @@ typedef enum {
 
 /**
  * @brief WAL synchronization mode
+ *
+ * What survives a process kill (SIGKILL) and a power loss. Every mode leaves a
+ * consistent archive after both: a torn write is never replayed, and an archive
+ * never opens in a half-published state.
+ *
+ * | mode   | SIGKILL                 | power loss                                          |
+ * |--------|-------------------------|-----------------------------------------------------|
+ * | ALWAYS | every returned operation | every committed operation                           |
+ * | NORMAL | every returned operation | operations since the last flush, batch end or close may be lost |
+ * | OFF    | every returned operation | as NORMAL, over a wider window                       |
+ *
+ * A failed fsync of the archive or the journal makes the archive refuse further
+ * writes (errno EIO) and publish nothing; reopening recovers the last durable state.
  */
 typedef enum {
     COMPIO_WAL_SYNC_ALWAYS = 0,    /**< fsync after every transaction (strict durability) */

@@ -125,6 +125,16 @@ root is diagnostic; recovery of the entire original file remains the criterion.
 In a clean control, header/root comparisons describe the completed update and
 are not preservation requirements.
 
+## Power loss
+
+These tools kill the writer with SIGKILL, which keeps the OS page cache; none of them
+simulates power loss. The power-loss argument rests on the publication order and unit tests:
+data is synced before the header, the other header slot is written and synced, and only then
+is the journal truncated. Journal records carry a checksum over the whole record and the
+`sequence_id` of the header they extend, so a torn record or a journal left over from an
+older publication is never replayed. Unit tests cover those cases and an injected fsync
+failure.
+
 ## Mixed workload
 
 `mixed_kill` runs a writer that appends stamped records to several files, runs
