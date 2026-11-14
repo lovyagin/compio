@@ -198,7 +198,8 @@ protected:
     void TearDown() override {
         fault = {};
         if (archive) {
-            EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+            const int expected = archive->is_broken() ? COMPIO_ERROR : COMPIO_SUCCESS;
+            EXPECT_EQ(compio_close_archive(archive), expected);
         }
         remove(path);
         remove((std::string(path) + ".wal").c_str());
@@ -272,7 +273,39 @@ protected:
         }
     }
 
+    // A failed sync leaves the archive unable to promise anything about what it wrote:
+    // retrying could succeed over pages the disk never got. It refuses to write or publish
+    // and keeps the last published state for the next open.
+    void expect_broken() {
+        fault = {};
+        clearerr(archive->file);
+        EXPECT_TRUE(archive->is_broken());
+        if (auto *file = compio_open_file("after_failure", archive)) {
+            errno = 0;
+            EXPECT_EQ(compio_write("x", 1, file), 0u);
+            EXPECT_EQ(errno, EIO);
+            compio_close_file(file);
+        }
+        compio_flush(archive);
+        EXPECT_FALSE(archive->publish_header());
+        EXPECT_EQ(archive->current_header_slot, slot);
+        EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+
+        const compio_config config = archive->config;
+        errno = 0;
+        EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+        EXPECT_EQ(errno, EIO);
+        archive = nullptr;
+
+        archive = compio_open_archive(path, wal_enabled() ? "r+" : "r", &config);
+        ASSERT_NE(archive, nullptr);
+    }
+
     void retry() {
+        if (std::get<1>(GetParam()) == failure::sync) {
+            expect_broken();
+            return;
+        }
         fault = {};
         clearerr(archive->file);
         ASSERT_TRUE(archive->publish_header());
@@ -343,6 +376,10 @@ TEST_P(HeaderPublicationTest, IndexFailureKeepsCheckpointAndRetriesNode) {
     compio_flush(archive);
     expect_old_slot();
     expect_wal_retained();
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -363,6 +400,10 @@ TEST_P(HeaderPublicationTest, IndexFailureMakesBatchFail) {
     EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
     expect_old_slot();
     expect_wal_retained();
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -493,6 +534,10 @@ TEST_P(HeaderPublicationTest, FilesTableFailureKeepsCheckpointAndRetriesTable) {
         EXPECT_EQ(readonly(archive->header, compio::header)->files_table_addr, old_addr);
         EXPECT_EQ(readonly(archive->header, compio::header)->files_table_checksum, old_checksum);
     }
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -510,6 +555,10 @@ TEST_P(HeaderPublicationTest, FilesTableFailureMakesBatchFail) {
     EXPECT_EQ(compio_end_batch(archive), COMPIO_ERROR);
     expect_old_slot();
     expect_wal_retained();
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     compio_flush(archive);
@@ -557,6 +606,10 @@ TEST_P(HeaderPublicationTest, FailedCheckpointKeepsDeferredBlocksReservedUntilRe
         ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
                   static_cast<ssize_t>(actual.size()));
         EXPECT_EQ(actual, original);
+        if (std::get<1>(GetParam()) == failure::sync) {
+            expect_broken();
+            return;
+        }
         fault = {};
         clearerr(archive->file);
         EXPECT_NE(archive->allocator->allocate(original.size()), offset);
@@ -585,6 +638,10 @@ TEST_P(HeaderPublicationTest, SnapshotFailureKeepsDeferredBlocksReservedUntilRet
     ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
               static_cast<ssize_t>(actual.size()));
     EXPECT_EQ(actual, original);
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     EXPECT_NE(archive->allocator->allocate(original.size()), offset);
@@ -639,6 +696,10 @@ TEST_P(HeaderPublicationTest, RepeatedFlushFailuresPreserveAllocatorSnapshot) {
         ASSERT_EQ(pread(fileno(archive->file), actual.data(), actual.size(), offset),
                   static_cast<ssize_t>(actual.size()));
         EXPECT_EQ(actual, saved);
+        if (std::get<1>(GetParam()) == failure::sync) {
+            expect_broken();
+            return;
+        }
     }
     retry();
 }
@@ -658,6 +719,10 @@ TEST_P(HeaderPublicationTest, AllocatorWriteFailureAllowsRetry) {
     expect_old_slot();
     EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_offset, pending_offset);
     EXPECT_EQ(readonly(archive->header, compio::header)->allocator_state_size, pending_size);
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
+    }
     fault = {};
     clearerr(archive->file);
     ASSERT_TRUE(archive->allocator->save_state(archive));
@@ -689,6 +754,10 @@ TEST_P(HeaderPublicationTest, AllocatorGrowthFailureAllowsRetry) {
         const auto after = archive->allocator->get_fragmentation_stats();
         EXPECT_EQ(after.total_free_bytes, before.total_free_bytes);
         EXPECT_EQ(after.num_free_regions, before.num_free_regions);
+    }
+    if (std::get<1>(GetParam()) == failure::sync) {
+        expect_broken();
+        return;
     }
     fault = {};
     clearerr(archive->file);
@@ -1355,3 +1424,68 @@ INSTANTIATE_TEST_SUITE_P(
     WalCompressionReclamationAndCache, BlockWriteTest,
     ::testing::Combine(::testing::Bool(), ::testing::Bool(), ::testing::Bool(),
                        ::testing::Values(0, 1, 3)));
+
+namespace {
+
+// The descriptor stdio holds for `target`, found through /proc.
+int descriptor_of(const std::string &target) {
+    for (const auto &entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+        std::error_code ec;
+        if (std::filesystem::read_symlink(entry.path(), ec) == target) return std::stoi(entry.path().filename());
+    }
+    return -1;
+}
+
+std::string read_a(compio_archive *archive) {
+    compio_file *file = compio_open_file("a", archive);
+    if (!file) return "";
+    char buf[16] = {};
+    const size_t n = compio_read(buf, sizeof(buf), file);
+    compio_close_file(file);
+    return std::string(buf, n);
+}
+
+}  // namespace
+
+TEST(WalSyncFailure, WalSyncFailureBreaksArchive) {
+    char path[256];
+    generate_tmp_fn(path, sizeof(path));
+    compio_config cfg;
+    compio_build_default_config(&cfg);
+    cfg.wal_sync_mode = COMPIO_WAL_SYNC_ALWAYS;
+    compio_archive *archive = compio_open_archive(path, "w", &cfg);
+    ASSERT_NE(archive, nullptr);
+    compio_file *file = compio_open_file("a", archive);
+    ASSERT_NE(file, nullptr);
+    ASSERT_EQ(compio_write("base", 4, file), 4u);
+    compio_flush(archive);
+    const uint64_t sequence = readonly(archive->header, compio::header)->sequence_id;
+
+    fault = {};
+    fault.descriptor = descriptor_of(std::string(std::filesystem::absolute(path)) + ".wal");
+    ASSERT_GE(fault.descriptor, 0);
+    fault.publishing = true;
+    fault.kind = failure::sync;
+    compio_seek(file, 0, COMPIO_SEEK_SET);
+    compio_write("neww", 4, file);
+    compio_flush(archive);
+    EXPECT_TRUE(fault.triggered);
+    EXPECT_TRUE(archive->is_broken());
+
+    fault = {};
+    errno = 0;
+    EXPECT_EQ(compio_write("more", 4, file), 0u);
+    EXPECT_EQ(errno, EIO);
+    compio_flush(archive);
+    EXPECT_EQ(readonly(archive->header, compio::header)->sequence_id, sequence);
+    compio_close_file(file);
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_ERROR);
+
+    archive = compio_open_archive(path, "r+", &cfg);
+    ASSERT_NE(archive, nullptr);
+    const std::string content = read_a(archive);
+    EXPECT_TRUE(content == "base" || content == "neww") << content;
+    EXPECT_EQ(compio_close_archive(archive), COMPIO_SUCCESS);
+    remove(path);
+    remove((std::string(path) + ".wal").c_str());
+}

@@ -103,7 +103,18 @@ bool read_record(FILE* f, int64_t file_size, ParsedRecord* rec) {
 
 }  // namespace
 
+bool WalManager::sync_wal() {
+    if (failed_) return false;
+    if (fflush(wal_file_) != 0) return false;
+    if (!compio::sync_file(wal_file_)) {
+        failed_ = true;
+        return false;
+    }
+    return true;
+}
+
 bool WalManager::write_record(WalRecordType type, uint64_t addr, const iovec_buf* buffers, size_t count) {
+    if (failed_) return false;
     uint64_t size = 0;
     for (size_t i = 0; i < count; ++i) size += buffers[i].size;
 
@@ -240,12 +251,10 @@ bool WalManager::commit_transaction_impl(compio_wal_sync_mode sync_mode) {
     if (!write_record(WalRecordType::COMMIT, 0, nullptr, 0)) return false;
 
     // Based on sync_mode, decide whether to fsync, fflush, or nothing
-    if (sync_mode != COMPIO_WAL_SYNC_OFF) {
-        if (fflush(wal_file_) != 0) return false;
-    }
-
     if (sync_mode == COMPIO_WAL_SYNC_ALWAYS) {
-        if (!compio::sync_file(wal_file_)) return false;
+        if (!sync_wal()) return false;
+    } else if (sync_mode != COMPIO_WAL_SYNC_OFF) {
+        if (fflush(wal_file_) != 0) return false;
     }
 
     return true;
@@ -267,7 +276,7 @@ bool WalManager::sync() {
         return true;
     }
     
-    return compio::sync_file(wal_file_);
+    return sync_wal();
 }
 
 bool WalManager::checkpoint() {
@@ -277,6 +286,7 @@ bool WalManager::checkpoint() {
     if (transaction_depth_ > 0) return false;
     
     if (!wal_file_) return true; // Nothing to truncate
+    if (failed_) return false;   // The journal may hold the only copy of lost pages
 
     if (fflush(wal_file_) != 0) return false;
 
@@ -291,7 +301,7 @@ bool WalManager::checkpoint() {
     // Seek to beginning for subsequent writes
     if (lseek(fd, 0, SEEK_SET) < 0) return false;
 #endif
-    if (!compio::sync_file(wal_file_)) return false;
+    if (!sync_wal()) return false;
 
     // Update stdio buffer position as well
     rewind(wal_file_);
@@ -489,6 +499,7 @@ bool WalManager::end_batch() {
         return true;
     }
     
+    if (failed_) return false;
     if (!wal_file_) return true;
     
     if (transaction_depth_ != 0) {

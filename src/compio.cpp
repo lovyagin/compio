@@ -187,6 +187,22 @@ static bool features_usable(const header &h, bool writable) {
     return false;
 }
 
+bool compio_archive::sync_data() {
+    if (is_broken()) return false;
+    // A failed write is reported at once and can be retried; only a failed sync loses
+    // the report with the pages.
+    if (fflush(file) != 0) return false;
+    if (!compio::sync_file(file)) {
+        broken = true;
+        return false;
+    }
+    return true;
+}
+
+bool compio_archive::is_broken() const {
+    return broken || (wal && wal->failed());
+}
+
 compio_archive::compio_archive(std::unique_ptr<compio::WalManager> wal, FILE *file, uint8_t mode_b, const compio_config *config)
     : current_header_slot(is_file_empty(file) ? 1 : 0),
       file(file),
@@ -444,7 +460,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->publish_header = [archive]() {
-        if (!compio::sync_file(archive->file)) return false;
+        if (!archive->sync_data()) return false;
         return flush_header_double_buffered(archive);
     };
     archive->checkpoint = [archive]() { return flush_impl(archive); };
@@ -736,6 +752,10 @@ int compio_remove_file(compio_archive *archive, const char *name) {
         return -1;
     }
     std::unique_lock<std::shared_mutex> lock(archive->mutex);
+    if (archive->is_broken()) {
+        errno = EIO;
+        return -1;
+    }
     size_t name_len = strlen(name);
     if (name_len >= COMPIO_FNAME_MAX_SIZE) {
         errno = ENAMETOOLONG;
@@ -867,7 +887,7 @@ static void begin_batch_impl(compio_archive *archive);
 // the previous header may still reference data in it.
 static void truncate_after_header_publish(compio_archive *archive) {
     if (!archive->truncate_after_publish) return;
-    if (!compio::sync_file(archive->file)) return;
+    if (!archive->sync_data()) return;
 
     const uint64_t container_end = readonly(archive->header, header)->file_size;
 #ifdef _WIN32
@@ -1405,6 +1425,10 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         errno = EINVAL;
         return false;
     }
+    if (archive->is_broken()) {
+        errno = EIO;
+        return false;
+    }
 
     // Double-buffered Header Write. Persist whenever the archive is writable.
     // Read-only is pure 'r' (r bit set, no '+'); 'r+' also sets the r bit but
@@ -1426,7 +1450,7 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         {
             std::lock_guard<std::mutex> io_lock(archive->io_mutex);
             if (!new_h_data->write_checked(archive->file, target_addr) ||
-                !compio::sync_file(archive->file)) {
+                !archive->sync_data()) {
                 return false;
             }
         }
@@ -1523,7 +1547,7 @@ int compio_close_archive(compio_archive *archive) {
     archive->index = nullptr;
 
     if (durable && !archive->is_readonly()) {
-        durable = compio::sync_file(archive->file) && flush_header_double_buffered(archive);
+        durable = archive->sync_data() && flush_header_double_buffered(archive);
         if (!durable) close_error = errno ? errno : EIO;
     }
     if (durable && !archive->is_readonly()) {
@@ -2030,6 +2054,10 @@ uint64_t compio_write(const void *ptr, uint64_t size, compio_file *file) {
         return 0;
     }
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
+    if (file->archive->is_broken()) {
+        errno = EIO;
+        return 0;
+    }
     return compio_write_impl(ptr, size, file);
 }
 
@@ -2267,6 +2295,10 @@ uint64_t compio_insert(const void *ptr, uint64_t size, compio_file *file) {
     }
     DEBUG_PRINT("\ncompio_insert(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
+    if (file->archive->is_broken()) {
+        errno = EIO;
+        return 0;
+    }
 
 #ifdef COMPIO_DISABLE_INSERT_ERASE
     WARNING_PRINT("warning: insert operations are disabled (COMPIO_DISABLE_INSERT_ERASE)\n");
@@ -2515,6 +2547,10 @@ uint64_t compio_erase(uint64_t size, compio_file *file) {
     DEBUG_PRINT("\ncompio_erase(cursor=%" PRIu64 ", size=%" PRIu64 ")\n", file->cursor, size);
 
     std::unique_lock<std::shared_mutex> lock(file->archive->mutex);
+    if (file->archive->is_broken()) {
+        errno = EIO;
+        return 0;
+    }
 
 #ifdef COMPIO_DISABLE_INSERT_ERASE
     WARNING_PRINT("warning: erase operations are disabled (COMPIO_DISABLE_INSERT_ERASE)\n");
@@ -2860,6 +2896,10 @@ static bool sync_files_table(compio_archive *archive) {
 // Caller must hold archive->mutex.
 static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold) {
     if (archive->is_readonly()) return true;
+    if (archive->is_broken()) {
+        errno = EIO;
+        return false;
+    }
 
     // Start atomic transaction for the entire flush operation
     compio::WalManager* wal_ptr = archive->wal.get();
@@ -2926,7 +2966,7 @@ static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold
         // fsync the data the header will reference BEFORE writing the header, so
         // a crash can never land the (low-offset) header on disk while the
         // (high-offset) allocator state / data it points at is still buffered.
-        if (!compio::sync_file(archive->file)) {
+        if (!archive->sync_data()) {
             WARNING_PRINT("warning: data fsync failed before header write\n");
             durable = false;
         } else {
