@@ -57,10 +57,18 @@ bool WalManager::open() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (wal_file_) return true;
 
+    struct stat existing;
+    const bool existed = stat(wal_path_.c_str(), &existing) == 0;
+
     // Open for append/update, binary
     wal_file_ = fopen(wal_path_.c_str(), "ab+");
     if (!wal_file_) {
         // Maybe try to create it? "ab+" should create if not exists.
+        return false;
+    }
+    if (!existed && !compio::sync_parent_directory(wal_path_)) {
+        fclose(wal_file_);
+        wal_file_ = nullptr;
         return false;
     }
     
@@ -231,14 +239,7 @@ bool WalManager::commit_transaction_impl(compio_wal_sync_mode sync_mode) {
     }
 
     if (sync_mode == COMPIO_WAL_SYNC_ALWAYS) {
-        // Force sync for durability
-#ifdef _WIN32
-        int fd = _fileno(wal_file_);
-        if (_commit(fd) != 0) return false;
-#else
-        int fd = fileno(wal_file_);
-        if (fsync(fd) != 0) return false;
-#endif
+        if (!compio::sync_file(wal_file_)) return false;
     }
 
     return true;
@@ -260,17 +261,7 @@ bool WalManager::sync() {
         return true;
     }
     
-    if (fflush(wal_file_) != 0) return false;
-    
-    // fsync
-#ifdef _WIN32
-    int fd = _fileno(wal_file_);
-    if (_commit(fd) != 0) return false;
-#else
-    int fd = fileno(wal_file_);
-    if (fsync(fd) != 0) return false;
-#endif
-    return true;
+    return compio::sync_file(wal_file_);
 }
 
 bool WalManager::checkpoint() {
@@ -288,14 +279,13 @@ bool WalManager::checkpoint() {
     if (_chsize_s(fd, 0) != 0) return false;
     // Seek to beginning for subsequent writes
     if (_lseek(fd, 0, SEEK_SET) == -1) return false;
-    if (_commit(fd) != 0) return false;
 #else
     int fd = fileno(wal_file_);
     if (ftruncate(fd, 0) != 0) return false;
     // Seek to beginning for subsequent writes
     if (lseek(fd, 0, SEEK_SET) < 0) return false;
-    if (fsync(fd) != 0) return false;
 #endif
+    if (!compio::sync_file(wal_file_)) return false;
 
     // Update stdio buffer position as well
     rewind(wal_file_);
@@ -503,14 +493,7 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
 
     // Clear WAL after successful recovery
     // Sync archive first
-    if (fflush(archive_file) != 0) return false;
-#ifdef _WIN32
-    int fd = _fileno(archive_file);
-    if (_commit(fd) != 0) return false;
-#else
-    int fd = fileno(archive_file);
-    if (fsync(fd) != 0) return false;
-#endif
+    if (!compio::sync_file(archive_file)) return false;
 
     // A META record is applied by the caller, which truncates the WAL once the
     // state it describes is published.
@@ -522,13 +505,7 @@ bool WalManager::recover(FILE* archive_file, std::vector<uint8_t>* meta) {
     // Now clear WAL (durable truncation)
     FILE* wal_trunc = fopen(wal_path_.c_str(), "wb");
     if (wal_trunc) {
-        if (fflush(wal_trunc) == 0) {
-#ifdef _WIN32
-            _commit(_fileno(wal_trunc));
-#else
-            fsync(fileno(wal_trunc));
-#endif
-        }
+        compio::sync_file(wal_trunc);
         fclose(wal_trunc);
     }
 

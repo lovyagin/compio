@@ -166,6 +166,24 @@ inline void swap_uint32(uint32_t* val) {
  */
 std::string calculate_checksum(const uint8_t *data, size_t size);
 
+/**
+ * @brief Flushes stdio buffers and forces the file's data onto stable storage
+ * @param file Open file
+ * @return true on success; false if the flush or the sync failed
+ *
+ * The one place that decides how to reach the physical medium: F_FULLFSYNC on
+ * macOS (plain fsync does not flush the drive cache there), _commit on Windows,
+ * fsync elsewhere.
+ */
+bool sync_file(FILE *file);
+
+/**
+ * @brief Makes the directory entry of a just-created file durable
+ * @param path Path of the file
+ * @return true on success; always true on Windows (NTFS journals the entry)
+ */
+bool sync_parent_directory(const std::string &path);
+
 } // namespace compio
 
 #endif // UTILS_HEADER_

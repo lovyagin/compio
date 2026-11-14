@@ -31,6 +31,7 @@ add_executable(compio_gtest
     src/test_insert_erase.cpp
     src/test_free_space_manager.cpp
     src/test_feature_flags.cpp
+    src/test_sync.cpp
     src/test_max_files.cpp
     src/test_concurrency.cpp
     src/test_concurrency_advanced.cpp

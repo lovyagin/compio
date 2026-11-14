@@ -80,7 +80,6 @@ int compio_get_compression_type(const char *fp, compio_compression_type *t) {
     return 0;
 }
 
-static bool fsync_archive(FILE *file);
 static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold = nullptr);
 static bool log_operation_state(compio_archive *archive);
@@ -336,11 +335,20 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     FILE *file = fopen(fp, archive_open_mode);
+    bool may_have_created = (mode_b & mode_bit::w) != 0;
     if (file == nullptr && (mode_b & mode_bit::a)) {
         // 'a'/'a+' must create the file if it does not exist.
         file = fopen(fp, "wb+");
+        may_have_created = true;
     }
     if (file == nullptr) {
+        return NULL;
+    }
+    // A new directory entry must reach the disk too, or a power cut can take the
+    // whole archive with it.
+    if (may_have_created && !compio::sync_parent_directory(fp)) {
+        fclose(file);
+        errno = EIO;
         return NULL;
     }
 
@@ -433,7 +441,7 @@ compio_archive *compio_open_archive(const char *fp, const char *mode, const comp
     }
 
     archive->publish_header = [archive]() {
-        if (!fsync_archive(archive->file)) return false;
+        if (!compio::sync_file(archive->file)) return false;
         return flush_header_double_buffered(archive);
     };
     archive->checkpoint = [archive]() { return flush_impl(archive); };
@@ -850,25 +858,12 @@ static bool flush_header_double_buffered(compio_archive *archive);
 static bool flush_archive_impl(compio_archive *archive);
 static void begin_batch_impl(compio_archive *archive);
 
-// Flush stdio buffers and fsync the archive to disk. Used to force the data a
-// header is about to reference onto stable storage BEFORE the header is
-// published, so a crash can never leave a durable header pointing at data that
-// has not yet hit the disk.
-static bool fsync_archive(FILE *file) {
-    if (fflush(file) != 0) return false;
-#ifdef _WIN32
-    return _commit(_fileno(file)) == 0;
-#else
-    return fsync(fileno(file)) == 0;
-#endif
-}
-
 // A compaction leaves the physical file longer than the container. The tail is
 // cut only once a header describing the compacted layout is durable: until then
 // the previous header may still reference data in it.
 static void truncate_after_header_publish(compio_archive *archive) {
     if (!archive->truncate_after_publish) return;
-    if (!fsync_archive(archive->file)) return;
+    if (!compio::sync_file(archive->file)) return;
 
     const uint64_t container_end = readonly(archive->header, header)->file_size;
 #ifdef _WIN32
@@ -1427,7 +1422,7 @@ static bool flush_header_double_buffered(compio_archive *archive) {
         {
             std::lock_guard<std::mutex> io_lock(archive->io_mutex);
             if (!new_h_data->write_checked(archive->file, target_addr) ||
-                !fsync_archive(archive->file)) {
+                !compio::sync_file(archive->file)) {
                 return false;
             }
         }
@@ -1523,7 +1518,7 @@ int compio_close_archive(compio_archive *archive) {
     archive->index = nullptr;
 
     if (durable && !archive->is_readonly()) {
-        durable = fsync_archive(archive->file) && flush_header_double_buffered(archive);
+        durable = compio::sync_file(archive->file) && flush_header_double_buffered(archive);
         if (!durable) close_error = errno ? errno : EIO;
     }
     if (durable && !archive->is_readonly()) {
@@ -2926,7 +2921,7 @@ static bool flush_impl(compio_archive *archive, bool *stale_space_over_threshold
         // fsync the data the header will reference BEFORE writing the header, so
         // a crash can never land the (low-offset) header on disk while the
         // (high-offset) allocator state / data it points at is still buffered.
-        if (!fsync_archive(archive->file)) {
+        if (!compio::sync_file(archive->file)) {
             WARNING_PRINT("warning: data fsync failed before header write\n");
             durable = false;
         } else {
